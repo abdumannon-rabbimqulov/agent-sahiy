@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sahiy
+      POSTGRES_PASSWORD: sahiy
+      POSTGRES_DB: sahiy
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sahiy -d sahiy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  agent:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://sahiy:sahiy@db:5432/sahiy?sslmode=disable
+      DATA_DIR: /data
+      AGENT_PROMPT_FILE: /app/prompt.txt
+    volumes:
+      - agentdata:/data
+      # Promptni tahrirlash uchun (rebuild shart emas, restart yetarli):
+      - ./prompt.txt:/app/prompt.txt:ro
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    # Birinchi Telegram kirishida kod kiritish uchun (interaktiv):
+    stdin_open: true
+    tty: true
+
+volumes:
+  pgdata:
+  agentdata:

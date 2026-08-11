@@ -17,17 +17,17 @@ import (
 // FallbackTTL — token ichidan muddatni aniqlab bo'lmasa ishlatiladi.
 const FallbackTTL = 30 * time.Minute
 
-// LoginRequest login endpointiga yuboriladigan JSON body.
-type LoginRequest struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
-}
-
 // Login serverga POST yuborib token oladi.
+// Login maydonining nomi cfg.LoginField orqali sozlanadi
+// (masalan "login", "username" yoki "phone").
 func Login(cfg *config.Config) (string, error) {
-	body, err := json.Marshal(LoginRequest{
-		Login:    cfg.Login,
-		Password: cfg.Password,
+	field := cfg.LoginField
+	if field == "" {
+		field = "login"
+	}
+	body, err := json.Marshal(map[string]string{
+		field:      cfg.Login,
+		"password": cfg.Password,
 	})
 	if err != nil {
 		return "", fmt.Errorf("body marshal: %w", err)
@@ -131,4 +131,27 @@ func GetToken(cfg *config.Config, cachePath string) (string, error) {
 		fmt.Printf("ogohlantirish: token cache'ga saqlanmadi: %v\n", err)
 	}
 	return token, nil
+}
+
+// Subject JWT ichidagi "sub" claim'ini (odatda admin/agent ID) qaytaradi.
+// Topilmasa 0 va xato qaytaradi.
+func Subject(token string) (int64, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("token JWT formatida emas")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, fmt.Errorf("payload dekod: %w", err)
+	}
+	var claims struct {
+		Sub int64 `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return 0, fmt.Errorf("claims o'qish: %w", err)
+	}
+	if claims.Sub == 0 {
+		return 0, fmt.Errorf("token'da sub topilmadi")
+	}
+	return claims.Sub, nil
 }

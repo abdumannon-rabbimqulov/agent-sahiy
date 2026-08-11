@@ -75,3 +75,33 @@ func (c *Client) Get(path string) ([]byte, int, error) {
 func (c *Client) Post(path string, body interface{}) ([]byte, int, error) {
 	return c.Do(http.MethodPost, path, body)
 }
+
+// DoRaw tayyor body va Content-Type bilan so'rov yuboradi
+// (masalan multipart/form-data fayl yuklash uchun).
+func (c *Client) DoRaw(method, path, contentType string, body io.Reader) ([]byte, int, error) {
+	req, err := http.NewRequest(method, c.BaseURL+path, body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("so'rov yaratish: %w", err)
+	}
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Origin", "https://audit.sahiy.uz")
+	req.Header.Set("Referer", "https://audit.sahiy.uz/")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("so'rov yuborish: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("javobni o'qish: %w", err)
+	}
+	return respBody, resp.StatusCode, nil
+}

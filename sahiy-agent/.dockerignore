@@ -1,6 +1,9 @@
-.env
+.git
+*.md
 token.json
 seen.json
 history.jsonl
 escalations.json
 tg-session.json
+*.session
+data/
