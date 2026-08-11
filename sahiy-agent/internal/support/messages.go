@@ -19,7 +19,7 @@ type Message struct {
 	SenderType     string          `json:"sender_type"` // "client" yoki "agent"
 	ConversationID int64           `json:"conversation_id"`
 	Message        string          `json:"message"`
-	Content        json.RawMessage `json:"content"`       // tuzilishi noma'lum → xom
+	Content        json.RawMessage `json:"content"` // tuzilishi noma'lum → xom
 	Status         int             `json:"status"`
 	SupportField   json.RawMessage `json:"support_field"` // tuzilishi noma'lum → xom
 	SeenAt         *string         `json:"seen_at"`
@@ -53,8 +53,9 @@ func FetchMessages(c *client.Client, conversationID int64, page, limit int) ([]M
 // Transcript xabarlarni vaqt bo'yicha tartiblab, LLM (Gemini) promptiga
 // beriladigan o'qiladigan matn ko'rinishiga aylantiradi.
 // Masalan:
-//   client: Salom, buyurtmam qayerda?
-//   agent: Tekshirib ko'raman...
+//
+//	client: Salom, buyurtmam qayerda?
+//	agent: Tekshirib ko'raman...
 func Transcript(msgs []Message) string {
 	sorted := make([]Message, len(msgs))
 	copy(sorted, msgs)
@@ -73,4 +74,17 @@ func Transcript(msgs []Message) string {
 		fmt.Fprintf(&b, "%s: %s\n", role, text)
 	}
 	return b.String()
+}
+
+// LastClientMessage oxirgi (eng katta id'li) mijoz xabarini qaytaradi.
+// Mijoz xabari bo'lmasa id=0 bo'ladi.
+func LastClientMessage(msgs []Message) (int64, string) {
+	var id int64
+	var text string
+	for _, m := range msgs {
+		if m.SenderType == "client" && m.ID > id {
+			id, text = m.ID, m.Message
+		}
+	}
+	return id, text
 }

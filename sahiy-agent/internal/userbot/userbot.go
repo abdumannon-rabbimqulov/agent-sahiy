@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +15,10 @@ import (
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
 )
+
+// ErrNoSession — saqlangan Telegram sessiyasi yo'q.
+// Bu holda `agent login` buyrug'i bir marta bajarilishi kerak.
+var ErrNoSession = errors.New("telegram sessiyasi yo'q — avval `agent login` bajaring")
 
 // ReplyHandler — guruhda kimdir bizning xabarimizga REPLY qilganda chaqiriladi.
 // replyToMsgID — biz yuborgan (eskalatsiya) xabar id'si.
@@ -36,32 +41,38 @@ type Bot struct {
 	dispatcher tg.UpdateDispatcher
 	client     *telegram.Client
 
-	ready chan struct{}
-	mu    sync.Mutex
-	api   *tg.Client
-	peers map[int64]tg.InputPeerClass // guruh id (musbat) -> input peer
+	ready     chan struct{}
+	readyOnce sync.Once
+	// requireSession — true bo'lsa saqlangan sessiya bo'lmasa kod so'ramaydi
+	// (Telegram'ga takroriy login urinishlari yubormaslik uchun).
+	requireSession bool
+	mu             sync.Mutex
+	api            *tg.Client
+	peers          map[int64]tg.InputPeerClass // guruh id (musbat) -> input peer
 }
 
 // New yangi userbot yaratadi.
 func New(apiID int, apiHash, phone, sessionPath string, allowedGroups []int64,
-	onReply ReplyHandler, code CodePrompt, password func(ctx context.Context) (string, error)) *Bot {
+	onReply ReplyHandler, code CodePrompt, password func(ctx context.Context) (string, error),
+	requireSession bool) *Bot {
 
 	allowed := map[int64]bool{}
 	for _, g := range allowedGroups {
 		allowed[normalizeID(g)] = true
 	}
 	return &Bot{
-		apiID:       apiID,
-		apiHash:     apiHash,
-		phone:       phone,
-		sessionPath: sessionPath,
-		allowed:     allowed,
-		onReply:     onReply,
-		codePrompt:  code,
-		passwordFn:  password,
-		dispatcher:  tg.NewUpdateDispatcher(),
-		ready:       make(chan struct{}),
-		peers:       map[int64]tg.InputPeerClass{},
+		apiID:          apiID,
+		apiHash:        apiHash,
+		phone:          phone,
+		sessionPath:    sessionPath,
+		allowed:        allowed,
+		onReply:        onReply,
+		codePrompt:     code,
+		passwordFn:     password,
+		requireSession: requireSession,
+		dispatcher:     tg.NewUpdateDispatcher(),
+		ready:          make(chan struct{}),
+		peers:          map[int64]tg.InputPeerClass{},
 	}
 }
 
@@ -83,6 +94,18 @@ func (b *Bot) Run(ctx context.Context) error {
 	})
 
 	return b.client.Run(ctx, func(ctx context.Context) error {
+		// Saqlangan sessiya bo'lmasa — kod so'ramaymiz. Aks holda har
+		// restartda Telegram'ga yangi login urinishi ketadi (FLOOD_WAIT xavfi).
+		if b.requireSession {
+			st, err := b.client.Auth().Status(ctx)
+			if err != nil {
+				return fmt.Errorf("userbot auth holati: %w", err)
+			}
+			if !st.Authorized {
+				return ErrNoSession
+			}
+		}
+
 		flow := auth.NewFlow(
 			termAuth{phone: b.phone, code: b.codePrompt, password: b.passwordFn},
 			auth.SendCodeOptions{},
@@ -98,7 +121,7 @@ func (b *Bot) Run(ctx context.Context) error {
 		if err := b.loadDialogs(ctx); err != nil {
 			fmt.Println("userbot: dialoglarni yuklashda ogohlantirish:", err)
 		}
-		close(b.ready)
+		b.readyOnce.Do(func() { close(b.ready) })
 		fmt.Println("✓ Userbot ulandi")
 
 		<-ctx.Done()
@@ -112,7 +135,7 @@ func (b *Bot) SendToGroup(ctx context.Context, groupID int64, text string) (int6
 	case <-b.ready:
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case <-time.After(60 * time.Second):
+	case <-time.After(15 * time.Second):
 		return 0, fmt.Errorf("userbot tayyor emas (timeout)")
 	}
 
@@ -351,4 +374,40 @@ func (b *Bot) ListGroups(ctx context.Context) ([]Group, error) {
 		}
 	}
 	return out, nil
+}
+
+// Login faqat bir martalik interaktiv kirish uchun: kod (va kerak bo'lsa 2FA)
+// so'raydi, sessiyani sessionPath ga saqlaydi va darhol chiqadi.
+// Shundan keyin agent hech qachon kod so'ramaydi.
+func (b *Bot) Login(ctx context.Context) error {
+	client := telegram.NewClient(b.apiID, b.apiHash, telegram.Options{
+		SessionStorage: &session.FileStorage{Path: b.sessionPath},
+	})
+
+	return client.Run(ctx, func(ctx context.Context) error {
+		st, err := client.Auth().Status(ctx)
+		if err != nil {
+			return fmt.Errorf("auth holati: %w", err)
+		}
+		if st.Authorized {
+			fmt.Println("✓ Sessiya allaqachon mavjud — qayta login shart emas")
+			return nil
+		}
+
+		flow := auth.NewFlow(
+			termAuth{phone: b.phone, code: b.codePrompt, password: b.passwordFn},
+			auth.SendCodeOptions{},
+		)
+		if err := client.Auth().IfNecessary(ctx, flow); err != nil {
+			return fmt.Errorf("login: %w", err)
+		}
+
+		self, err := client.Self(ctx)
+		if err != nil {
+			return fmt.Errorf("self: %w", err)
+		}
+		fmt.Printf("✓ Kirildi: %s (id=%d)\n✓ Sessiya saqlandi: %s\n",
+			self.FirstName, self.ID, b.sessionPath)
+		return nil
+	})
 }

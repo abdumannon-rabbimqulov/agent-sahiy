@@ -1,89 +1,56 @@
+// Package store — suhbatlar tarixi (GORM).
 package store
 
 import (
-	"database/sql"
 	"fmt"
-	"time"
+
+	"gorm.io/gorm"
+
+	"sahiy-agent/internal/models"
 )
 
-// Interaction — AI bir marta kim bilan qanday gaplashganini yozib qo'yish.
-type Interaction struct {
-	Time           time.Time `json:"time"`
-	ConversationID int64     `json:"conversation_id"`
-	ClientID       int64     `json:"client_id"`
-	ClientName     string    `json:"client_name"`
-	Title          string    `json:"title"`
-	ClientMessage  string    `json:"client_message"`
-	AIReply        string    `json:"ai_reply"`
-	Sent           bool      `json:"sent"`
-}
-
-// Store — Postgres bilan ishlaydigan tarix do'koni.
+// Store — tarix do'koni.
 type Store struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
 // New yangi Store.
-func New(db *sql.DB) *Store {
+func New(db *gorm.DB) *Store {
 	return &Store{db: db}
 }
 
 // Append bitta yozuvni qo'shadi.
-func (s *Store) Append(in Interaction) error {
-	_, err := s.db.Exec(
-		`INSERT INTO interactions
-		 (conversation_id, client_id, client_name, title, client_message, ai_reply, sent)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		in.ConversationID, in.ClientID, in.ClientName, in.Title,
-		in.ClientMessage, in.AIReply, in.Sent)
-	return err
+func (s *Store) Append(in *models.Interaction) error {
+	return s.db.Omit("Category").Create(in).Error
 }
 
 // Recent oxirgi n yozuvni (eng yangisi birinchi) qaytaradi.
-func (s *Store) Recent(n int) ([]Interaction, error) {
+func (s *Store) Recent(n int) ([]models.Interaction, error) {
 	if n <= 0 {
 		n = 100
 	}
-	rows, err := s.db.Query(
-		`SELECT created, conversation_id, client_id, client_name, title,
-		        client_message, ai_reply, sent
-		 FROM interactions ORDER BY id DESC LIMIT $1`, n)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []Interaction
-	for rows.Next() {
-		var in Interaction
-		if err := rows.Scan(&in.Time, &in.ConversationID, &in.ClientID,
-			&in.ClientName, &in.Title, &in.ClientMessage, &in.AIReply, &in.Sent); err != nil {
-			return nil, err
-		}
-		out = append(out, in)
-	}
-	return out, rows.Err()
+	var out []models.Interaction
+	err := s.db.Preload("Category").Order("id desc").Limit(n).Find(&out).Error
+	return out, err
 }
 
 // Stats — umumiy statistika.
 type Stats struct {
-	TotalReplies  int
-	SentReplies   int
-	UniqueClients int
-	UniqueChats   int
+	TotalReplies  int `json:"TotalReplies"`
+	SentReplies   int `json:"SentReplies"`
+	UniqueClients int `json:"UniqueClients"`
+	UniqueChats   int `json:"UniqueChats"`
 }
 
 // Stats statistikani hisoblaydi.
 func (s *Store) Stats() (Stats, error) {
 	var st Stats
-	err := s.db.QueryRow(
-		`SELECT
-			COUNT(*),
-			COUNT(*) FILTER (WHERE sent),
-			COUNT(DISTINCT client_id) FILTER (WHERE client_id <> 0),
-			COUNT(DISTINCT conversation_id)
-		 FROM interactions`).
-		Scan(&st.TotalReplies, &st.SentReplies, &st.UniqueClients, &st.UniqueChats)
+	err := s.db.Model(&models.Interaction{}).
+		Select(`COUNT(*) AS total_replies,
+		        COUNT(*) FILTER (WHERE sent) AS sent_replies,
+		        COUNT(DISTINCT client_id) FILTER (WHERE client_id <> 0) AS unique_clients,
+		        COUNT(DISTINCT conversation_id) AS unique_chats`).
+		Scan(&st).Error
 	return st, err
 }
 

@@ -40,7 +40,13 @@ type Config struct {
 	AllowedGroups []int64 // userbot ishlaydigan guruh id'lari
 
 	// Web dashboard
-	WebAddr string // masalan ":8080"
+	WebAddr   string // masalan ":8080"
+	AdminUser string // dashboard uchun Basic Auth login (bo'sh bo'lsa himoya yo'q)
+	AdminPass string // dashboard uchun Basic Auth parol
+	WebDev    bool   // true bo'lsa frontend fayllar diskdan o'qiladi (embed emas)
+
+	// Birinchi ishga tushishda mavjud suhbatlarga javob berilsinmi
+	Backfill bool
 
 	// Ma'lumotlar bazasi va fayllar
 	DatabaseURL string // Postgres DSN
@@ -65,7 +71,11 @@ func Load(envPath string) (*Config, error) {
 		TelegramChatID: os.Getenv("TELEGRAM_CHAT_ID"),
 		EscalateMarker: os.Getenv("ESCALATE_MARKER"),
 		WebAddr:        os.Getenv("WEB_ADDR"),
+		AdminUser:      os.Getenv("ADMIN_USER"),
+		AdminPass:      os.Getenv("ADMIN_PASS"),
 	}
+	cfg.WebDev = strings.EqualFold(os.Getenv("WEB_DEV"), "true")
+	cfg.Backfill = strings.EqualFold(os.Getenv("BACKFILL"), "true")
 	if cfg.LoginField == "" {
 		cfg.LoginField = "login"
 	}

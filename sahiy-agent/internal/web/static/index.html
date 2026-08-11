@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sahiy AI Agent — Dashboard</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <h1>🤖 Sahiy AI Agent</h1>
+  <div class="sub">Yordam agenti — real vaqt statistikasi (har 30s yangilanadi)</div>
+  <nav>
+    <a href="/" class="on">Dashboard</a>
+    <a href="/categories">Kategoriyalar</a>
+  </nav>
+</header>
+<div class="wrap">
+  <div class="cards" id="cards"></div>
+  <h3>So'nggi suhbatlar</h3>
+  <table>
+    <thead><tr><th>Vaqt</th><th>Kim</th><th>Mijoz xabari</th><th>AI javobi</th><th>Kategoriya</th><th>Holat</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

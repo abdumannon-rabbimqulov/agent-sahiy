@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -127,6 +128,21 @@ func GetToken(cfg *config.Config, cachePath string) (string, error) {
 		return "", err
 	}
 
+	if err := cache.Save(cachePath, token, tokenTTL(token)); err != nil {
+		fmt.Printf("ogohlantirish: token cache'ga saqlanmadi: %v\n", err)
+	}
+	return token, nil
+}
+
+// Refresh cache'ni bekor qilib, yangi token oladi va saqlaydi.
+// Token 401 bilan rad etilganda chaqiriladi.
+func Refresh(cfg *config.Config, cachePath string) (string, error) {
+	_ = os.Remove(cachePath)
+
+	token, err := Login(cfg)
+	if err != nil {
+		return "", err
+	}
 	if err := cache.Save(cachePath, token, tokenTTL(token)); err != nil {
 		fmt.Printf("ogohlantirish: token cache'ga saqlanmadi: %v\n", err)
 	}

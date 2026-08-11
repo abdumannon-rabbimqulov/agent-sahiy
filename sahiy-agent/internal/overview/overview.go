@@ -17,12 +17,12 @@ const defaultBaseURL = "https://api.sahiy.uz"
 
 // Request — POST /api/client/user/overview body.
 type Request struct {
-	UserID          int64  `json:"user_id"`
-	OrderPage       int    `json:"order_page"`
-	OrderSize       int    `json:"order_size"`
-	OrderStatus     *int   `json:"order_status"`     // null bo'lishi mumkin
-	OrderSubStatus  *int   `json:"order_sub_status"` // null bo'lishi mumkin
-	OrderKeyword    string `json:"order_keyword"`
+	UserID           int64  `json:"user_id"`
+	OrderPage        int    `json:"order_page"`
+	OrderSize        int    `json:"order_size"`
+	OrderStatus      *int   `json:"order_status"`     // null bo'lishi mumkin
+	OrderSubStatus   *int   `json:"order_sub_status"` // null bo'lishi mumkin
+	OrderKeyword     string `json:"order_keyword"`
 	OrderCreatedFrom string `json:"order_created_from"` // "2024-01-01"
 	OrderCreatedTo   string `json:"order_created_to"`   // "2026-08-11"
 }
