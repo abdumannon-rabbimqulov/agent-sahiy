@@ -59,3 +59,30 @@ func (st Stats) String() string {
 	return fmt.Sprintf("odamlar: %d | suhbatlar: %d | javoblar: %d (yuborilgan: %d)",
 		st.UniqueClients, st.UniqueChats, st.TotalReplies, st.SentReplies)
 }
+
+// --- chat rasmlari ---
+
+// SaveImage rasm yozuvini qo'shadi yoki yangilaydi.
+func (s *Store) SaveImage(img *models.ChatImage) error {
+	return s.db.Save(img).Error
+}
+
+// GetImage xabar id bo'yicha saqlangan rasmni qaytaradi.
+// Topilmasa (nil, false) — bu xato emas.
+func (s *Store) GetImage(messageID int64) (*models.ChatImage, bool) {
+	var img models.ChatImage
+	if err := s.db.First(&img, "message_id = ?", messageID).Error; err != nil {
+		return nil, false
+	}
+	return &img, true
+}
+
+// RecentImages oxirgi n ta rasmni qaytaradi (eng yangisi birinchi).
+func (s *Store) RecentImages(n int) ([]models.ChatImage, error) {
+	if n <= 0 {
+		n = 200
+	}
+	var out []models.ChatImage
+	err := s.db.Order("created_at desc").Limit(n).Find(&out).Error
+	return out, err
+}

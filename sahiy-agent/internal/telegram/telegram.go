@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"sahiy-agent/internal/tgtext"
 )
 
 // Bot — Telegram Bot API client (tashqi kutubxonasiz).
@@ -29,10 +31,14 @@ func (b *Bot) api(method string) string {
 }
 
 // SendMessage guruhga/chatga xabar yuboradi va message_id qaytaradi.
-func (b *Bot) SendMessage(chatID, text string) (int64, error) {
+// code — monospace bo'laklar (Telegram'da bosilganda nusxalanadi).
+func (b *Bot) SendMessage(chatID, text string, code []tgtext.Span) (int64, error) {
 	form := url.Values{}
 	form.Set("chat_id", chatID)
 	form.Set("text", text)
+	if ents := codeEntities(code); ents != "" {
+		form.Set("entities", ents)
+	}
 
 	resp, err := b.http.PostForm(b.api("sendMessage"), form)
 	if err != nil {
@@ -101,4 +107,26 @@ func (b *Bot) GetUpdates(offset int64, timeoutSec int) ([]Update, error) {
 		return nil, fmt.Errorf("telegram xatosi: %s", r.Description)
 	}
 	return r.Result, nil
+}
+
+// codeEntities Span'larni Bot API'ning entities JSON'iga aylantiradi.
+// Bo'sh bo'lsa "" qaytaradi.
+func codeEntities(code []tgtext.Span) string {
+	if len(code) == 0 {
+		return ""
+	}
+	type entity struct {
+		Type   string `json:"type"`
+		Offset int    `json:"offset"`
+		Length int    `json:"length"`
+	}
+	list := make([]entity, 0, len(code))
+	for _, s := range code {
+		list = append(list, entity{Type: "code", Offset: s.Offset, Length: s.Length})
+	}
+	data, err := json.Marshal(list)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
+
+	"sahiy-agent/internal/tgtext"
 )
 
 // ErrNoSession — saqlangan Telegram sessiyasi yo'q.
@@ -130,7 +132,7 @@ func (b *Bot) Run(ctx context.Context) error {
 }
 
 // SendToGroup guruhga matn yuboradi va xabar id'sini qaytaradi.
-func (b *Bot) SendToGroup(ctx context.Context, groupID int64, text string) (int64, error) {
+func (b *Bot) SendToGroup(ctx context.Context, groupID int64, text string, code []tgtext.Span) (int64, error) {
 	select {
 	case <-b.ready:
 	case <-ctx.Done():
@@ -153,11 +155,22 @@ func (b *Bot) SendToGroup(ctx context.Context, groupID int64, text string) (int6
 	api := b.api
 	b.mu.Unlock()
 
-	updates, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+	req := &tg.MessagesSendMessageRequest{
 		Peer:     peer,
 		Message:  text,
 		RandomID: randomID(),
-	})
+	}
+	// Monospace bo'laklar — Telegram'da bosilganda nusxalanadi.
+	for _, s := range code {
+		req.Entities = append(req.Entities, &tg.MessageEntityCode{
+			Offset: s.Offset, Length: s.Length,
+		})
+	}
+	if len(req.Entities) > 0 {
+		req.SetEntities(req.Entities)
+	}
+
+	updates, err := api.MessagesSendMessage(ctx, req)
 	if err != nil {
 		return 0, fmt.Errorf("xabar yuborish: %w", err)
 	}

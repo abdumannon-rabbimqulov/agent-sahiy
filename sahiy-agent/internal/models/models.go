@@ -26,8 +26,11 @@ type Interaction struct {
 	ClientMessage  string    `gorm:"type:text" json:"client_message"`
 	AIReply        string    `gorm:"type:text" json:"ai_reply"`
 	Sent           bool      `gorm:"not null;default:false" json:"sent"`
-	CategoryID     *uint     `gorm:"index" json:"category_id,omitempty"`
-	Category       *Category `gorm:"foreignKey:CategoryID;constraint:OnDelete:SET NULL" json:"category,omitempty"`
+	// Steps — agent shu javobga qanday ketma-ketlikda kelgani
+	// (nechta xabar o'qidi, qaysi kategoriya, qaysi buyurtmani topdi...).
+	Steps      string    `gorm:"type:text" json:"steps"`
+	CategoryID *uint     `gorm:"index" json:"category_id,omitempty"`
+	Category   *Category `gorm:"foreignKey:CategoryID;constraint:OnDelete:SET NULL" json:"category,omitempty"`
 }
 
 // Escalation — xodimlar guruhiga yuborilgan bitta murojaat.
@@ -38,6 +41,23 @@ type Escalation struct {
 	Question       string    `gorm:"type:text" json:"question"`
 	Answer         string    `gorm:"type:text" json:"answer"`
 	Resolved       bool      `gorm:"not null;default:false" json:"resolved"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ChatImage — mijoz chatga tashlagan rasm: diskda saqlanadi, Gemini tahlili
+// va undan ajratilgan raqamlar shu yerda qoladi.
+// MessageID birlamchi kalit — bir rasm ikki marta yuklanmaydi/tahlil qilinmaydi.
+type ChatImage struct {
+	MessageID      int64     `gorm:"primaryKey;autoIncrement:false" json:"message_id"`
+	ConversationID int64     `gorm:"index" json:"conversation_id"`
+	ClientID       int64     `gorm:"index" json:"client_id"`
+	URL            string    `gorm:"size:500" json:"url"` // asl havola
+	Path           string    `gorm:"size:500" json:"-"`   // diskdagi yo'l (tashqariga berilmaydi)
+	File           string    `gorm:"-" json:"file"`       // /media/... uchun nisbiy yo'l
+	MimeType       string    `gorm:"size:50" json:"mime_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	Analysis       string    `gorm:"type:text" json:"analysis"`
+	Numbers        string    `gorm:"size:500" json:"numbers"` // vergul bilan
 	CreatedAt      time.Time `json:"created_at"`
 }
 

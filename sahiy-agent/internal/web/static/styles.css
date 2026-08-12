@@ -42,3 +42,29 @@ button.del{background:transparent;color:var(--danger);border:1px solid rgba(255,
 pre.content{margin:0;white-space:pre-wrap;font:inherit;font-size:13px;color:var(--mut)}
 .err{color:var(--danger);font-size:13px;min-height:18px}
 .off{opacity:.45}
+
+/* Nusxalanadigan chip: ID va buyurtma raqamlari */
+.cp{display:inline-block;cursor:pointer;user-select:all;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+  background:rgba(79,156,255,.12);color:var(--acc);border:1px solid rgba(79,156,255,.25);
+  border-radius:6px;padding:1px 6px;white-space:nowrap;transition:background .15s,color .15s}
+.cp:hover{background:rgba(79,156,255,.24)}
+.cp.inline{background:rgba(139,152,173,.14);color:var(--tx);border-color:transparent;padding:0 4px}
+.cp.inline:hover{background:rgba(79,156,255,.24);color:var(--acc)}
+.cp.copied{background:rgba(62,207,142,.22);color:var(--ok);border-color:rgba(62,207,142,.4)}
+.cp.copied::after{content:" ✓"}
+.cp.copyfail{background:rgba(255,107,107,.2);color:var(--danger);border-color:rgba(255,107,107,.4)}
+
+/* Agent qadamlari: "qanday tushundi" ustuni */
+.steps summary{cursor:pointer;color:var(--acc);font-size:12px;list-style:none}
+.steps summary::-webkit-details-marker{display:none}
+.steps summary::before{content:"▸ ";display:inline-block;transition:transform .15s}
+.steps[open] summary::before{content:"▾ "}
+.steps ol{margin:8px 0 0;padding-left:18px}
+.steps li{color:var(--mut);font-size:12px;line-height:1.5;margin-bottom:3px}
+
+/* Chat rasmlari (thumbnail) */
+.shots{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.shot{display:block;border:1px solid var(--line);border-radius:8px;overflow:hidden;line-height:0}
+.shot img{width:64px;height:64px;object-fit:cover;display:block;transition:transform .15s}
+.shot:hover img{transform:scale(1.08)}

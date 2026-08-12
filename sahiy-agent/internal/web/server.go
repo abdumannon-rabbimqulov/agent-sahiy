@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,8 @@ type Options struct {
 	Addr      string
 	AdminUser string // bo'sh bo'lsa Basic Auth o'chiq
 	AdminPass string
-	Dev       bool // true bo'lsa frontend diskdan o'qiladi (restart shart emas)
+	Dev       bool   // true bo'lsa frontend diskdan o'qiladi (restart shart emas)
+	MediaDir  string // chat rasmlari katalogi (/media/ orqali beriladi)
 }
 
 // Server statistika, tarix va kategoriyalarni ko'rsatadigan dashboard.
@@ -60,7 +62,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /{$}", s.page("index.html"))
 	mux.HandleFunc("GET /categories", s.page("categories.html"))
 
+	// Chat rasmlari — Basic Auth ostida qoladi (mijoz ma'lumoti).
+	if s.opt.MediaDir != "" {
+		mux.Handle("GET /media/", http.StripPrefix("/media/",
+			http.FileServer(http.Dir(s.opt.MediaDir))))
+	}
+
 	mux.HandleFunc("GET /api/stats", s.handleStats)
+	mux.HandleFunc("GET /api/images", s.handleImages)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/categories", s.handleCategoryList)
 	mux.HandleFunc("POST /api/categories", s.handleCategoryCreate)
@@ -117,6 +126,20 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	writeJSON(w, items)
+}
+
+// handleImages oxirgi chat rasmlarini qaytaradi (dashboard uchun).
+func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.RecentImages(200)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Path — serverdagi to'liq yo'l; tashqariga /media/ ga nisbiy yo'l beriladi.
+	for i := range items {
+		items[i].File = fmt.Sprintf("%d/%s", items[i].ConversationID, filepath.Base(items[i].Path))
 	}
 	writeJSON(w, items)
 }

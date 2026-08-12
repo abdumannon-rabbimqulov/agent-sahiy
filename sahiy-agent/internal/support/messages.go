@@ -50,6 +50,32 @@ func FetchMessages(c *client.Client, conversationID int64, page, limit int) ([]M
 	return resp.Data, nil
 }
 
+// IsImage — xabar rasmmi. Server `content` maydonida oddiy satr yuboradi:
+// "text" yoki "image"; rasm URL'i esa `message` maydonida keladi.
+func (m Message) IsImage() bool {
+	return strings.TrimSpace(string(m.Content)) == `"image"`
+}
+
+// ImageMessages mijoz yuborgan rasm xabarlarini qaytaradi — eng yangisi
+// birinchi, limit tagacha (limit <= 0 bo'lsa hammasi).
+func ImageMessages(msgs []Message, limit int) []Message {
+	var out []Message
+	for _, m := range msgs {
+		if m.SenderType == "client" && m.IsImage() && m.Message != "" {
+			out = append(out, m)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// MinHistory — Gemini'ga beriladigan eng kam xabar soni. Agent hech qachon
+// bundan kam kontekst bilan javob yozmaydi (suhbatda shuncha xabar bo'lsa).
+const MinHistory = 10
+
 // Transcript xabarlarni vaqt bo'yicha tartiblab, LLM (Gemini) promptiga
 // beriladigan o'qiladigan matn ko'rinishiga aylantiradi.
 // Masalan:
@@ -57,14 +83,38 @@ func FetchMessages(c *client.Client, conversationID int64, page, limit int) ([]M
 //	client: Salom, buyurtmam qayerda?
 //	agent: Tekshirib ko'raman...
 func Transcript(msgs []Message) string {
+	text, _ := TranscriptTail(msgs, 0)
+	return text
+}
+
+// TranscriptTail suhbatning oxirgi n ta xabaridan transkript yasaydi va
+// nechta xabar ishlatilganini qaytaradi. n < MinHistory bo'lsa MinHistory
+// ishlatiladi; n <= 0 bo'lsa cheklov qo'yilmaydi (hammasi).
+//
+// Tail (oxirgi) olinishi muhim: server qanday tartibda qaytarishidan qat'i
+// nazar, id bo'yicha saralangandan keyin eng yangi xabarlar tanlanadi.
+func TranscriptTail(msgs []Message, n int) (string, int) {
 	sorted := make([]Message, len(msgs))
 	copy(sorted, msgs)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 
+	if n > 0 {
+		if n < MinHistory {
+			n = MinHistory
+		}
+		if len(sorted) > n {
+			sorted = sorted[len(sorted)-n:]
+		}
+	}
+
 	var b strings.Builder
 	for _, m := range sorted {
 		text := m.Message
-		if text == "" {
+		// Rasm xabarida `message` — bu URL. Uni xom holda Gemini'ga
+		// bermaymiz: rasm alohida tahlil qilinib, natijasi qo'shiladi.
+		if m.IsImage() {
+			text = "[rasm]"
+		} else if text == "" {
 			text = string(m.Content)
 		}
 		role := m.SenderType
@@ -73,7 +123,7 @@ func Transcript(msgs []Message) string {
 		}
 		fmt.Fprintf(&b, "%s: %s\n", role, text)
 	}
-	return b.String()
+	return b.String(), len(sorted)
 }
 
 // LastClientMessage oxirgi (eng katta id'li) mijoz xabarini qaytaradi.

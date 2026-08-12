@@ -9,6 +9,14 @@ import (
 	"strings"
 )
 
+const (
+	// defaultHistoryLimit — HISTORY_LIMIT berilmasa ishlatiladi.
+	defaultHistoryLimit = 20
+	// minHistoryLimit — talab: agent kamida 10 ta xabarni o'rganadi
+	// (support.MinHistory bilan bir xil bo'lishi kerak).
+	minHistoryLimit = 10
+)
+
 // Config dasturga kerakli sozlamalar.
 type Config struct {
 	// API kirish
@@ -26,6 +34,7 @@ type Config struct {
 	// Agent xatti-harakati
 	AgentSenderID int64 // 0 bo'lsa token'dagi "sub" ishlatiladi
 	AutoReply     bool  // true bo'lsa Gemini javobini avtomatik yuboradi
+	HistoryLimit  int   // javob yozishdan oldin o'qiladigan oxirgi xabarlar soni
 
 	// Telegram eskalatsiya (xodimlar guruhi)
 	TelegramToken  string // bot token (Bot API rejimi, ixtiyoriy)
@@ -44,6 +53,16 @@ type Config struct {
 	AdminUser string // dashboard uchun Basic Auth login (bo'sh bo'lsa himoya yo'q)
 	AdminPass string // dashboard uchun Basic Auth parol
 	WebDev    bool   // true bo'lsa frontend fayllar diskdan o'qiladi (embed emas)
+
+	// Ikkinchi sayt (api.sahiy.uz service API) — buyurtma holati
+	ServiceBaseURL    string // default https://api.sahiy.uz
+	ServicePhone      string
+	ServicePassword   string
+	ServiceDeviceID   string
+	ServiceDeviceName string
+	ServiceDeviceType string
+	ServiceAPKType    int
+	ServiceFcmToken   string
 
 	// Birinchi ishga tushishda mavjud suhbatlarga javob berilsinmi
 	Backfill bool
@@ -128,6 +147,41 @@ func Load(envPath string) (*Config, error) {
 		}
 	}
 	cfg.AutoReply = strings.EqualFold(os.Getenv("AUTO_REPLY"), "true")
+
+	// Kontekst chuqurligi: kamida support.MinHistory (10) ta xabar.
+	cfg.HistoryLimit = defaultHistoryLimit
+	if v := os.Getenv("HISTORY_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.HistoryLimit = n
+		}
+	}
+	if cfg.HistoryLimit < minHistoryLimit {
+		cfg.HistoryLimit = minHistoryLimit
+	}
+
+	// --- Ikkinchi sayt (service API) ---
+	cfg.ServiceBaseURL = os.Getenv("SERVICE_BASE_URL")
+	if cfg.ServiceBaseURL == "" {
+		cfg.ServiceBaseURL = "https://api.sahiy.uz"
+	}
+	cfg.ServicePhone = os.Getenv("SERVICE_PHONE")
+	cfg.ServicePassword = os.Getenv("SERVICE_PASSWORD")
+	cfg.ServiceDeviceID = os.Getenv("SERVICE_DEVICE_ID")
+	cfg.ServiceDeviceName = os.Getenv("SERVICE_DEVICE_NAME")
+	if cfg.ServiceDeviceName == "" {
+		cfg.ServiceDeviceName = "phone"
+	}
+	cfg.ServiceDeviceType = os.Getenv("SERVICE_DEVICE_TYPE")
+	if cfg.ServiceDeviceType == "" {
+		cfg.ServiceDeviceType = "mobile"
+	}
+	cfg.ServiceAPKType = 2
+	if v := os.Getenv("SERVICE_APK_TYPE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.ServiceAPKType = n
+		}
+	}
+	cfg.ServiceFcmToken = os.Getenv("SERVICE_FCM_TOKEN")
 
 	if cfg.Login == "" || cfg.Password == "" {
 		return nil, fmt.Errorf("LOGIN va PASSWORD .env faylda yoki muhit o'zgaruvchilarida bo'lishi kerak")

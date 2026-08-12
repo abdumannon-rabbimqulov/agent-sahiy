@@ -21,10 +21,14 @@ import (
 	"sahiy-agent/internal/db"
 	"sahiy-agent/internal/escalation"
 	"sahiy-agent/internal/gemini"
+	"sahiy-agent/internal/images"
 	"sahiy-agent/internal/models"
+	"sahiy-agent/internal/orders"
+	"sahiy-agent/internal/service"
 	"sahiy-agent/internal/store"
 	"sahiy-agent/internal/support"
 	"sahiy-agent/internal/telegram"
+	"sahiy-agent/internal/tgtext"
 	"sahiy-agent/internal/userbot"
 	"sahiy-agent/internal/web"
 )
@@ -32,12 +36,19 @@ import (
 const (
 	envPath      = ".env"
 	pollInterval = 30 * time.Second
+	// fetchLimit — serverdan bir so'rovda olinadigan xabarlar soni.
+	// Kontekstga qanchasi kirishini HISTORY_LIMIT hal qiladi; bu yerdan
+	// ko'proq olinishi tail (eng yangi N ta) to'g'ri chiqishi uchun.
+	fetchLimit = 50
+	// maxImages — bitta tsiklda tahlil qilinadigan rasmlar soni.
+	maxImages = 3
 )
 
 // staffChannel — xodimlar guruhiga xabar yuboradigan kanal
 // (userbot yoki Bot API).
 type staffChannel interface {
-	Send(text string) (int64, error)
+	// Send matnni yuboradi; code — monospace (nusxalanadigan) bo'laklar.
+	Send(text string, code []tgtext.Span) (int64, error)
 }
 
 type app struct {
@@ -47,8 +58,10 @@ type app struct {
 	hist      *store.Store
 	esc       *escalation.Store
 	cats      *category.Store
-	staff     staffChannel // nil bo'lishi mumkin
-	cachePath string       // token cache fayli (DataDir ostida)
+	ord       *orders.Lookup // buyurtma holati (ikkinchi sayt)
+	staff     staffChannel   // nil bo'lishi mumkin
+	cachePath string         // token cache fayli (DataDir ostida)
+	imageDir  string         // chat rasmlari (DataDir/images)
 }
 
 func main() {
@@ -102,6 +115,24 @@ func main() {
 		esc:       escalation.New(database),
 		cats:      category.New(database),
 		cachePath: filepath.Join(cfg.DataDir, "token.json"),
+		imageDir:  filepath.Join(cfg.DataDir, "images"),
+	}
+
+	// Ikkinchi sayt (service API) — buyurtma holatini id/track bo'yicha ko'rish.
+	svc := service.New(cfg.ServiceBaseURL, service.LoginRequest{
+		Phone:      cfg.ServicePhone,
+		Password:   cfg.ServicePassword,
+		APKType:    cfg.ServiceAPKType,
+		DeviceID:   cfg.ServiceDeviceID,
+		DeviceName: cfg.ServiceDeviceName,
+		DeviceType: cfg.ServiceDeviceType,
+		FcmToken:   cfg.ServiceFcmToken,
+	}, filepath.Join(cfg.DataDir, "service-token.json"))
+	a.ord = orders.New(svc)
+	if svc.Enabled() {
+		fmt.Printf("📦 Buyurtma qidiruvi yoqilgan (%s)\n", cfg.ServiceBaseURL)
+	} else {
+		fmt.Println("ℹ️  Buyurtma qidiruvi o'chiq — .env da SERVICE_PHONE/SERVICE_PASSWORD yo'q")
 	}
 
 	// Web dashboard.
@@ -110,6 +141,7 @@ func main() {
 		AdminUser: cfg.AdminUser,
 		AdminPass: cfg.AdminPass,
 		Dev:       cfg.WebDev,
+		MediaDir:  a.imageDir,
 	})
 	if cfg.AdminUser == "" || cfg.AdminPass == "" {
 		fmt.Println("⚠️  Dashboard parolsiz ochiq — .env da ADMIN_USER/ADMIN_PASS o'rnating")
@@ -253,7 +285,7 @@ func (a *app) runCycle(ctx context.Context) {
 // baseline mavjud suhbatlarni javobsiz "ko'rilgan" deb belgilaydi.
 func (a *app) baseline(c *client.Client, chats []support.Conversation) {
 	for _, ch := range chats {
-		msgs, err := support.FetchMessages(c, ch.ID, 1, 50)
+		msgs, err := support.FetchMessages(c, ch.ID, 1, a.fetchLimit())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "    baseline xabarlar xatosi:", err)
 			continue
@@ -269,7 +301,7 @@ func (a *app) baseline(c *client.Client, chats []support.Conversation) {
 func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	ch support.Conversation, catalog string) bool {
 
-	msgs, err := support.FetchMessages(c, ch.ID, 1, 50)
+	msgs, err := support.FetchMessages(c, ch.ID, 1, a.fetchLimit())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    xabarlar xatosi:", err)
 		return false
@@ -286,27 +318,49 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 		return false
 	}
 
-	transcript := support.Transcript(msgs)
+	// tr — agent nimani qanday tushunganini bosqichma-bosqich yozib boradi;
+	// oxirida bazaga tushadi va dashboardda ko'rinadi.
+	var tr trace
 
-	// 1-qadam: mos kategoriyani aniqlash.
+	// 1-qadam: suhbatning oxirgi HISTORY_LIMIT ta xabari (kamida
+	// support.MinHistory) o'qiladi.
+	transcript, studied := support.TranscriptTail(msgs, a.cfg.HistoryLimit)
+	tr.add("📚", "Suhbatning oxirgi %d ta xabari o'qildi (limit %d)", studied, a.cfg.HistoryLimit)
+
+	// 2-qadam: mos kategoriyani aniqlash.
 	var (
 		catID   *uint
 		catInfo string
 	)
-	if catalog != "" {
+	if catalog == "" {
+		tr.add("🏷", "Kategoriya bosqichi o'tkazib yuborildi (katalog bo'sh)")
+	} else {
 		id, err := a.ai.Classify(ctx, catalog, transcript)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "    klassifikatsiya xatosi:", err)
-		} else if id > 0 {
-			if cat, err := a.cats.Get(id); err == nil && cat.Active {
+		switch {
+		case err != nil:
+			tr.add("⚠️", "Kategoriya aniqlanmadi (xato: %v)", err)
+		case id == 0:
+			tr.add("🏷", "Mos kategoriya topilmadi — umumiy bilim bilan javob beriladi")
+		default:
+			cat, cerr := a.cats.Get(id)
+			if cerr != nil || !cat.Active {
+				tr.add("🏷", "Kategoriya %d tanlandi, lekin o'chirilgan/topilmadi", id)
+			} else {
 				catID, catInfo = &cat.ID, cat.Content
-				fmt.Printf("    🏷  kategoriya: %d (%s)\n", cat.ID, cat.Name)
+				tr.add("🏷", "Kategoriya: %s (id %d)", cat.Name, cat.ID)
 			}
 		}
 	}
 
-	// 2-qadam: kategoriya ma'lumoti bilan javob yozish.
-	reply, err := a.ai.Ask(ctx, transcript, catInfo)
+	// 3-qadam: mijoz yuborgan rasmlarni saqlash va tahlil qilish.
+	imgInfo, imgNumbers := a.handleImages(ctx, &tr, ch, msgs)
+
+	// 4-qadam: xabardagi (va rasmdagi) track raqami yoki mijoz id'si
+	// bo'yicha buyurtma holatini ikkinchi saytdan olish.
+	orderInfo := a.lookupOrders(&tr, ch, lastText, imgNumbers)
+
+	// 5-qadam: kategoriya + rasm + buyurtma ma'lumoti bilan javob yozish.
+	reply, err := a.ai.Ask(ctx, transcript, catInfo, orderInfo+imgInfo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    gemini xatosi:", err)
 		return false // keyingi tsiklda qayta urinamiz
@@ -319,7 +373,8 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 
 	// Eskalatsiya markeri bo'lsa xodimlarga.
 	if strings.Contains(reply, a.cfg.EscalateMarker) {
-		a.escalate(ch, lastText)
+		tr.add("🆘", "AI muammoni hal qila olmadi (%s) — xodimlar guruhiga yuborilmoqda", a.cfg.EscalateMarker)
+		a.escalate(ctx, ch, lastText, transcript, orderInfo+imgInfo, &tr)
 		_ = a.track.Commit(ch.ID, lastID)
 		return true
 	}
@@ -328,32 +383,109 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	sent := false
 	if a.cfg.AutoReply {
 		if _, err := support.SendMessage(c, senderID, ch.ID, "agent", reply); err != nil {
-			fmt.Fprintln(os.Stderr, "    yuborish xatosi:", err)
+			tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
 		} else {
 			sent = true
-			fmt.Println("    ✓ Javob yuborildi")
+			tr.add("✅", "AI javob yozdi va mijozga yuborildi")
 		}
+	} else {
+		tr.add("👁", "AI javob yozdi, lekin yuborilmadi (AUTO_REPLY=false)")
 	}
-	a.record(ch, lastText, reply, sent, catID)
+	a.record(ch, lastText, reply, sent, catID, tr.String())
 	_ = a.track.Commit(ch.ID, lastID)
 	return true
 }
 
-// escalate muammoni xodimlar guruhiga yuboradi.
-func (a *app) escalate(ch support.Conversation, question string) {
-	text := fmt.Sprintf("🆘 Yordam kerak\nSuhbat #%d\nMijoz: %s\nSavol: %s\n\n↩️ Javob berish uchun shu xabarga REPLY qiling.",
-		ch.ID, ch.ClientName, question)
+// lookupOrders mijoz xabaridagi track raqami bo'yicha, u bo'lmasa mijoz
+// id'si bo'yicha buyurtmalarni ikkinchi saytdan qidiradi.
+func (a *app) lookupOrders(tr *trace, ch support.Conversation, lastText string, extra []string) string {
+	if !a.ord.Enabled() {
+		tr.add("📦", "Buyurtma qidiruvi o'chiq (SERVICE_PHONE/PASSWORD yo'q)")
+		return ""
+	}
 
+	// Avval xabardagi (va rasmdan olingan) track raqamlari — eng aniq qidiruv.
+	if tracks := orders.Tracks(lastText + " " + strings.Join(extra, " ")); len(tracks) > 0 {
+		tr.add("🔎", "Xabardan track raqami topildi: %s", strings.Join(tracks, ", "))
+		var all []orders.Order
+		for _, t := range tracks {
+			list, err := a.ord.ByTrack(t)
+			if err != nil {
+				tr.add("⚠️", "Track %s qidiruvida xato: %v", t, err)
+				continue
+			}
+			if len(list) == 0 {
+				tr.add("❌", "Track %s bo'yicha buyurtma topilmadi", t)
+				continue
+			}
+			tr.add("📦", "Track %s: %d ta buyurtma topildi", t, len(list))
+			all = append(all, list...)
+		}
+		if len(all) > 0 {
+			return orders.Summary(all)
+		}
+	}
+
+	// Track yo'q — mijozning barcha buyurtmalarini ko'ramiz.
+	// support.chat.conversation dagi client_id delivery API'dagi user_id
+	// bilan bir xil (tekshirilgan: client_id 7911997 → o'sha user_id'dagi
+	// buyurtmalar). Yangi qo'shiladigan saytlarda ham shu id ishlatiladi.
+	if ch.ClientID == nil || *ch.ClientID == 0 {
+		tr.add("📦", "Xabarda track raqami yo'q va mijoz id'si noma'lum — buyurtma ko'rilmadi")
+		return ""
+	}
+	list, err := a.ord.ByUser(*ch.ClientID)
+	if err != nil {
+		tr.add("⚠️", "Mijoz %d buyurtmalarini olishda xato: %v", *ch.ClientID, err)
+		return ""
+	}
+	if len(list) == 0 {
+		tr.add("❌", "Mijoz %d bo'yicha buyurtma topilmadi", *ch.ClientID)
+		return ""
+	}
+	tr.add("📦", "Mijoz %d bo'yicha %d ta buyurtma topildi", *ch.ClientID, len(list))
+	return orders.Summary(list)
+}
+
+// escalate muammoni xodimlar guruhiga yuboradi. Guruhga faqat oxirgi savol
+// emas, butun suhbatdan chiqarilgan umumiy muammo tushuntirishi ketadi.
+func (a *app) escalate(ctx context.Context, ch support.Conversation, question, transcript, orderInfo string, tr *trace) {
 	if a.staff == nil {
 		fmt.Fprintf(os.Stderr, "    ⚠️  Eskalatsiya kanali yo'q — xodimlarga yuborilmadi (#%d)\n", ch.ID)
-		a.record(ch, question, "[ESKALATSIYA — kanal yo'q, yuborilmadi]", false, nil)
+		tr.add("⚠️", "Eskalatsiya kanali yo'q — xodimlarga yuborilmadi")
+		a.record(ch, question, "[ESKALATSIYA — kanal yo'q, yuborilmadi]", false, nil, tr.String())
 		return
 	}
 
-	msgID, err := a.staff.Send(text)
+	summary, err := a.ai.Summarize(ctx, transcript, orderInfo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "    xulosa xatosi:", err)
+		summary = "(xulosa tayyorlanmadi — suhbatni dashboard'dan ko'ring)"
+	}
+
+	// Raqamlar backtick bilan belgilanadi — Telegram'da monospace bo'lib
+	// chiqadi va bosilganda nusxalanadi.
+	// Tizimdan olingan buyurtma va rasm ma'lumoti bo'lsa — xodim ham ko'rsin.
+	orderBlock := ""
+	if orderInfo != "" {
+		orderBlock = "\n📦 Tizimdagi ma'lumot:" + tgtext.MarkNumbers(orderInfo)
+	}
+	// Rasm havolalari ochiq — xodim Telegram'dan bosib ko'ra oladi.
+	if urls := a.imageURLs(ch.ID); len(urls) > 0 {
+		orderBlock += "\n📷 Mijoz rasmlari:\n" + strings.Join(urls, "\n") + "\n"
+	}
+
+	raw := fmt.Sprintf(
+		"🆘 Yordam kerak\nSuhbat #`%d`\nMijoz: %s %s\n\n📋 Umumiy holat:\n%s\n%s\n💬 Oxirgi xabar:\n%s\n\n↩️ Javob berish uchun shu xabarga REPLY qiling.",
+		ch.ID, ch.ClientName, clientIDLabel(ch.ClientID),
+		tgtext.MarkNumbers(summary), orderBlock, tgtext.MarkNumbers(question))
+	text, code := tgtext.Build(raw)
+
+	msgID, err := a.staff.Send(text, code)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    telegram yuborish xatosi:", err)
-		a.record(ch, question, "[ESKALATSIYA — yuborilmadi: "+err.Error()+"]", false, nil)
+		tr.add("⚠️", "Telegram'ga yuborishda xato: %v", err)
+		a.record(ch, question, "[ESKALATSIYA — yuborilmadi: "+err.Error()+"]", false, nil, tr.String())
 		return
 	}
 	_ = a.esc.Add(&models.Escalation{
@@ -362,8 +494,17 @@ func (a *app) escalate(ch support.Conversation, question string) {
 		ClientName:     ch.ClientName,
 		Question:       question,
 	})
-	a.record(ch, question, "[ESKALATSIYA → xodimlar guruhi]", false, nil)
-	fmt.Printf("    📨 Xodimlar guruhiga yuborildi (#%d, tg=%d)\n", ch.ID, msgID)
+	tr.add("📨", "Xodimlar guruhiga yuborildi (tg xabar id %d)", msgID)
+	a.record(ch, question, "[ESKALATSIYA → xodimlar guruhi]", false, nil, tr.String())
+}
+
+// clientIDLabel mijoz id'sini "ID `7235`" ko'rinishida qaytaradi
+// (id bo'lmasa bo'sh satr). Backtick — nusxalanadigan bo'lak belgisi.
+func clientIDLabel(id *int64) string {
+	if id == nil || *id == 0 {
+		return ""
+	}
+	return fmt.Sprintf("ID `%d`", *id)
 }
 
 // onStaffReply xodim guruhda REPLY qilganda chaqiriladi (userbot yoki bot API).
@@ -383,7 +524,8 @@ func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 	}
 	_ = a.esc.Resolve(item.TgMessageID, text)
 	if a.staff != nil {
-		a.staff.Send(fmt.Sprintf("✅ #%d — javob mijozga yuborildi (%s)", item.ConversationID, from))
+		done, code := tgtext.Build(fmt.Sprintf("✅ #`%d` — javob mijozga yuborildi (%s)", item.ConversationID, from))
+		a.staff.Send(done, code)
 	}
 	_ = a.hist.Append(&models.Interaction{
 		ConversationID: item.ConversationID,
@@ -391,6 +533,7 @@ func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 		ClientMessage:  item.Question,
 		AIReply:        fmt.Sprintf("[Xodim %s] %s", from, text),
 		Sent:           true,
+		Steps:          fmt.Sprintf("1. Eskalatsiya guruhga yuborilgan edi\n2. Xodim %s guruhda REPLY qildi\n3. Javob mijozga yuborildi", from),
 	})
 	fmt.Printf("    ✅ Xodim javobi mijozga yuborildi (#%d)\n", item.ConversationID)
 }
@@ -430,6 +573,15 @@ func (a *app) apiClient() (*client.Client, int64, error) {
 	return c, a.senderID(token), nil
 }
 
+// fetchLimit serverdan olinadigan xabarlar soni — kontekst limitidan kam
+// bo'lmasligi kerak, aks holda oxirgi N ta xabar to'liq yig'ilmaydi.
+func (a *app) fetchLimit() int {
+	if a.cfg.HistoryLimit > fetchLimit {
+		return a.cfg.HistoryLimit
+	}
+	return fetchLimit
+}
+
 func (a *app) senderID(token string) int64 {
 	if a.cfg.AgentSenderID != 0 {
 		return a.cfg.AgentSenderID
@@ -440,7 +592,7 @@ func (a *app) senderID(token string) int64 {
 	return 0
 }
 
-func (a *app) record(ch support.Conversation, clientMsg, reply string, sent bool, catID *uint) {
+func (a *app) record(ch support.Conversation, clientMsg, reply string, sent bool, catID *uint, steps string) {
 	var clientID int64
 	if ch.ClientID != nil {
 		clientID = *ch.ClientID
@@ -448,7 +600,7 @@ func (a *app) record(ch support.Conversation, clientMsg, reply string, sent bool
 	_ = a.hist.Append(&models.Interaction{
 		ConversationID: ch.ID, ClientID: clientID, ClientName: ch.ClientName,
 		Title: ch.Title, ClientMessage: clientMsg, AIReply: reply,
-		Sent: sent, CategoryID: catID,
+		Sent: sent, CategoryID: catID, Steps: steps,
 	})
 }
 
@@ -463,11 +615,11 @@ type ubChannel struct {
 	disabled atomic.Bool
 }
 
-func (u *ubChannel) Send(text string) (int64, error) {
+func (u *ubChannel) Send(text string, code []tgtext.Span) (int64, error) {
 	if u.disabled.Load() {
 		return 0, fmt.Errorf("telegram sessiyasi yo'q — `agent login` bajaring")
 	}
-	return u.bot.SendToGroup(u.ctx, u.target, text)
+	return u.bot.SendToGroup(u.ctx, u.target, text, code)
 }
 
 type botChannel struct {
@@ -475,8 +627,8 @@ type botChannel struct {
 	chatID string
 }
 
-func (b *botChannel) Send(text string) (int64, error) {
-	return b.bot.SendMessage(b.chatID, text)
+func (b *botChannel) Send(text string, code []tgtext.Span) (int64, error) {
+	return b.bot.SendMessage(b.chatID, text, code)
 }
 
 // escalationTarget eskalatsiya boradigan guruhni aniqlaydi.
@@ -577,4 +729,110 @@ func noPrompt(what string) func(ctx context.Context) (string, error) {
 	return func(context.Context) (string, error) {
 		return "", fmt.Errorf("%s kerak, lekin fon rejimida so'ralmaydi — `agent login` bajaring", what)
 	}
+}
+
+// handleImages mijoz yuborgan rasmlarni yuklab oladi, Gemini bilan tahlil
+// qiladi va bazaga saqlaydi. Qaytaradi: Gemini promptiga qo'shiladigan matn
+// va rasmlardan ajratilgan raqamlar.
+//
+// Bir marta ishlangan rasm (message_id) qayta yuklanmaydi va qayta tahlil
+// qilinmaydi — natija bazadan olinadi.
+func (a *app) handleImages(ctx context.Context, tr *trace, ch support.Conversation,
+	msgs []support.Message) (string, []string) {
+
+	imgs := support.ImageMessages(msgs, maxImages)
+	if len(imgs) == 0 {
+		return "", nil
+	}
+	tr.add("📷", "Suhbatda %d ta mijoz rasmi bor (%d tasi ko'riladi)",
+		len(support.ImageMessages(msgs, 0)), len(imgs))
+
+	var (
+		b       strings.Builder
+		numbers []string
+	)
+	for _, m := range imgs {
+		rec := a.processImage(ctx, tr, ch, m)
+		if rec == nil {
+			continue
+		}
+		fmt.Fprintf(&b, "\n### Rasm (xabar %d)\n%s\n", rec.MessageID, rec.Analysis)
+		if rec.Numbers != "" {
+			fmt.Fprintf(&b, "Rasmdagi raqamlar: %s\n", rec.Numbers)
+			numbers = append(numbers, strings.Split(rec.Numbers, ",")...)
+		}
+	}
+	if b.Len() == 0 {
+		return "", nil
+	}
+	return "\n\n--- Mijoz yuborgan rasmlar (tahlil qilingan) ---" + b.String(), numbers
+}
+
+// processImage bitta rasmni keshdan oladi yoki yuklab olib tahlil qiladi.
+// Xatolik bo'lsa nil qaytaradi — javob yozish baribir davom etadi.
+func (a *app) processImage(ctx context.Context, tr *trace, ch support.Conversation,
+	m support.Message) *models.ChatImage {
+
+	if rec, ok := a.hist.GetImage(m.ID); ok {
+		tr.add("💾", "Rasm %d keshdan olindi (qayta yuklanmadi)", m.ID)
+		return rec
+	}
+
+	res, err := images.Download(m.Message, a.imageDir, ch.ID, m.ID)
+	if err != nil {
+		tr.add("⚠️", "Rasm %d yuklanmadi: %v", m.ID, err)
+		return nil
+	}
+	tr.add("⬇️", "Rasm %d yuklab olindi (%d KB)", m.ID, res.Size/1024)
+
+	out, err := a.ai.DescribeImage(ctx, res.Mime, res.Data)
+	if err != nil {
+		tr.add("⚠️", "Rasm %d tahlil qilinmadi: %v", m.ID, err)
+		return nil
+	}
+	nums, desc := gemini.ParseImageAnswer(out)
+	if len(nums) > 0 {
+		tr.add("🔎", "Rasmda topildi: %s", strings.Join(nums, ", "))
+	} else {
+		tr.add("🖼", "Rasmda raqam yo'q — %s", desc)
+	}
+
+	var clientID int64
+	if ch.ClientID != nil {
+		clientID = *ch.ClientID
+	}
+	rec := &models.ChatImage{
+		MessageID:      m.ID,
+		ConversationID: ch.ID,
+		ClientID:       clientID,
+		URL:            m.Message,
+		Path:           res.Path,
+		MimeType:       res.Mime,
+		SizeBytes:      res.Size,
+		Analysis:       desc,
+		Numbers:        strings.Join(nums, ","),
+	}
+	if err := a.hist.SaveImage(rec); err != nil {
+		tr.add("⚠️", "Rasm %d bazaga yozilmadi: %v", m.ID, err)
+	}
+	return rec
+}
+
+// imageURLs suhbatdagi saqlangan rasmlarning asl havolalarini qaytaradi
+// (eskalatsiya xabarida xodimga ko'rsatish uchun).
+func (a *app) imageURLs(conversationID int64) []string {
+	all, err := a.hist.RecentImages(200)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, im := range all {
+		if im.ConversationID == conversationID {
+			out = append(out, im.URL)
+			if len(out) >= maxImages {
+				break
+			}
+		}
+	}
+	return out
 }
