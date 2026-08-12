@@ -457,11 +457,12 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 		return
 	}
 
-	summary, err := a.ai.Summarize(ctx, transcript, orderInfo)
+	daraja, summary, err := a.ai.Summarize(ctx, transcript, orderInfo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    xulosa xatosi:", err)
 		summary = "(xulosa tayyorlanmadi — suhbatni dashboard'dan ko'ring)"
 	}
+	tr.add(daraja.Belgi(), "Muammo darajasi: %s", daraja.Sarlavha())
 
 	// Raqamlar backtick bilan belgilanadi — Telegram'da monospace bo'lib
 	// chiqadi va bosilganda nusxalanadi.
@@ -475,10 +476,11 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 		orderBlock += "\n📷 Mijoz rasmlari:\n" + strings.Join(urls, "\n") + "\n"
 	}
 
+	// Mijozning oxirgi xabari eng tepada — xodim birinchi shuni ko'radi.
 	raw := fmt.Sprintf(
-		"🆘 Yordam kerak\nSuhbat #`%d`\nMijoz: %s %s\n\n📋 Umumiy holat:\n%s\n%s\n💬 Oxirgi xabar:\n%s\n\n↩️ Javob berish uchun shu xabarga REPLY qiling.",
-		ch.ID, ch.ClientName, clientIDLabel(ch.ClientID),
-		tgtext.MarkNumbers(summary), orderBlock, tgtext.MarkNumbers(question))
+		"%s %s — yordam kerak\nSuhbat #`%d` | Mijoz: %s %s\n\n💬 Mijozning oxirgi xabari:\n%s\n\n📋 Umumiy holat:\n%s\n%s\n↩️ Javob berish uchun shu xabarga REPLY qiling.",
+		daraja.Belgi(), daraja.Sarlavha(), ch.ID, ch.ClientName, clientIDLabel(ch.ClientID),
+		tgtext.MarkNumbers(question), tgtext.MarkNumbers(summary), orderBlock)
 	text, code := tgtext.Build(raw)
 
 	msgID, err := a.staff.Send(text, code)
@@ -495,7 +497,7 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 		Question:       question,
 	})
 	tr.add("📨", "Xodimlar guruhiga yuborildi (tg xabar id %d)", msgID)
-	a.record(ch, question, "[ESKALATSIYA → xodimlar guruhi]", false, nil, tr.String())
+	a.record(ch, question, "[ESKALATSIYA "+daraja.Sarlavha()+" → xodimlar guruhi]", false, nil, tr.String())
 }
 
 // clientIDLabel mijoz id'sini "ID `7235`" ko'rinishida qaytaradi

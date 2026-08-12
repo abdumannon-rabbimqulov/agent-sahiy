@@ -76,7 +76,9 @@ type genResponse struct {
 // extra — tanlangan kategoriya ma'lumoti (bo'sh bo'lishi mumkin).
 // orderInfo — id/track raqami bo'yicha topilgan buyurtma holati (xom JSON).
 func (c *Client) Ask(ctx context.Context, transcript, extra, orderInfo string) (string, error) {
-	system := c.Prompt
+	// Bugungi sana — usiz model "12-15 kun ichida" kabi muddatlarni
+	// buyurtma sanasidan hisoblay olmaydi.
+	system := c.Prompt + "\n\nBugungi sana: " + time.Now().Format("2006-01-02")
 	if extra != "" {
 		system += "\n\n--- Shu savolga oid ma'lumot ---\n" + extra +
 			"\n\nJavobingni faqat shu ma'lumotga tayanib yoz. Bu yerda yo'q narsani o'ylab topma."
@@ -91,17 +93,57 @@ func (c *Client) Ask(ctx context.Context, transcript, extra, orderInfo string) (
 	return c.generate(ctx, system, transcript)
 }
 
-// Summarize suhbatni xodimlar guruhi uchun qisqa xulosaga aylantiradi:
-// mijozning umumiy muammosi, muhim tafsilotlar va xodimdan nima kerakligi.
-func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (string, error) {
+// Daraja — muammoning shoshilinchlik darajasi.
+type Daraja string
+
+const (
+	Yuqori Daraja = "yuqori"
+	Orta   Daraja = "o'rta"
+	Past   Daraja = "past"
+)
+
+// Belgi — guruh xabarida ko'rinadigan rangli belgi.
+func (d Daraja) Belgi() string {
+	switch d {
+	case Yuqori:
+		return "🔴"
+	case Past:
+		return "🟢"
+	default:
+		return "🟡"
+	}
+}
+
+// Sarlavha — xabar boshidagi matn.
+func (d Daraja) Sarlavha() string {
+	switch d {
+	case Yuqori:
+		return "YUQORI"
+	case Past:
+		return "PAST"
+	default:
+		return "O'RTA"
+	}
+}
+
+// Summarize suhbatni xodimlar guruhi uchun qisqa xulosaga aylantiradi va
+// muammoning shoshilinchlik darajasini aniqlaydi.
+func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (Daraja, string, error) {
 	system := "Sen support jamoasiga muammoni tushuntiruvchi yordamchisan.\n" +
 		"Quyida mijoz bilan bo'lgan suhbat tarixi berilgan. Uni to'liq o'qib chiq va\n" +
 		"navbatchi xodim uchun qisqa xulosa yoz — xodim suhbatni o'qimasdan ham\n" +
 		"muammoni tushunishi kerak.\n\n" +
-		"Aynan quyidagi 3 qatorni yoz (har biri 1-2 gap, o'zbek tilida):\n" +
+		"Aynan quyidagi 4 qatorni yoz (o'zbek tilida):\n" +
+		"Daraja: <yuqori | o'rta | past>\n" +
 		"Muammo: <mijozning umumiy muammosi>\n" +
-		"Tafsilot: <suhbatdagi muhim faktlar: buyurtma/tovar nomi, raqam, sana, nima urinib ko'rilgan>\n" +
+		"Tafsilot: <muhim faktlar: buyurtma/track raqami, sana, nima urinib ko'rilgan>\n" +
 		"Kerak: <xodimdan aniq nima talab qilinadi>\n\n" +
+		"Daraja qanday tanlanadi:\n" +
+		"- yuqori: yetkazish muddati o'tgan, buyurtma yo'qolgan yoki shikastlangan,\n" +
+		"  pul qaytarish yoki to'lov nizosi, mijoz jahli chiqqan yoki bir necha\n" +
+		"  marta javobsiz murojaat qilgan\n" +
+		"- o'rta: holat noaniq, tekshirish kerak, lekin shoshilinch emas\n" +
+		"- past: oddiy savol yoki ma'lumot yetishmayotgani uchun aniqlik kerak\n\n" +
 		"Boshqa hech narsa yozma. Suhbatda yo'q ma'lumotni o'ylab topma —\n" +
 		"bilinmasa \"noma'lum\" deb yoz."
 
@@ -111,9 +153,32 @@ func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (s
 
 	out, err := c.generate(ctx, system, transcript)
 	if err != nil {
-		return "", err
+		return Orta, "", err
 	}
-	return strings.TrimSpace(out), nil
+	daraja, body := splitDaraja(out)
+	return daraja, body, nil
+}
+
+// splitDaraja javobdan "Daraja:" qatorini ajratib oladi; qolgan matn
+// xodimga ko'rsatiladigan xulosa bo'lib qoladi.
+func splitDaraja(out string) (Daraja, string) {
+	daraja := Orta
+	var kept []string
+	for _, line := range strings.Split(out, "\n") {
+		i := strings.Index(line, ":")
+		if i > 0 && strings.ToLower(strings.Trim(line[:i], "*_-# \t")) == "daraja" {
+			val := strings.ToLower(strings.Trim(line[i+1:], "*_ \t."))
+			switch {
+			case strings.Contains(val, "yuqori"):
+				daraja = Yuqori
+			case strings.Contains(val, "past"):
+				daraja = Past
+			}
+			continue // bu qator xulosaga kirmaydi
+		}
+		kept = append(kept, line)
+	}
+	return daraja, strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 // DescribeImage mijoz yuborgan rasmni tahlil qiladi. Javob qat'iy formatda

@@ -68,3 +68,10 @@ pre.content{margin:0;white-space:pre-wrap;font:inherit;font-size:13px;color:var(
 .shot{display:block;border:1px solid var(--line);border-radius:8px;overflow:hidden;line-height:0}
 .shot img{width:64px;height:64px;object-fit:cover;display:block;transition:transform .15s}
 .shot:hover img{transform:scale(1.08)}
+
+/* Uzun matn: 4 qatordan keyin kesiladi, bosilsa ochiladi */
+.clip{position:relative;max-height:5.6em;overflow:hidden;cursor:pointer}
+.clip::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2em;
+  background:linear-gradient(transparent,var(--card))}
+.clip.open{max-height:none}
+.clip.open::after{display:none}
