@@ -22,8 +22,13 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    # Konteyner ichidan hostdagi Ollama'ga borish uchun (localhost ishlamaydi).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgres://sahiy:sahiy@db:5432/sahiy?sslmode=disable
+      # Lokal model hostda ishlaydi — konteynerdan shu manzil orqali ko'rinadi.
+      OLLAMA_URL: http://host.docker.internal:11434
       DATA_DIR: /data
       AGENT_PROMPT_FILE: /app/prompt.txt
       # Sessiya /data volume'da saqlanadi — bir marta login qilinsa yetadi.

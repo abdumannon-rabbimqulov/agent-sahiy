@@ -3,7 +3,6 @@ package db
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -53,13 +52,34 @@ func Migrate(db *gorm.DB) error {
 		&models.Category{},
 		&models.Interaction{},
 		&models.Escalation{},
-		&models.ChatImage{},
 		&models.ConversationState{},
 		&models.Setting{},
 	); err != nil {
 		return fmt.Errorf("migratsiya: %w", err)
 	}
+	if err := migrateEscalationStatus(db); err != nil {
+		return err
+	}
 	return seedCategories(db)
+}
+
+// migrateEscalationStatus eski `resolved` ustunidagi ma'lumotni yangi
+// `status` ustuniga ko'chiradi — aks holda eski hal qilingan murojaatlar
+// dashboardda "jarayonda" bo'lib qolardi.
+func migrateEscalationStatus(db *gorm.DB) error {
+	if !db.Migrator().HasColumn(&models.Escalation{}, "resolved") {
+		return nil
+	}
+	if err := db.Exec(
+		"UPDATE escalations SET status = ? WHERE resolved AND status <> ?",
+		models.StatusStaffSent, models.StatusStaffSent).Error; err != nil {
+		return fmt.Errorf("eskalatsiya statusini ko'chirish: %w", err)
+	}
+	if err := db.Migrator().DropColumn(&models.Escalation{}, "resolved"); err != nil {
+		return fmt.Errorf("eski resolved ustunini o'chirish: %w", err)
+	}
+	log.Println("✓ Eskalatsiya holatlari yangi `status` ustuniga ko'chirildi")
+	return nil
 }
 
 // seedCategories jadval bo'sh bo'lsa birinchi kategoriyani qo'shadi.
@@ -96,11 +116,14 @@ func SetSetting(db *gorm.DB, key, value string) error {
 }
 
 // GetSetting kalit qiymatini o'qiydi (bo'lmasa "" va nil).
+// First emas, Find — "topilmadi" oddiy holat, logga ogohlantirish yozilmasin.
 func GetSetting(db *gorm.DB, key string) (string, error) {
-	var s models.Setting
-	err := db.First(&s, "key = ?", key).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	var out []models.Setting
+	if err := db.Where("key = ?", key).Limit(1).Find(&out).Error; err != nil {
+		return "", err
+	}
+	if len(out) == 0 {
 		return "", nil
 	}
-	return s.Value, err
+	return out[0].Value, nil
 }

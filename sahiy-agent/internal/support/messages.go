@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"sahiy-agent/internal/client"
 )
@@ -72,6 +73,17 @@ func ImageMessages(msgs []Message, limit int) []Message {
 	return out
 }
 
+// ImageURLs oynadagi mijoz rasmlarining asl havolalarini qaytaradi
+// (eng yangisi birinchi, limit tagacha; limit <= 0 — hammasi).
+// Rasmlar yuklab olinmaydi va tahlil qilinmaydi — faqat havola saqlanadi.
+func ImageURLs(msgs []Message, limit int) []string {
+	var out []string
+	for _, m := range ImageMessages(msgs, limit) {
+		out = append(out, m.Message)
+	}
+	return out
+}
+
 // MinHistory — Gemini'ga beriladigan eng kam xabar soni. Agent hech qachon
 // bundan kam kontekst bilan javob yozmaydi (suhbatda shuncha xabar bo'lsa).
 const MinHistory = 10
@@ -127,14 +139,122 @@ func TranscriptTail(msgs []Message, n int) (string, int) {
 }
 
 // LastClientMessage oxirgi (eng katta id'li) mijoz xabarini qaytaradi.
-// Mijoz xabari bo'lmasa id=0 bo'ladi.
+// Mijoz xabari bo'lmasa id=0 bo'ladi. Rasm xabarida `message` — bu URL,
+// shuning uchun matn o'rniga "[rasm]" qaytadi (xom havola dashboardga ham,
+// xodimlar guruhiga ham tushmasin).
 func LastClientMessage(msgs []Message) (int64, string) {
 	var id int64
 	var text string
 	for _, m := range msgs {
 		if m.SenderType == "client" && m.ID > id {
 			id, text = m.ID, m.Message
+			if m.IsImage() {
+				text = "[rasm]"
+			}
 		}
 	}
 	return id, text
+}
+
+// --- Yangi xabarlar oynasi (token tejash) ---
+
+// timeLayouts — server `created_at` ni turli formatlarda qaytarishi mumkin.
+var timeLayouts = []string{
+	time.RFC3339,
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04:05.999999",
+}
+
+// Time xabarning yaratilgan vaqtini qaytaradi. Sana o'qilmasa ok=false —
+// bunday xabar hech qachon "eski" deb hisoblanmaydi.
+func (m Message) Time() (time.Time, bool) {
+	s := strings.TrimSpace(m.CreatedAt)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, l := range timeLayouts {
+		if t, err := time.Parse(l, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// Age xabarning yoshi (vaqti noma'lum bo'lsa 0, ok=false).
+func (m Message) Age(now time.Time) (time.Duration, bool) {
+	t, ok := m.Time()
+	if !ok {
+		return 0, false
+	}
+	return now.Sub(t), true
+}
+
+// Stale — oxirgi mijoz xabari maxAge dan eski bo'lsa true. Bunday suhbatga
+// AI chaqirilmaydi (eski, allaqachon dolzarbligini yo'qotgan murojaat).
+// maxAge <= 0 bo'lsa tekshiruv o'chiq.
+func Stale(msgs []Message, maxAge time.Duration) (bool, time.Duration) {
+	if maxAge <= 0 {
+		return false, 0
+	}
+	var newest Message
+	for _, m := range msgs {
+		if m.SenderType == "client" && m.ID > newest.ID {
+			newest = m
+		}
+	}
+	age, ok := newest.Age(time.Now())
+	if !ok {
+		return false, 0
+	}
+	return age > maxAge, age
+}
+
+// Window AI'ga beriladigan xabarlar oynasini ajratadi — butun tarix emas,
+// faqat kerakli qismi:
+//
+//   - afterID dan keyingi (hali javob berilmagan) barcha xabarlar;
+//   - ulardan oldingi `before` ta xabar — kontekst uchun;
+//   - maxAge dan eski xabarlar butunlay tashlanadi (maxAge <= 0 — cheklovsiz);
+//   - jami `max` tadan oshmaydi (max <= 0 — cheklovsiz).
+//
+// afterID = 0 (suhbat birinchi marta ko'rilmoqda) bo'lsa oxirgi before+1 ta
+// xabar olinadi.
+func Window(msgs []Message, afterID int64, before, max int, maxAge time.Duration) []Message {
+	sorted := make([]Message, 0, len(msgs))
+	now := time.Now()
+	for _, m := range msgs {
+		if maxAge > 0 {
+			if age, ok := m.Age(now); ok && age > maxAge {
+				continue // eski xabar — kontekstga ham kirmaydi
+			}
+		}
+		sorted = append(sorted, m)
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+
+	// Yangi xabarlar qayerdan boshlanadi.
+	start := len(sorted)
+	for i, m := range sorted {
+		if m.ID > afterID {
+			start = i
+			break
+		}
+	}
+	if before < 0 {
+		before = 0
+	}
+	if afterID == 0 {
+		// Birinchi ko'rish: hammasi "yangi" — oxirgi before+1 tasi yetadi.
+		start = len(sorted)
+		before++
+	}
+	if start-before < 0 {
+		before = start
+	}
+	out := sorted[start-before:]
+	if max > 0 && len(out) > max {
+		out = out[len(out)-max:]
+	}
+	return out
 }

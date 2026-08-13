@@ -27,6 +27,42 @@ td.w{max-width:320px;overflow-wrap:anywhere}
 .sent{background:rgba(62,207,142,.15);color:var(--ok)}
 .nosent{background:rgba(255,180,84,.15);color:var(--warn)}
 .cat{background:rgba(79,156,255,.15);color:var(--acc)}
+/* Boshqaruv paneli: AI yoqish/o'chirish */
+.panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:20px}
+.ctl{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.ctl-t{font-weight:600;font-size:14px}
+.ctl-s{color:var(--mut);font-size:12px;margin-top:3px}
+.sw{flex:none;width:46px;height:26px;border-radius:20px;background:#2a3348;border:1px solid var(--line);
+  padding:0;position:relative;cursor:pointer;transition:background .15s}
+.sw span{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+  background:var(--mut);transition:transform .15s,background .15s}
+.sw[aria-checked="true"]{background:rgba(62,207,142,.3);border-color:rgba(62,207,142,.5)}
+.sw[aria-checked="true"] span{transform:translateX(20px);background:var(--ok)}
+.sw[disabled]{opacity:.5;cursor:wait}
+
+/* Javobni tasdiqlash tugmalari */
+.act{display:flex;gap:6px;margin-top:8px}
+.act button{padding:4px 10px;font-size:12px;font-weight:500;border-radius:6px}
+.ok-btn{background:rgba(62,207,142,.15);color:var(--ok);border:1px solid rgba(62,207,142,.35)}
+.no-btn{background:transparent;color:var(--danger);border:1px solid rgba(255,107,107,.35)}
+.rejected{background:rgba(255,107,107,.15);color:var(--danger)}
+
+/* Muammo holati */
+.pending{background:rgba(255,180,84,.18);color:var(--warn)}
+.staff{background:rgba(79,156,255,.18);color:var(--acc)}
+.failed{background:rgba(255,107,107,.18);color:var(--danger)}
+.by{font-size:11px;margin-top:4px}
+/* Javobning tannarxi */
+.cost{font-size:11px;color:var(--mut);margin-top:6px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* Holat bo'yicha filtr tugmalari */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.chipbtn{background:transparent;color:var(--mut);border:1px solid var(--line);
+  border-radius:20px;padding:5px 12px;font-size:12px;font-weight:500}
+.chipbtn:hover{color:var(--tx)}
+.chipbtn.on{background:rgba(79,156,255,.15);color:var(--acc);border-color:rgba(79,156,255,.35)}
 form.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:20px;display:grid;gap:10px}
 label{font-size:12px;color:var(--mut);display:block;margin-bottom:4px}
 input[type=text],textarea{width:100%;background:#111726;border:1px solid var(--line);color:var(--tx);
@@ -63,11 +99,11 @@ pre.content{margin:0;white-space:pre-wrap;font:inherit;font-size:13px;color:var(
 .steps ol{margin:8px 0 0;padding-left:18px}
 .steps li{color:var(--mut);font-size:12px;line-height:1.5;margin-bottom:3px}
 
-/* Chat rasmlari (thumbnail) */
+/* "Rasm bor" belgisi (rasm tahlil qilinmaydi, faqat havolasi ko'rsatiladi) */
 .shots{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.shot{display:block;border:1px solid var(--line);border-radius:8px;overflow:hidden;line-height:0}
-.shot img{width:64px;height:64px;object-fit:cover;display:block;transition:transform .15s}
-.shot:hover img{transform:scale(1.08)}
+.hasimg{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;white-space:nowrap;
+  background:rgba(255,180,84,.15);color:var(--warn);text-decoration:none}
+a.hasimg:hover{background:rgba(255,180,84,.28)}
 
 /* Uzun matn: 4 qatordan keyin kesiladi, bosilsa ochiladi */
 .clip{position:relative;max-height:5.6em;overflow:hidden;cursor:pointer}

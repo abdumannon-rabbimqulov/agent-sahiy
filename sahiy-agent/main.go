@@ -14,6 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"gorm.io/gorm"
+
+	"sahiy-agent/internal/ai"
 	"sahiy-agent/internal/auth"
 	"sahiy-agent/internal/category"
 	"sahiy-agent/internal/client"
@@ -21,10 +24,13 @@ import (
 	"sahiy-agent/internal/db"
 	"sahiy-agent/internal/escalation"
 	"sahiy-agent/internal/gemini"
-	"sahiy-agent/internal/images"
 	"sahiy-agent/internal/models"
+	"sahiy-agent/internal/ollama"
+	"sahiy-agent/internal/openai"
 	"sahiy-agent/internal/orders"
+	"sahiy-agent/internal/pricing"
 	"sahiy-agent/internal/service"
+	"sahiy-agent/internal/settings"
 	"sahiy-agent/internal/store"
 	"sahiy-agent/internal/support"
 	"sahiy-agent/internal/telegram"
@@ -40,7 +46,8 @@ const (
 	// Kontekstga qanchasi kirishini HISTORY_LIMIT hal qiladi; bu yerdan
 	// ko'proq olinishi tail (eng yangi N ta) to'g'ri chiqishi uchun.
 	fetchLimit = 50
-	// maxImages — bitta tsiklda tahlil qilinadigan rasmlar soni.
+	// maxImages — bitta suhbatdan eslab qolinadigan rasm havolalari soni
+	// (rasmlar tahlil qilinmaydi — faqat "rasm bor" belgisi uchun).
 	maxImages = 3
 )
 
@@ -53,15 +60,17 @@ type staffChannel interface {
 
 type app struct {
 	cfg       *config.Config
-	ai        *gemini.Client
+	ai        *ai.Client
 	track     *support.Tracker
 	hist      *store.Store
 	esc       *escalation.Store
 	cats      *category.Store
-	ord       *orders.Lookup // buyurtma holati (ikkinchi sayt)
-	staff     staffChannel   // nil bo'lishi mumkin
-	cachePath string         // token cache fayli (DataDir ostida)
-	imageDir  string         // chat rasmlari (DataDir/images)
+	ord       *orders.Lookup  // buyurtma holati (ikkinchi sayt)
+	staff     staffChannel    // nil bo'lishi mumkin
+	db        *gorm.DB        // byudjet ogohlantirishi bir marta yuborilishi uchun
+	local     *ollama.Client  // lokal model (AI_PROVIDER=ollama bo'lsa), aks holda nil
+	set       *settings.Store // dashboarddan boshqariladigan sozlamalar
+	cachePath string          // token cache fayli (DataDir ostida)
 }
 
 func main() {
@@ -109,14 +118,25 @@ func main() {
 
 	a := &app{
 		cfg:       cfg,
-		ai:        gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.AgentPrompt),
 		track:     support.NewTracker(database),
 		hist:      store.New(database),
 		esc:       escalation.New(database),
 		cats:      category.New(database),
+		db:        database,
+		set:       settings.New(database),
 		cachePath: filepath.Join(cfg.DataDir, "token.json"),
-		imageDir:  filepath.Join(cfg.DataDir, "images"),
 	}
+	// Sozlamalar: .env dagi qiymat faqat birinchi marta yoziladi, keyin
+	// dashboarddagi tugma ustun turadi.
+	if err := a.set.Init(settings.AutoReply, cfg.AutoReply); err != nil {
+		fmt.Fprintln(os.Stderr, "sozlama xatosi:", err)
+	}
+	if err := a.set.Init(settings.AIEnabled, true); err != nil {
+		fmt.Fprintln(os.Stderr, "sozlama xatosi:", err)
+	}
+
+	backend, local := pickBackend(cfg)
+	a.ai, a.local = ai.New(backend, cfg.AgentPrompt), local
 
 	// Ikkinchi sayt (service API) — buyurtma holatini id/track bo'yicha ko'rish.
 	svc := service.New(cfg.ServiceBaseURL, service.LoginRequest{
@@ -135,13 +155,47 @@ func main() {
 		fmt.Println("ℹ️  Buyurtma qidiruvi o'chiq — .env da SERVICE_PHONE/SERVICE_PASSWORD yo'q")
 	}
 
+	// Narx: .env dagi qiymat kod jadvalidan ustun turadi.
+	pricing.Set(cfg.PriceIn, cfg.PriceCachedIn, cfg.PriceOut)
+	if a.local != nil {
+		// Lokal model bepul — narx jadvaliga nol narx bilan qo'shiladi.
+		pricing.MarkFree(a.local.Model)
+		fmt.Printf("🖥  Lokal model: %s (RAM: keep_alive=%s, kontekst=%d token)\n",
+			a.local.Model, a.local.KeepAlive, a.local.NumCtx)
+		if err := a.local.Check(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  %v\n", err)
+			if cfg.OpenAIAPIKey != "" {
+				fmt.Fprintln(os.Stderr, "   Zaxira sifatida OpenAI ishlatiladi.")
+			}
+		}
+	}
+	if a.ai.Ready() {
+		fmt.Printf("🧠 AI: %s\n", a.ai.Name())
+		if _, ok := pricing.Lookup(a.modelName()); ok {
+			fmt.Printf("💰 Narx — %s\n", pricing.Describe(a.modelName()))
+		} else {
+			fmt.Printf("⚠️  %s narxi noma'lum — .env da AI_PRICE_IN va AI_PRICE_OUT ni o'rnating\n"+
+				"   (tokenlar baribir saqlanadi, narx qo'yilgach qayta hisoblash mumkin)\n", a.modelName())
+		}
+		if a.set.Bool(settings.AutoReply, cfg.AutoReply) {
+			fmt.Println("📤 Avto-javob YOQILGAN — AI javoblari mijozga darhol ketadi")
+		} else {
+			fmt.Println("👁  Avto-javob o'chirilgan — javoblar dashboardda tasdiqlashni kutadi")
+		}
+		if cfg.BudgetUSD > 0 {
+			fmt.Printf("🎯 Oylik byudjet: $%.2f (oshsa xodimlar guruhiga ogohlantirish)\n", cfg.BudgetUSD)
+		}
+	} else {
+		fmt.Println("⚠️  AI kaliti yo'q — .env da OPENAI_API_KEY yoki GEMINI_API_KEY o'rnating")
+	}
+
 	// Web dashboard.
-	srv := web.New(a.hist, a.cats, web.Options{
+	srv := web.New(a.hist, a.cats, a.esc, a.set, web.Options{
 		Addr:      cfg.WebAddr,
 		AdminUser: cfg.AdminUser,
 		AdminPass: cfg.AdminPass,
 		Dev:       cfg.WebDev,
-		MediaDir:  a.imageDir,
+		SendReply: a.sendReply, // dashboarddan tasdiqlangan javob
 	})
 	if cfg.AdminUser == "" || cfg.AdminPass == "" {
 		fmt.Println("⚠️  Dashboard parolsiz ochiq — .env da ADMIN_USER/ADMIN_PASS o'rnating")
@@ -176,6 +230,39 @@ func main() {
 			a.runCycle(ctx)
 		}
 	}
+}
+
+// pickBackend .env asosida AI provayderini tanlaydi. AI_PROVIDER berilmasa:
+// OPENAI_API_KEY bo'lsa OpenAI, aks holda Gemini.
+func pickBackend(cfg *config.Config) (ai.Backend, *ollama.Client) {
+	switch cfg.AIProvider {
+	case "openai":
+		return openai.New(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL), nil
+	case "gemini":
+		return gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel), nil
+	case "ollama":
+		// Lokal model asosiy; OpenAI kaliti bo'lsa u zaxira bo'lib qoladi —
+		// Ollama o'chib qolsa mijoz javobsiz qolmaydi.
+		local := ollama.New(cfg.OllamaURL, cfg.OllamaModel, ollama.Options{
+			KeepAlive:   cfg.OllamaKeepAlive,
+			NumCtx:      cfg.OllamaNumCtx,
+			MaxTokens:   cfg.OllamaMaxTokens,
+			Temperature: cfg.OllamaTemperature,
+			Timeout:     cfg.OllamaTimeout,
+		})
+		if cfg.OpenAIAPIKey != "" {
+			return &ai.Fallback{
+				Primary:   local,
+				Secondary: openai.New(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL),
+			}, local
+		}
+		return local, local
+	}
+	// Avtomatik tanlashda lokal model hech qachon o'zi tanlanmaydi.
+	if cfg.OpenAIAPIKey != "" {
+		return openai.New(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL), nil
+	}
+	return gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel), nil
 }
 
 // setupTelegram userbot yoki Bot API kanalini sozlaydi.
@@ -231,6 +318,13 @@ func (a *app) setupTelegram(ctx context.Context) {
 func (a *app) runCycle(ctx context.Context) {
 	ts := time.Now().Format("15:04:05")
 
+	if !a.set.Bool(settings.AIEnabled, true) {
+		// Xabarlar javobsiz kutib turadi — tracker yangilanmaydi, shuning
+		// uchun AI yoqilganda hammasiga javob yoziladi.
+		fmt.Printf("[%s] ⏸  AI o'chirilgan (dashboarddan yoqing)\n", ts)
+		return
+	}
+
 	c, senderID, err := a.apiClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[%s] token xatosi: %v\n", ts, err)
@@ -279,6 +373,38 @@ func (a *app) runCycle(ctx context.Context) {
 		if st, err := a.hist.Stats(); err == nil {
 			fmt.Printf("[%s] 📊 %s\n", ts, st)
 		}
+		a.checkBudget()
+	}
+}
+
+// checkBudget oylik xarajat chegaradan oshgan bo'lsa xodimlar guruhiga bir
+// marta ogohlantirish yuboradi. Agent to'xtamaydi — faqat xabar beradi.
+// Takrorlanmasligi uchun oy kaliti `kv` jadvalida belgilanadi.
+func (a *app) checkBudget() {
+	if a.cfg.BudgetUSD <= 0 {
+		return
+	}
+	spent, err := a.hist.MonthCost()
+	if err != nil || spent < a.cfg.BudgetUSD {
+		return
+	}
+	key := "budget_warned_" + time.Now().Format("2006-01")
+	if v, err := db.GetSetting(a.db, key); err != nil || v != "" {
+		return // allaqachon ogohlantirilgan (yoki bazaga kirib bo'lmadi)
+	}
+
+	msg := fmt.Sprintf("⚠️ AI byudjeti oshdi\nShu oyda sarflandi: $`%.4f`\nChegara: $`%.2f`\n"+
+		"Agent ishlashda davom etmoqda.", spent, a.cfg.BudgetUSD)
+	fmt.Fprintf(os.Stderr, "⚠️  AI byudjeti oshdi: $%.4f / $%.2f\n", spent, a.cfg.BudgetUSD)
+	if a.staff != nil {
+		text, code := tgtext.Build(msg)
+		if _, err := a.staff.Send(text, code); err != nil {
+			fmt.Fprintln(os.Stderr, "byudjet ogohlantirishi yuborilmadi:", err)
+			return // keyingi tsiklda qayta urinamiz
+		}
+	}
+	if err := db.SetSetting(a.db, key, fmt.Sprintf("%.6f", spent)); err != nil {
+		fmt.Fprintln(os.Stderr, "byudjet belgisi saqlanmadi:", err)
 	}
 }
 
@@ -311,10 +437,19 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 		return false // yangi mijoz xabari yo'q
 	}
 
+	// Eski xabar (masalan 2 kunlik) — AI'ga yubormaymiz, token behuda ketmasin.
+	// Ko'rilgan deb belgilanadi, shu suhbatga keyin yangi xabar kelsa javob beriladi.
+	if stale, age := support.Stale(msgs, a.cfg.MaxMessageAge); stale {
+		fmt.Printf("  ⏭  #%d — oxirgi xabar %s oldin (limit %s), AI'ga yuborilmadi\n",
+			ch.ID, age.Round(time.Hour), a.cfg.MaxMessageAge)
+		_ = a.track.Commit(ch.ID, lastID)
+		return false
+	}
+
 	fmt.Printf("  === #%d | %s | %q ===\n", ch.ID, ch.ClientName, ch.Title)
 
-	if a.cfg.GeminiAPIKey == "" {
-		fmt.Println("    (GEMINI_API_KEY yo'q)")
+	if !a.ai.Ready() {
+		fmt.Println("    (AI kaliti yo'q)")
 		return false
 	}
 
@@ -322,10 +457,18 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	// oxirida bazaga tushadi va dashboardda ko'rinadi.
 	var tr trace
 
-	// 1-qadam: suhbatning oxirgi HISTORY_LIMIT ta xabari (kamida
-	// support.MinHistory) o'qiladi.
-	transcript, studied := support.TranscriptTail(msgs, a.cfg.HistoryLimit)
-	tr.add("📚", "Suhbatning oxirgi %d ta xabari o'qildi (limit %d)", studied, a.cfg.HistoryLimit)
+	// meter — shu suhbatga ketgan barcha AI so'rovlarining tokenlarini yig'adi
+	// (Classify + Ask + kerak bo'lsa Summarize). Xarajat shundan hisoblanadi.
+	meter := &ai.Meter{}
+	ctx = ai.WithMeter(ctx, meter)
+
+	// 1-qadam: butun tarix emas — faqat javob berilmagan YANGI xabarlar va
+	// ulardan oldingi CONTEXT_BEFORE ta xabar olinadi (token tejash).
+	prevID := a.track.LastID(ch.ID)
+	window := support.Window(msgs, prevID, a.cfg.ContextBefore, a.cfg.HistoryLimit, a.cfg.MaxMessageAge)
+	transcript := support.Transcript(window)
+	tr.add("📚", "%d ta xabar o'qildi: yangilari + %d ta kontekst (jami tarix %d ta)",
+		len(window), a.cfg.ContextBefore, len(msgs))
 
 	// 2-qadam: mos kategoriyani aniqlash.
 	var (
@@ -352,17 +495,26 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 		}
 	}
 
-	// 3-qadam: mijoz yuborgan rasmlarni saqlash va tahlil qilish.
-	imgInfo, imgNumbers := a.handleImages(ctx, &tr, ch, msgs)
+	// 3-qadam: rasmlar. Rasm AI'ga yuborilmaydi (token tejash) — faqat
+	// borligi qayd etiladi, javobda esa mijozdan buyurtma raqami so'raladi.
+	imgURLs := support.ImageURLs(window, maxImages)
+	if len(imgURLs) > 0 {
+		tr.add("📷", "Mijoz %d ta rasm yubordi — rasm tahlil qilinmaydi, buyurtma raqami so'raladi", len(imgURLs))
+	}
 
-	// 4-qadam: xabardagi (va rasmdagi) track raqami yoki mijoz id'si
-	// bo'yicha buyurtma holatini ikkinchi saytdan olish.
-	orderInfo := a.lookupOrders(&tr, ch, lastText, imgNumbers)
+	// 4-qadam: xabardagi track raqami yoki mijoz id'si bo'yicha buyurtma
+	// holatini ikkinchi saytdan olish.
+	orderInfo := a.lookupOrders(&tr, ch, lastText)
 
-	// 5-qadam: kategoriya + rasm + buyurtma ma'lumoti bilan javob yozish.
-	reply, err := a.ai.Ask(ctx, transcript, catInfo, orderInfo+imgInfo)
+	// 5-qadam: kategoriya + buyurtma ma'lumoti bilan javob yozish.
+	reply, err := a.ai.Ask(ctx, ai.Request{
+		Transcript: transcript,
+		Category:   catInfo,
+		OrderInfo:  orderInfo,
+		HasImage:   len(imgURLs) > 0,
+	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "    gemini xatosi:", err)
+		fmt.Fprintln(os.Stderr, "    AI xatosi:", err)
 		return false // keyingi tsiklda qayta urinamiz
 	}
 
@@ -374,38 +526,112 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	// Eskalatsiya markeri bo'lsa xodimlarga.
 	if strings.Contains(reply, a.cfg.EscalateMarker) {
 		tr.add("🆘", "AI muammoni hal qila olmadi (%s) — xodimlar guruhiga yuborilmoqda", a.cfg.EscalateMarker)
-		a.escalate(ctx, ch, lastText, transcript, orderInfo+imgInfo, &tr)
+		a.escalate(ctx, ch, lastText, transcript, orderInfo, imgURLs, meter, &tr)
 		_ = a.track.Commit(ch.ID, lastID)
 		return true
 	}
 
 	fmt.Printf("    🤖 %s\n", reply)
-	sent := false
-	if a.cfg.AutoReply {
+	sent, status := false, models.StatusAIDraft
+	if a.set.Bool(settings.AutoReply, a.cfg.AutoReply) {
 		if _, err := support.SendMessage(c, senderID, ch.ID, "agent", reply); err != nil {
 			tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
+			status = models.StatusFailed
 		} else {
-			sent = true
-			tr.add("✅", "AI javob yozdi va mijozga yuborildi")
+			sent, status = true, models.StatusAISent
+			tr.add("✅", "AI muammoni o'zi hal qildi va javobni mijozga yubordi")
 		}
 	} else {
-		tr.add("👁", "AI javob yozdi, lekin yuborilmadi (AUTO_REPLY=false)")
+		tr.add("👁", "AI javob yozdi — dashboardda tekshirib tasdiqlashingiz kutilmoqda")
 	}
-	a.record(ch, lastText, reply, sent, catID, tr.String())
+	in := &models.Interaction{
+		ClientMessage: lastText, AIReply: reply, Sent: sent,
+		Status: status, HandledBy: handledByAI(a.ai.Name()),
+		CategoryID: catID,
+		ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
+	}
+	a.fillUsage(in, meter, &tr)
+	in.Steps = tr.String() // xarajat qadami ham tarixga tushsin
+	a.record(ch, in)
 	_ = a.track.Commit(ch.ID, lastID)
 	return true
 }
 
+// handledByAI — "kim hal qildi" ustuni uchun (masalan "AI (openai gpt-4o-mini)").
+func handledByAI(model string) string { return "AI (" + model + ")" }
+
+// modelName — narx jadvalida qidiriladigan model nomi. Provayder nomi
+// olib tashlanadi ("openai gpt-4o-mini" → "gpt-4o-mini"), zaxirali zanjirdan
+// esa asosiy model olinadi ("ollama llama3.1:8b → openai gpt-4o-mini" →
+// "llama3.1:8b").
+func (a *app) modelName() string {
+	name := a.ai.Name()
+	if primary, _, ok := strings.Cut(name, " → "); ok {
+		name = primary
+	}
+	if _, after, ok := strings.Cut(name, " "); ok {
+		return after
+	}
+	return name
+}
+
+// fillUsage yozuvga sarflangan tokenlarni va ularning USD qiymatini qo'yadi.
+// Tokenlar provayder javobidan olinadi (aniq son); narx noma'lum bo'lsa
+// xarajat 0 bo'lib qoladi, lekin tokenlar baribir saqlanadi.
+func (a *app) fillUsage(in *models.Interaction, meter *ai.Meter, tr *trace) {
+	u := meter.Usage()
+	if u.Calls == 0 {
+		return
+	}
+	model := u.Model
+	if model == "" {
+		model = a.modelName()
+	}
+	cost, known := pricing.CostOf(model, u.PromptTokens, u.CachedTokens, u.CompletionTokens)
+
+	in.Model = model
+	in.PromptTokens, in.CachedTokens = u.PromptTokens, u.CachedTokens
+	in.CompletionTokens, in.AICalls, in.CostUSD = u.CompletionTokens, u.Calls, cost
+
+	switch {
+	case known && cost == 0:
+		tr.add("💰", "%s — lokal model, bepul", u)
+	case known:
+		tr.add("💰", "%s — $%.6f", u, cost)
+	default:
+		tr.add("💰", "%s — narx noma'lum (AI_PRICE_IN/AI_PRICE_OUT o'rnatilmagan)", u)
+	}
+	// Ogohlantirishlar (masalan kontekst to'lib qolgani) — javob berilgan,
+	// lekin sifatga ta'sir qilishi mumkin.
+	for _, w := range meter.Warnings() {
+		tr.add("⚠️", "%s", w)
+	}
+}
+
+// sendReply admin dashboardda tasdiqlagan javobni mijozga yuboradi.
+// web paketi shu funksiya orqali ishlaydi — u Sahiy API'ni bilmaydi.
+func (a *app) sendReply(conversationID int64, text string) error {
+	c, senderID, err := a.apiClient()
+	if err != nil {
+		return fmt.Errorf("token: %w", err)
+	}
+	if _, err := support.SendMessage(c, senderID, conversationID, "agent", text); err != nil {
+		return err
+	}
+	fmt.Printf("    ✅ Admin tasdiqlagan javob mijozga yuborildi (#%d)\n", conversationID)
+	return nil
+}
+
 // lookupOrders mijoz xabaridagi track raqami bo'yicha, u bo'lmasa mijoz
 // id'si bo'yicha buyurtmalarni ikkinchi saytdan qidiradi.
-func (a *app) lookupOrders(tr *trace, ch support.Conversation, lastText string, extra []string) string {
+func (a *app) lookupOrders(tr *trace, ch support.Conversation, lastText string) string {
 	if !a.ord.Enabled() {
 		tr.add("📦", "Buyurtma qidiruvi o'chiq (SERVICE_PHONE/PASSWORD yo'q)")
 		return ""
 	}
 
-	// Avval xabardagi (va rasmdan olingan) track raqamlari — eng aniq qidiruv.
-	if tracks := orders.Tracks(lastText + " " + strings.Join(extra, " ")); len(tracks) > 0 {
+	// Avval xabardagi track raqamlari — eng aniq qidiruv.
+	if tracks := orders.Tracks(lastText); len(tracks) > 0 {
 		tr.add("🔎", "Xabardan track raqami topildi: %s", strings.Join(tracks, ", "))
 		var all []orders.Order
 		for _, t := range tracks {
@@ -449,11 +675,19 @@ func (a *app) lookupOrders(tr *trace, ch support.Conversation, lastText string, 
 
 // escalate muammoni xodimlar guruhiga yuboradi. Guruhga faqat oxirgi savol
 // emas, butun suhbatdan chiqarilgan umumiy muammo tushuntirishi ketadi.
-func (a *app) escalate(ctx context.Context, ch support.Conversation, question, transcript, orderInfo string, tr *trace) {
+func (a *app) escalate(ctx context.Context, ch support.Conversation, question, transcript, orderInfo string,
+	imgURLs []string, meter *ai.Meter, tr *trace) {
 	if a.staff == nil {
 		fmt.Fprintf(os.Stderr, "    ⚠️  Eskalatsiya kanali yo'q — xodimlarga yuborilmadi (#%d)\n", ch.ID)
 		tr.add("⚠️", "Eskalatsiya kanali yo'q — xodimlarga yuborilmadi")
-		a.record(ch, question, "[ESKALATSIYA — kanal yo'q, yuborilmadi]", false, nil, tr.String())
+		fail := &models.Interaction{
+			ClientMessage: question, AIReply: "[ESKALATSIYA — kanal yo'q, yuborilmadi]",
+			Status:     models.StatusFailed,
+			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
+		}
+		a.fillUsage(fail, meter, tr)
+		fail.Steps = tr.String()
+		a.record(ch, fail)
 		return
 	}
 
@@ -472,8 +706,8 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 		orderBlock = "\n📦 Tizimdagi ma'lumot:" + tgtext.MarkNumbers(orderInfo)
 	}
 	// Rasm havolalari ochiq — xodim Telegram'dan bosib ko'ra oladi.
-	if urls := a.imageURLs(ch.ID); len(urls) > 0 {
-		orderBlock += "\n📷 Mijoz rasmlari:\n" + strings.Join(urls, "\n") + "\n"
+	if len(imgURLs) > 0 {
+		orderBlock += "\n📷 Mijoz rasmlari:\n" + strings.Join(imgURLs, "\n") + "\n"
 	}
 
 	// Mijozning oxirgi xabari eng tepada — xodim birinchi shuni ko'radi.
@@ -487,17 +721,44 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    telegram yuborish xatosi:", err)
 		tr.add("⚠️", "Telegram'ga yuborishda xato: %v", err)
-		a.record(ch, question, "[ESKALATSIYA — yuborilmadi: "+err.Error()+"]", false, nil, tr.String())
+		fail := &models.Interaction{
+			ClientMessage: question, AIReply: "[ESKALATSIYA — yuborilmadi: " + err.Error() + "]",
+			Status:     models.StatusFailed,
+			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
+		}
+		a.fillUsage(fail, meter, tr)
+		fail.Steps = tr.String()
+		a.record(ch, fail)
 		return
 	}
-	_ = a.esc.Add(&models.Escalation{
+	var clientID int64
+	if ch.ClientID != nil {
+		clientID = *ch.ClientID
+	}
+	// Muammo "jarayonda" holatida saqlanadi — xodim javob berguncha shunday qoladi.
+	if err := a.esc.Add(&models.Escalation{
 		TgMessageID:    msgID,
 		ConversationID: ch.ID,
+		ClientID:       clientID,
 		ClientName:     ch.ClientName,
 		Question:       question,
-	})
+		Summary:        summary,
+		Level:          string(daraja),
+		Status:         models.StatusPending,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "    eskalatsiya saqlanmadi:", err)
+	}
 	tr.add("📨", "Xodimlar guruhiga yuborildi (tg xabar id %d)", msgID)
-	a.record(ch, question, "[ESKALATSIYA "+daraja.Sarlavha()+" → xodimlar guruhi]", false, nil, tr.String())
+	tr.add("⏳", "Holat: %s", models.StatusLabel(models.StatusPending))
+	in := &models.Interaction{
+		ClientMessage: question,
+		AIReply:       "[" + daraja.Sarlavha() + " — xodimlar guruhiga yuborildi]\n\n" + summary,
+		Status:        models.StatusPending, EscalationID: &msgID,
+		ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
+	}
+	a.fillUsage(in, meter, tr)
+	in.Steps = tr.String()
+	a.record(ch, in)
 }
 
 // clientIDLabel mijoz id'sini "ID `7235`" ko'rinishida qaytaradi
@@ -510,9 +771,16 @@ func clientIDLabel(id *int64) string {
 }
 
 // onStaffReply xodim guruhda REPLY qilganda chaqiriladi (userbot yoki bot API).
+// Xodim javobi mijozga yuboriladi va muammo holati "jarayonda" dan
+// "xodim hal qildi" ga o'tadi.
 func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 	item, ok := a.esc.Get(replyToMsgID)
-	if !ok || item.Resolved {
+	if !ok {
+		return
+	}
+	if item.Resolved() {
+		fmt.Printf("    ℹ️  #%d — bu muammoga allaqachon javob berilgan (%s)\n",
+			item.ConversationID, item.AnsweredBy)
 		return
 	}
 	c, senderID, err := a.apiClient()
@@ -522,22 +790,48 @@ func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 	}
 	if _, err := support.SendMessage(c, senderID, item.ConversationID, "agent", text); err != nil {
 		fmt.Fprintln(os.Stderr, "javob yuborish xatosi:", err)
+		if a.staff != nil {
+			warn, code := tgtext.Build(fmt.Sprintf(
+				"⚠️ #`%d` — javob mijozga yuborilmadi: %v\nMuammo hali ham jarayonda.",
+				item.ConversationID, err))
+			a.staff.Send(warn, code)
+		}
 		return
 	}
-	_ = a.esc.Resolve(item.TgMessageID, text)
+
+	by := "Xodim: " + from
+	if err := a.esc.Answer(item.TgMessageID, text, by); err != nil {
+		fmt.Fprintln(os.Stderr, "eskalatsiya holati yangilanmadi:", err)
+	}
+	// Dashboarddagi "jarayonda" qatori shu yerda yopiladi (yangi qator emas).
+	n, err := a.hist.ResolveEscalation(item.TgMessageID, text, by)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tarix holati yangilanmadi:", err)
+	}
+	if n == 0 {
+		// Eski yozuvlar uchun (escalation_id yo'q edi) — alohida qator.
+		_ = a.hist.Append(&models.Interaction{
+			ConversationID: item.ConversationID,
+			ClientID:       item.ClientID,
+			ClientName:     item.ClientName,
+			ClientMessage:  item.Question,
+			AIReply:        text,
+			Sent:           true,
+			Status:         models.StatusStaffSent,
+			HandledBy:      by,
+			EscalationID:   &item.TgMessageID,
+			Steps: fmt.Sprintf("1. AI hal qila olmadi — muammo xodimlar guruhiga yuborildi (jarayonda)\n"+
+				"2. %s guruhda REPLY qildi\n3. Javob mijozga yuborildi — muammo hal qilindi", by),
+		})
+	}
 	if a.staff != nil {
-		done, code := tgtext.Build(fmt.Sprintf("✅ #`%d` — javob mijozga yuborildi (%s)", item.ConversationID, from))
+		done, code := tgtext.Build(fmt.Sprintf(
+			"✅ #`%d` — javob mijozga yuborildi (%s)\nHolat: %s",
+			item.ConversationID, from, models.StatusLabel(models.StatusStaffSent)))
 		a.staff.Send(done, code)
 	}
-	_ = a.hist.Append(&models.Interaction{
-		ConversationID: item.ConversationID,
-		ClientName:     item.ClientName,
-		ClientMessage:  item.Question,
-		AIReply:        fmt.Sprintf("[Xodim %s] %s", from, text),
-		Sent:           true,
-		Steps:          fmt.Sprintf("1. Eskalatsiya guruhga yuborilgan edi\n2. Xodim %s guruhda REPLY qildi\n3. Javob mijozga yuborildi", from),
-	})
-	fmt.Printf("    ✅ Xodim javobi mijozga yuborildi (#%d)\n", item.ConversationID)
+	fmt.Printf("    ✅ Xodim javobi mijozga yuborildi (#%d) — holat: %s\n",
+		item.ConversationID, models.StatusLabel(models.StatusStaffSent))
 }
 
 // pollBotAPI Bot API rejimida xodim javoblarini poll qiladi.
@@ -594,16 +888,24 @@ func (a *app) senderID(token string) int64 {
 	return 0
 }
 
-func (a *app) record(ch support.Conversation, clientMsg, reply string, sent bool, catID *uint, steps string) {
-	var clientID int64
+// record bitta muammo yozuvini bazaga qo'shadi. Suhbatga oid maydonlarni
+// (kim, qaysi chat) o'zi to'ldiradi — chaqiruvchi faqat natijani beradi.
+func (a *app) record(ch support.Conversation, in *models.Interaction) {
 	if ch.ClientID != nil {
-		clientID = *ch.ClientID
+		in.ClientID = *ch.ClientID
 	}
-	_ = a.hist.Append(&models.Interaction{
-		ConversationID: ch.ID, ClientID: clientID, ClientName: ch.ClientName,
-		Title: ch.Title, ClientMessage: clientMsg, AIReply: reply,
-		Sent: sent, CategoryID: catID, Steps: steps,
-	})
+	in.ConversationID, in.ClientName, in.Title = ch.ID, ch.ClientName, ch.Title
+	if in.Status == "" {
+		in.Status = models.StatusAISent
+	}
+	// Yakunlangan holatlar uchun hal qilingan vaqti yoziladi.
+	if in.Status == models.StatusAISent || in.Status == models.StatusStaffSent {
+		now := time.Now()
+		in.ResolvedAt = &now
+	}
+	if err := a.hist.Append(in); err != nil {
+		fmt.Fprintln(os.Stderr, "    tarixga yozilmadi:", err)
+	}
 }
 
 // --- staffChannel adapterlari ---
@@ -731,110 +1033,4 @@ func noPrompt(what string) func(ctx context.Context) (string, error) {
 	return func(context.Context) (string, error) {
 		return "", fmt.Errorf("%s kerak, lekin fon rejimida so'ralmaydi — `agent login` bajaring", what)
 	}
-}
-
-// handleImages mijoz yuborgan rasmlarni yuklab oladi, Gemini bilan tahlil
-// qiladi va bazaga saqlaydi. Qaytaradi: Gemini promptiga qo'shiladigan matn
-// va rasmlardan ajratilgan raqamlar.
-//
-// Bir marta ishlangan rasm (message_id) qayta yuklanmaydi va qayta tahlil
-// qilinmaydi — natija bazadan olinadi.
-func (a *app) handleImages(ctx context.Context, tr *trace, ch support.Conversation,
-	msgs []support.Message) (string, []string) {
-
-	imgs := support.ImageMessages(msgs, maxImages)
-	if len(imgs) == 0 {
-		return "", nil
-	}
-	tr.add("📷", "Suhbatda %d ta mijoz rasmi bor (%d tasi ko'riladi)",
-		len(support.ImageMessages(msgs, 0)), len(imgs))
-
-	var (
-		b       strings.Builder
-		numbers []string
-	)
-	for _, m := range imgs {
-		rec := a.processImage(ctx, tr, ch, m)
-		if rec == nil {
-			continue
-		}
-		fmt.Fprintf(&b, "\n### Rasm (xabar %d)\n%s\n", rec.MessageID, rec.Analysis)
-		if rec.Numbers != "" {
-			fmt.Fprintf(&b, "Rasmdagi raqamlar: %s\n", rec.Numbers)
-			numbers = append(numbers, strings.Split(rec.Numbers, ",")...)
-		}
-	}
-	if b.Len() == 0 {
-		return "", nil
-	}
-	return "\n\n--- Mijoz yuborgan rasmlar (tahlil qilingan) ---" + b.String(), numbers
-}
-
-// processImage bitta rasmni keshdan oladi yoki yuklab olib tahlil qiladi.
-// Xatolik bo'lsa nil qaytaradi — javob yozish baribir davom etadi.
-func (a *app) processImage(ctx context.Context, tr *trace, ch support.Conversation,
-	m support.Message) *models.ChatImage {
-
-	if rec, ok := a.hist.GetImage(m.ID); ok {
-		tr.add("💾", "Rasm %d keshdan olindi (qayta yuklanmadi)", m.ID)
-		return rec
-	}
-
-	res, err := images.Download(m.Message, a.imageDir, ch.ID, m.ID)
-	if err != nil {
-		tr.add("⚠️", "Rasm %d yuklanmadi: %v", m.ID, err)
-		return nil
-	}
-	tr.add("⬇️", "Rasm %d yuklab olindi (%d KB)", m.ID, res.Size/1024)
-
-	out, err := a.ai.DescribeImage(ctx, res.Mime, res.Data)
-	if err != nil {
-		tr.add("⚠️", "Rasm %d tahlil qilinmadi: %v", m.ID, err)
-		return nil
-	}
-	nums, desc := gemini.ParseImageAnswer(out)
-	if len(nums) > 0 {
-		tr.add("🔎", "Rasmda topildi: %s", strings.Join(nums, ", "))
-	} else {
-		tr.add("🖼", "Rasmda raqam yo'q — %s", desc)
-	}
-
-	var clientID int64
-	if ch.ClientID != nil {
-		clientID = *ch.ClientID
-	}
-	rec := &models.ChatImage{
-		MessageID:      m.ID,
-		ConversationID: ch.ID,
-		ClientID:       clientID,
-		URL:            m.Message,
-		Path:           res.Path,
-		MimeType:       res.Mime,
-		SizeBytes:      res.Size,
-		Analysis:       desc,
-		Numbers:        strings.Join(nums, ","),
-	}
-	if err := a.hist.SaveImage(rec); err != nil {
-		tr.add("⚠️", "Rasm %d bazaga yozilmadi: %v", m.ID, err)
-	}
-	return rec
-}
-
-// imageURLs suhbatdagi saqlangan rasmlarning asl havolalarini qaytaradi
-// (eskalatsiya xabarida xodimga ko'rsatish uchun).
-func (a *app) imageURLs(conversationID int64) []string {
-	all, err := a.hist.RecentImages(200)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, im := range all {
-		if im.ConversationID == conversationID {
-			out = append(out, im.URL)
-			if len(out) >= maxImages {
-				break
-			}
-		}
-	}
-	return out
 }

@@ -53,6 +53,16 @@ func (t *Tracker) Handled(conversationID, lastMessageID int64) bool {
 	return lastMessageID > 0 && st.LastMessageID >= lastMessageID
 }
 
+// LastID suhbat bo'yicha oxirgi javob berilgan mijoz xabarining id'si
+// (yozuv bo'lmasa 0). Shundan keyingi xabarlar "yangi" hisoblanadi.
+func (t *Tracker) LastID(conversationID int64) int64 {
+	var st models.ConversationState
+	if err := t.db.First(&st, "conversation_id = ?", conversationID).Error; err != nil {
+		return 0
+	}
+	return st.LastMessageID
+}
+
 // Commit suhbat bo'yicha oxirgi ko'rilgan mijoz xabarini saqlaydi (upsert).
 func (t *Tracker) Commit(conversationID, lastMessageID int64) error {
 	return t.db.Save(&models.ConversationState{

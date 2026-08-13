@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -15,6 +16,12 @@ const (
 	// minHistoryLimit — talab: agent kamida 10 ta xabarni o'rganadi
 	// (support.MinHistory bilan bir xil bo'lishi kerak).
 	minHistoryLimit = 10
+	// defaultContextBefore — yangi xabarlardan oldin AI ko'radigan xabarlar
+	// soni. Butun tarix o'rniga shuncha — token sezilarli tejaladi.
+	defaultContextBefore = 4
+	// defaultMaxMessageAge — shundan eski mijoz xabari AI'ga umuman
+	// yuborilmaydi (eski, dolzarbligini yo'qotgan murojaatlar).
+	defaultMaxMessageAge = 24 * time.Hour
 )
 
 // Config dasturga kerakli sozlamalar.
@@ -26,15 +33,42 @@ type Config struct {
 	BaseURL     string
 	UserBaseURL string // api.sahiy.uz (user overview uchun)
 
+	// AI provayderi: "openai" | "gemini" | "" (auto — OpenAI kaliti bo'lsa OpenAI)
+	AIProvider string
+
 	// Gemini
 	GeminiAPIKey string
 	GeminiModel  string
 	AgentPrompt  string // tizim prompt — .env'dan (o'zgaruvchan)
 
+	// AI xarajati (0 bo'lsa kod jadvalidagi narx ishlatiladi)
+	PriceIn       float64 // USD / 1M kirish tokeni
+	PriceCachedIn float64 // USD / 1M kesh'dan olingan kirish tokeni
+	PriceOut      float64 // USD / 1M chiqish tokeni
+	BudgetUSD     float64 // oylik chegara; oshsa Telegram'ga ogohlantirish (0 — o'chiq)
+
+	// Ollama (lokal model)
+	OllamaURL         string        // http://localhost:11434
+	OllamaModel       string        // llama3.1:8b
+	OllamaKeepAlive   string        // model RAM'da qancha turadi ("0" — darhol bo'shatish)
+	OllamaNumCtx      int           // kontekst oynasi (RAM'ga bevosita ta'sir qiladi)
+	OllamaMaxTokens   int           // javobning eng ko'p tokeni
+	OllamaTemperature float64       // 0 — paketdagi default
+	OllamaTimeout     time.Duration // lokal model sekin — uzun timeout
+
+	// OpenAI
+	OpenAIAPIKey  string
+	OpenAIModel   string
+	OpenAIBaseURL string // OpenAI-mos boshqa API uchun (odatda bo'sh)
+
 	// Agent xatti-harakati
 	AgentSenderID int64 // 0 bo'lsa token'dagi "sub" ishlatiladi
 	AutoReply     bool  // true bo'lsa Gemini javobini avtomatik yuboradi
-	HistoryLimit  int   // javob yozishdan oldin o'qiladigan oxirgi xabarlar soni
+	HistoryLimit  int   // AI'ga beriladigan xabarlarning eng ko'p soni (yuqori chegara)
+
+	// Token tejash: AI'ga butun tarix emas, faqat yangi xabarlar beriladi.
+	ContextBefore int           // yangi xabarlardan oldin qo'shiladigan kontekst xabarlari soni
+	MaxMessageAge time.Duration // shundan eski mijoz xabariga javob yozilmaydi (0 — cheklovsiz)
 
 	// Telegram eskalatsiya (xodimlar guruhi)
 	TelegramToken  string // bot token (Bot API rejimi, ixtiyoriy)
@@ -86,12 +120,21 @@ func Load(envPath string) (*Config, error) {
 		GeminiModel:  os.Getenv("GEMINI_MODEL"),
 		AgentPrompt:  os.Getenv("AGENT_PROMPT"),
 
+		AIProvider:    strings.ToLower(strings.TrimSpace(os.Getenv("AI_PROVIDER"))),
+		OpenAIModel:   os.Getenv("OPENAI_MODEL"),
+		OpenAIBaseURL: os.Getenv("OPENAI_BASE_URL"),
+
 		TelegramToken:  os.Getenv("TELEGRAM_TOKEN"),
 		TelegramChatID: os.Getenv("TELEGRAM_CHAT_ID"),
 		EscalateMarker: os.Getenv("ESCALATE_MARKER"),
 		WebAddr:        os.Getenv("WEB_ADDR"),
 		AdminUser:      os.Getenv("ADMIN_USER"),
 		AdminPass:      os.Getenv("ADMIN_PASS"),
+	}
+	// OPENAI_API_KEY asosiy nom; OPEN_API_KEY — eski .env'lar uchun.
+	cfg.OpenAIAPIKey = os.Getenv("OPENAI_API_KEY")
+	if cfg.OpenAIAPIKey == "" {
+		cfg.OpenAIAPIKey = os.Getenv("OPEN_API_KEY")
 	}
 	cfg.WebDev = strings.EqualFold(os.Getenv("WEB_DEV"), "true")
 	cfg.Backfill = strings.EqualFold(os.Getenv("BACKFILL"), "true")
@@ -159,6 +202,40 @@ func Load(envPath string) (*Config, error) {
 		cfg.HistoryLimit = minHistoryLimit
 	}
 
+	// Ollama (lokal model). Bo'sh qiymatlar paket ichidagi default bilan
+	// to'ldiriladi — bu yerda faqat .env dagi qiymat o'qiladi.
+	cfg.OllamaURL = os.Getenv("OLLAMA_URL")
+	cfg.OllamaModel = os.Getenv("OLLAMA_MODEL")
+	cfg.OllamaKeepAlive = os.Getenv("OLLAMA_KEEP_ALIVE")
+	cfg.OllamaNumCtx = envInt("OLLAMA_NUM_CTX")
+	cfg.OllamaMaxTokens = envInt("OLLAMA_MAX_TOKENS")
+	cfg.OllamaTemperature = envFloat("OLLAMA_TEMPERATURE")
+	if sec := envInt("OLLAMA_TIMEOUT_SEC"); sec > 0 {
+		cfg.OllamaTimeout = time.Duration(sec) * time.Second
+	}
+
+	// Narx va byudjet (USD, 1M token uchun).
+	cfg.PriceIn = envFloat("AI_PRICE_IN")
+	cfg.PriceCachedIn = envFloat("AI_PRICE_CACHED_IN")
+	cfg.PriceOut = envFloat("AI_PRICE_OUT")
+	cfg.BudgetUSD = envFloat("AI_BUDGET_USD")
+
+	// Yangi xabarlardan oldin nechta xabar kontekstga qo'shiladi.
+	cfg.ContextBefore = defaultContextBefore
+	if v := os.Getenv("CONTEXT_BEFORE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.ContextBefore = n
+		}
+	}
+
+	// Eski xabarlarga javob yozilmaydi (token behuda ketmasin).
+	cfg.MaxMessageAge = defaultMaxMessageAge
+	if v := os.Getenv("MAX_MESSAGE_AGE_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.MaxMessageAge = time.Duration(n) * time.Hour
+		}
+	}
+
 	// --- Ikkinchi sayt (service API) ---
 	cfg.ServiceBaseURL = os.Getenv("SERVICE_BASE_URL")
 	if cfg.ServiceBaseURL == "" {
@@ -187,6 +264,34 @@ func Load(envPath string) (*Config, error) {
 		return nil, fmt.Errorf("LOGIN va PASSWORD .env faylda yoki muhit o'zgaruvchilarida bo'lishi kerak")
 	}
 	return cfg, nil
+}
+
+// envInt — muhit o'zgaruvchisidan butun son o'qiydi (bo'lmasa yoki noto'g'ri
+// bo'lsa 0).
+func envInt(key string) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// envFloat — muhit o'zgaruvchisidan son o'qiydi (bo'lmasa yoki noto'g'ri
+// bo'lsa 0).
+func envFloat(key string) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f < 0 {
+		return 0
+	}
+	return f
 }
 
 // loadDotEnv oddiy KEY=VALUE parser (tashqi kutubxonasiz).

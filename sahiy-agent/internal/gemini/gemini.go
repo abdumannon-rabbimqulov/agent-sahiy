@@ -1,44 +1,51 @@
+// Package gemini — ai.Backend'ning Google Gemini uchun amalga oshirilishi.
+// Promptlar bu yerda emas, internal/ai paketida.
 package gemini
 
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
+
+	"sahiy-agent/internal/ai"
 )
 
-const apiBase = "https://generativelanguage.googleapis.com/v1beta/models"
+// defaultBaseURL — Gemini API manzili.
+const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 // maxRetries — 429/5xx uchun qayta urinishlar soni.
 const maxRetries = 3
 
 // Client Gemini API bilan ishlaydi.
 type Client struct {
-	APIKey string
-	Model  string // masalan "gemini-2.5-flash"
-	Prompt string // tizim (system) prompt — prompt.txt yoki .env'dan
-	http   *http.Client
+	APIKey  string
+	Model   string // masalan "gemini-2.5-flash"
+	BaseURL string // odatda defaultBaseURL (testda almashtiriladi)
+	http    *http.Client
 }
 
-// New yangi Gemini client yaratadi.
-func New(apiKey, model, systemPrompt string) *Client {
+// New yangi Gemini backend yaratadi.
+func New(apiKey, model string) *Client {
 	if model == "" {
 		model = "gemini-2.5-flash-lite"
 	}
 	return &Client{
-		APIKey: apiKey,
-		Model:  model,
-		Prompt: systemPrompt,
-		http:   &http.Client{Timeout: 60 * time.Second},
+		APIKey:  apiKey,
+		Model:   model,
+		BaseURL: defaultBaseURL,
+		http:    &http.Client{Timeout: 60 * time.Second},
 	}
 }
+
+// Name — loglarda ko'rinadigan nom.
+func (c *Client) Name() string { return "gemini " + c.Model }
+
+// Ready — API kaliti bormi.
+func (c *Client) Ready() bool { return c.APIKey != "" }
 
 // --- so'rov/javob tuzilmalari ---
 
@@ -53,230 +60,35 @@ type content struct {
 }
 
 type part struct {
-	Text       string      `json:"text,omitempty"`
-	InlineData *inlineData `json:"inline_data,omitempty"`
-}
-
-// inlineData — rasm baytlari base64 ko'rinishida (Gemini vision).
-type inlineData struct {
-	MimeType string `json:"mime_type"`
-	Data     string `json:"data"`
+	Text string `json:"text,omitempty"`
 }
 
 type genResponse struct {
 	Candidates []struct {
 		Content content `json:"content"`
 	} `json:"candidates"`
+	// UsageMetadata — bilinadigan aniq token soni. thoughtsTokenCount
+	// ("o'ylash" tokenlari) ham chiqish tokeni sifatida hisoblanadi.
+	UsageMetadata struct {
+		PromptTokenCount        int `json:"promptTokenCount"`
+		CachedContentTokenCount int `json:"cachedContentTokenCount"`
+		CandidatesTokenCount    int `json:"candidatesTokenCount"`
+		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+	} `json:"usageMetadata"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-// Ask transkriptni (chat tarixi) yuborib, agent javobini qaytaradi.
-// extra — tanlangan kategoriya ma'lumoti (bo'sh bo'lishi mumkin).
-// orderInfo — id/track raqami bo'yicha topilgan buyurtma holati (xom JSON).
-func (c *Client) Ask(ctx context.Context, transcript, extra, orderInfo string) (string, error) {
-	// Bugungi sana — usiz model "12-15 kun ichida" kabi muddatlarni
-	// buyurtma sanasidan hisoblay olmaydi.
-	system := c.Prompt + "\n\nBugungi sana: " + time.Now().Format("2006-01-02")
-	if extra != "" {
-		system += "\n\n--- Shu savolga oid ma'lumot ---\n" + extra +
-			"\n\nJavobingni faqat shu ma'lumotga tayanib yoz. Bu yerda yo'q narsani o'ylab topma."
-	}
-	if orderInfo != "" {
-		system += "\n\n--- Mijozning buyurtmasi (tizimdan olingan, real holat) ---" + orderInfo +
-			"\n\nBu JSON tizimdan olingan haqiqiy ma'lumot. Mijozga uni tushunarli\n" +
-			"tilda tushuntir: buyurtma qayerda, holati nima, keyingi qadam nima.\n" +
-			"JSON'ni o'zini ko'chirib yozma. Bu yerda yo'q maydonni o'ylab topma.\n" +
-			"Agar ma'lumot savolga javob bermasa yoki ziddiyatli bo'lsa — #ESCALATE yoz."
-	}
-	return c.generate(ctx, system, transcript)
-}
-
-// Daraja — muammoning shoshilinchlik darajasi.
-type Daraja string
-
-const (
-	Yuqori Daraja = "yuqori"
-	Orta   Daraja = "o'rta"
-	Past   Daraja = "past"
-)
-
-// Belgi — guruh xabarida ko'rinadigan rangli belgi.
-func (d Daraja) Belgi() string {
-	switch d {
-	case Yuqori:
-		return "🔴"
-	case Past:
-		return "🟢"
-	default:
-		return "🟡"
-	}
-}
-
-// Sarlavha — xabar boshidagi matn.
-func (d Daraja) Sarlavha() string {
-	switch d {
-	case Yuqori:
-		return "YUQORI"
-	case Past:
-		return "PAST"
-	default:
-		return "O'RTA"
-	}
-}
-
-// Summarize suhbatni xodimlar guruhi uchun qisqa xulosaga aylantiradi va
-// muammoning shoshilinchlik darajasini aniqlaydi.
-func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (Daraja, string, error) {
-	system := "Sen support jamoasiga muammoni tushuntiruvchi yordamchisan.\n" +
-		"Quyida mijoz bilan bo'lgan suhbat tarixi berilgan. Uni to'liq o'qib chiq va\n" +
-		"navbatchi xodim uchun qisqa xulosa yoz — xodim suhbatni o'qimasdan ham\n" +
-		"muammoni tushunishi kerak.\n\n" +
-		"Aynan quyidagi 4 qatorni yoz (o'zbek tilida):\n" +
-		"Daraja: <yuqori | o'rta | past>\n" +
-		"Muammo: <mijozning umumiy muammosi>\n" +
-		"Tafsilot: <muhim faktlar: buyurtma/track raqami, sana, nima urinib ko'rilgan>\n" +
-		"Kerak: <xodimdan aniq nima talab qilinadi>\n\n" +
-		"Daraja qanday tanlanadi:\n" +
-		"- yuqori: yetkazish muddati o'tgan, buyurtma yo'qolgan yoki shikastlangan,\n" +
-		"  pul qaytarish yoki to'lov nizosi, mijoz jahli chiqqan yoki bir necha\n" +
-		"  marta javobsiz murojaat qilgan\n" +
-		"- o'rta: holat noaniq, tekshirish kerak, lekin shoshilinch emas\n" +
-		"- past: oddiy savol yoki ma'lumot yetishmayotgani uchun aniqlik kerak\n\n" +
-		"Boshqa hech narsa yozma. Suhbatda yo'q ma'lumotni o'ylab topma —\n" +
-		"bilinmasa \"noma'lum\" deb yoz."
-
-	if orderInfo != "" {
-		transcript += "\n\n--- Tizimdan olingan buyurtma ma'lumoti ---" + orderInfo
-	}
-
-	out, err := c.generate(ctx, system, transcript)
-	if err != nil {
-		return Orta, "", err
-	}
-	daraja, body := splitDaraja(out)
-	return daraja, body, nil
-}
-
-// splitDaraja javobdan "Daraja:" qatorini ajratib oladi; qolgan matn
-// xodimga ko'rsatiladigan xulosa bo'lib qoladi.
-func splitDaraja(out string) (Daraja, string) {
-	daraja := Orta
-	var kept []string
-	for _, line := range strings.Split(out, "\n") {
-		i := strings.Index(line, ":")
-		if i > 0 && strings.ToLower(strings.Trim(line[:i], "*_-# \t")) == "daraja" {
-			val := strings.ToLower(strings.Trim(line[i+1:], "*_ \t."))
-			switch {
-			case strings.Contains(val, "yuqori"):
-				daraja = Yuqori
-			case strings.Contains(val, "past"):
-				daraja = Past
-			}
-			continue // bu qator xulosaga kirmaydi
-		}
-		kept = append(kept, line)
-	}
-	return daraja, strings.TrimSpace(strings.Join(kept, "\n"))
-}
-
-// DescribeImage mijoz yuborgan rasmni tahlil qiladi. Javob qat'iy formatda
-// qaytadi, shuning uchun uni ParseImageAnswer bilan ajratish mumkin:
-//
-//	Raqamlar: DG60582375, 79019342930966
-//	Tavsif: Buyurtma tafsilotlari skrinshoti.
-func (c *Client) DescribeImage(ctx context.Context, mime string, data []byte) (string, error) {
-	if c.APIKey == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY bo'sh")
-	}
-	system := "Sen support agentiga mijoz yuborgan rasmni tushuntirasan.\n" +
-		"Rasmni diqqat bilan ko'r va AYNAN quyidagi ikki qatorni yoz:\n" +
-		"Raqamlar: <rasmda ko'rinadigan buyurtma raqami, track raqami yoki\n" +
-		"shtrix-kod raqamlari, vergul bilan. Hech qanday raqam bo'lmasa: yo'q>\n" +
-		"Tavsif: <rasmda nima borligi, 1-2 gap, o'zbek tilida>\n\n" +
-		"Boshqa hech narsa yozma. Raqamlarni o'zgartirmasdan, aynan ko'chirib yoz.\n" +
-		"Aniq ko'rinmayotgan raqamni taxmin qilma."
-
-	return c.generateWithImage(ctx, system, "Bu mijoz support chatga yuborgan rasm.", mime, data)
-}
-
-// ParseImageAnswer DescribeImage javobidan raqamlar va tavsifni ajratadi.
-// Model ba'zan markdown qo'shadi ("**Raqamlar:** ..."), shuning uchun
-// kalit ham, qiymat ham `*` va `_` belgilaridan tozalanadi.
-func ParseImageAnswer(out string) (numbers []string, description string) {
-	for _, line := range strings.Split(out, "\n") {
-		i := strings.Index(line, ":")
-		if i < 0 {
-			continue
-		}
-		key := strings.ToLower(strings.Trim(line[:i], "*_-# \t"))
-		val := strings.Trim(line[i+1:], "*_ \t")
-
-		switch key {
-		case "raqamlar":
-			if val == "" || strings.EqualFold(val, "yo'q") || strings.EqualFold(val, "yoq") {
-				continue
-			}
-			for _, p := range strings.Split(val, ",") {
-				if p = strings.Trim(p, "*_` \t"); p != "" {
-					numbers = append(numbers, p)
-				}
-			}
-		case "tavsif":
-			description = val
-		}
-	}
-	if description == "" {
-		description = strings.TrimSpace(out)
-	}
-	return numbers, description
-}
-
-// Classify mijoz savoliga mos kategoriya id'sini tanlaydi.
-// Mos kategoriya topilmasa 0 qaytaradi (xato emas).
-func (c *Client) Classify(ctx context.Context, catalog, transcript string) (uint, error) {
-	if catalog == "" {
-		return 0, nil
-	}
-	system := "Sen matnni tasniflaysan. Quyida kategoriyalar ro'yxati bor.\n\n" +
-		catalog +
-		"\nMijozning oxirgi savoli qaysi kategoriyaga tegishli ekanini aniqla.\n" +
-		"Javob sifatida FAQAT bitta raqam (kategoriya id) yoz. Hech qanday izoh yozma.\n" +
-		"Agar hech qaysi kategoriyaga to'g'ri kelmasa 0 yoz."
-
-	out, err := c.generate(ctx, system, transcript)
-	if err != nil {
-		return 0, err
-	}
-	m := regexp.MustCompile(`\d+`).FindString(out)
-	if m == "" {
-		return 0, nil
-	}
-	id, err := strconv.ParseUint(m, 10, 64)
-	if err != nil {
-		return 0, nil
-	}
-	return uint(id), nil
-}
-
-// generate — Gemini'ga bitta matnli so'rov (429/5xx da qayta urinish bilan).
-func (c *Client) generate(ctx context.Context, systemPrompt, userText string) (string, error) {
-	return c.send(ctx, systemPrompt, []part{{Text: userText}})
-}
-
-// generateWithImage — matn + rasm (vision) so'rovi.
-func (c *Client) generateWithImage(ctx context.Context, systemPrompt, userText, mime string, data []byte) (string, error) {
-	return c.send(ctx, systemPrompt, []part{
-		{InlineData: &inlineData{MimeType: mime, Data: base64.StdEncoding.EncodeToString(data)}},
-		{Text: userText},
-	})
+// Generate — Gemini'ga bitta matnli so'rov (429/5xx da qayta urinish bilan).
+func (c *Client) Generate(ctx context.Context, system, user string) (string, ai.Usage, error) {
+	return c.send(ctx, system, []part{{Text: user}})
 }
 
 // send — Gemini'ga so'rov yuboradi (429/5xx da qayta urinish bilan).
-func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (string, error) {
+func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (string, ai.Usage, error) {
 	if c.APIKey == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY bo'sh")
+		return "", ai.Usage{}, fmt.Errorf("GEMINI_API_KEY bo'sh")
 	}
 
 	reqBody := genRequest{
@@ -287,9 +99,13 @@ func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (s
 	}
 	data, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", ai.Usage{}, err
 	}
-	url := fmt.Sprintf("%s/%s:generateContent?key=%s", apiBase, c.Model, c.APIKey)
+	base := c.BaseURL
+	if base == "" {
+		base = defaultBaseURL
+	}
+	url := fmt.Sprintf("%s/%s:generateContent?key=%s", base, c.Model, c.APIKey)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -297,14 +113,14 @@ func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (s
 			wait := time.Duration(1<<attempt) * time.Second // 2s, 4s
 			select {
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return "", ai.Usage{}, ctx.Err()
 			case <-time.After(wait):
 			}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 		if err != nil {
-			return "", err
+			return "", ai.Usage{}, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 
@@ -324,15 +140,22 @@ func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (s
 
 		var gr genResponse
 		if err := json.Unmarshal(body, &gr); err != nil {
-			return "", fmt.Errorf("gemini javobini o'qib bo'lmadi: %w\nXom: %s", err, string(body))
+			return "", ai.Usage{}, fmt.Errorf("gemini javobini o'qib bo'lmadi: %w\nXom: %s", err, string(body))
 		}
 		if gr.Error != nil {
-			return "", fmt.Errorf("gemini xatosi: %s", gr.Error.Message)
+			return "", ai.Usage{}, fmt.Errorf("gemini xatosi: %s", gr.Error.Message)
 		}
 		if len(gr.Candidates) == 0 || len(gr.Candidates[0].Content.Parts) == 0 {
-			return "", fmt.Errorf("gemini javob qaytarmadi\nXom: %s", string(body))
+			return "", ai.Usage{}, fmt.Errorf("gemini javob qaytarmadi\nXom: %s", string(body))
 		}
-		return gr.Candidates[0].Content.Parts[0].Text, nil
+		m := gr.UsageMetadata
+		return gr.Candidates[0].Content.Parts[0].Text, ai.Usage{
+			Model:            c.Model,
+			PromptTokens:     m.PromptTokenCount,
+			CachedTokens:     m.CachedContentTokenCount,
+			CompletionTokens: m.CandidatesTokenCount + m.ThoughtsTokenCount,
+			Calls:            1,
+		}, nil
 	}
-	return "", lastErr
+	return "", ai.Usage{}, lastErr
 }
