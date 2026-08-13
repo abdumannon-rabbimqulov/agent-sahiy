@@ -54,6 +54,8 @@ func Migrate(db *gorm.DB) error {
 		&models.Escalation{},
 		&models.ConversationState{},
 		&models.Setting{},
+		&models.Prompt{},
+		&models.PromptHistory{},
 	); err != nil {
 		return fmt.Errorf("migratsiya: %w", err)
 	}

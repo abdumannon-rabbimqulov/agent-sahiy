@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"sahiy-agent/internal/models"
+	"sahiy-agent/internal/prompts"
 )
 
 // Store — kategoriyalar do'koni.
@@ -40,12 +41,47 @@ func (s *Store) Get(id uint) (*models.Category, error) {
 	return &c, nil
 }
 
-// Create yangi kategoriya qo'shadi.
+// BySlug kategoriyani slug bo'yicha topadi (router shu kalitni qaytaradi).
+func (s *Store) BySlug(slug string) (*models.Category, error) {
+	var out []models.Category
+	if err := s.db.Where("slug = ?", slug).Limit(1).Find(&out).Error; err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("kategoriya topilmadi: %s", slug)
+	}
+	return &out[0], nil
+}
+
+// Create yangi kategoriya qo'shadi va uning promptini ("cat:<slug>") yozadi.
 func (s *Store) Create(c *models.Category) error {
 	if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.Content) == "" {
 		return fmt.Errorf("name va content bo'sh bo'lmasligi kerak")
 	}
-	return s.db.Create(c).Error
+	if c.Slug == "" {
+		c.Slug = s.freeSlug(models.Slugify(c.Name), 0)
+	}
+	if err := s.db.Create(c).Error; err != nil {
+		return err
+	}
+	return prompts.SyncCategory(s.db, c)
+}
+
+// freeSlug band bo'lmagan slug qaytaradi (bir xil nomlar uchun).
+func (s *Store) freeSlug(slug string, skipID uint) string {
+	if slug == "" {
+		slug = "kategoriya"
+	}
+	base := slug
+	for i := 2; i < 100; i++ {
+		var n int64
+		s.db.Model(&models.Category{}).Where("slug = ? AND id <> ?", slug, skipID).Count(&n)
+		if n == 0 {
+			return slug
+		}
+		slug = fmt.Sprintf("%s-%d", base, i)
+	}
+	return slug
 }
 
 // Update mavjud kategoriyani yangilaydi.
@@ -53,13 +89,27 @@ func (s *Store) Update(id uint, c *models.Category) error {
 	if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.Content) == "" {
 		return fmt.Errorf("name va content bo'sh bo'lmasligi kerak")
 	}
-	return s.db.Model(&models.Category{}).Where("id = ?", id).
+	cur, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	slug := cur.Slug
+	if slug == "" {
+		slug = s.freeSlug(models.Slugify(c.Name), id)
+	}
+	if err := s.db.Model(&models.Category{}).Where("id = ?", id).
 		Updates(map[string]any{
 			"name":        c.Name,
 			"description": c.Description,
 			"content":     c.Content,
 			"active":      c.Active,
-		}).Error
+			"slug":        slug,
+		}).Error; err != nil {
+		return err
+	}
+	// Kategoriya matni — bu ayni paytda "cat:<slug>" prompti.
+	c.Slug = slug
+	return prompts.SyncCategory(s.db, c)
 }
 
 // Delete kategoriyani o'chiradi.

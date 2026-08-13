@@ -27,6 +27,12 @@ td.w{max-width:320px;overflow-wrap:anywhere}
 .sent{background:rgba(62,207,142,.15);color:var(--ok)}
 .nosent{background:rgba(255,180,84,.15);color:var(--warn)}
 .cat{background:rgba(79,156,255,.15);color:var(--acc)}
+/* Prompt tarixi */
+.hist{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.hist-row{align-items:center;gap:8px;margin-bottom:8px}
+.hist-row pre.content{flex-basis:100%;max-height:120px;overflow:auto;
+  background:#111726;border:1px solid var(--line);border-radius:8px;padding:8px}
+
 /* Boshqaruv paneli: AI yoqish/o'chirish */
 .panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:20px}
 .ctl{display:flex;align-items:center;justify-content:space-between;gap:12px;

@@ -2,8 +2,25 @@ package ai
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 )
+
+// testPrompts — soxta prompt manbai (map).
+type testPrompts map[string]string
+
+func (p testPrompts) Get(k string) string { return p[k] }
+func (p testPrompts) Keys(prefix string) []string {
+	var out []string
+	for k := range p {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // fakeBackend — har chaqiruvda belgilangan usage qaytaradi.
 type fakeBackend struct {
@@ -14,7 +31,7 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Name() string { return "fake model-x" }
 func (f *fakeBackend) Ready() bool  { return true }
-func (f *fakeBackend) Generate(ctx context.Context, system, user string) (string, Usage, error) {
+func (f *fakeBackend) Generate(ctx context.Context, system, user string, opt GenOptions) (string, Usage, error) {
 	f.seen++
 	if f.err != nil {
 		return "", Usage{}, f.err
@@ -24,11 +41,11 @@ func (f *fakeBackend) Generate(ctx context.Context, system, user string) (string
 
 func TestMeterUchtaChaqiruvniYigadi(t *testing.T) {
 	be := &fakeBackend{u: Usage{Model: "model-x", PromptTokens: 100, CachedTokens: 20, CompletionTokens: 30, Calls: 1}}
-	c := New(be, "prompt")
+	c := New(be, testPrompts{"classify": "router {{CATEGORIES}}", "cat:yetkazish": "..."})
 
 	m := &Meter{}
 	ctx := WithMeter(context.Background(), m)
-	if _, err := c.Classify(ctx, "1. Yetkazish", "client: salom"); err != nil {
+	if _, err := c.Classify(ctx, "client: salom"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Ask(ctx, Request{Transcript: "client: salom"}); err != nil {
@@ -52,7 +69,7 @@ func TestMeterUchtaChaqiruvniYigadi(t *testing.T) {
 
 func TestMetersizChaqiruvIshlaydi(t *testing.T) {
 	be := &fakeBackend{u: Usage{PromptTokens: 10, Calls: 1}}
-	c := New(be, "prompt")
+	c := New(be, testPrompts{})
 	// ctx'da Meter yo'q — panika bo'lmasligi kerak.
 	if _, err := c.Ask(context.Background(), Request{Transcript: "salom"}); err != nil {
 		t.Fatal(err)
@@ -61,7 +78,7 @@ func TestMetersizChaqiruvIshlaydi(t *testing.T) {
 
 func TestXatoHisobgaOlinmaydi(t *testing.T) {
 	be := &fakeBackend{err: context.DeadlineExceeded}
-	c := New(be, "prompt")
+	c := New(be, testPrompts{})
 	m := &Meter{}
 	ctx := WithMeter(context.Background(), m)
 	if _, err := c.Ask(ctx, Request{Transcript: "salom"}); err == nil {

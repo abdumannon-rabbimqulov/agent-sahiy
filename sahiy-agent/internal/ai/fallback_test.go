@@ -18,7 +18,7 @@ type stub struct {
 
 func (s *stub) Name() string { return s.name }
 func (s *stub) Ready() bool  { return s.ready }
-func (s *stub) Generate(ctx context.Context, system, user string) (string, Usage, error) {
+func (s *stub) Generate(ctx context.Context, system, user string, opt GenOptions) (string, Usage, error) {
 	s.calls++
 	return s.out, s.usage, s.err
 }
@@ -28,7 +28,7 @@ func TestFallbackAsosiyIshlaganda(t *testing.T) {
 	sec := &stub{name: "openai", ready: true, out: "zaxira javob"}
 	f := &Fallback{Primary: p, Secondary: sec}
 
-	out, u, err := f.Generate(context.Background(), "s", "u")
+	out, u, err := f.Generate(context.Background(), "s", "u", GenOptions{})
 	if err != nil || out != "lokal javob" || u.Model != "llama3.1:8b" {
 		t.Errorf("out=%q usage=%+v err=%v", out, u, err)
 	}
@@ -45,7 +45,7 @@ func TestFallbackXatodaZaxiraga(t *testing.T) {
 	sec := &stub{name: "openai", ready: true, out: "zaxira javob", usage: Usage{Model: "gpt-4o-mini", Calls: 1}}
 	f := &Fallback{Primary: p, Secondary: sec}
 
-	out, u, err := f.Generate(context.Background(), "s", "u")
+	out, u, err := f.Generate(context.Background(), "s", "u", GenOptions{})
 	if err != nil || out != "zaxira javob" {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
@@ -62,7 +62,7 @@ func TestFallbackKontekstBekorQilinganda(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := f.Generate(ctx, "s", "u"); !errors.Is(err, context.Canceled) {
+	if _, _, err := f.Generate(ctx, "s", "u", GenOptions{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("context.Canceled kutilgan, keldi %v", err)
 	}
 	if sec.calls != 0 {
@@ -76,7 +76,7 @@ func TestFallbackQismanMuvaffaqiyatZaxirasiz(t *testing.T) {
 	sec := &stub{name: "openai", ready: true, out: "zaxira"}
 	f := &Fallback{Primary: p, Secondary: sec}
 
-	out, _, err := f.Generate(context.Background(), "s", "u")
+	out, _, err := f.Generate(context.Background(), "s", "u", GenOptions{})
 	if out != "yarim javob" || err == nil {
 		t.Errorf("out=%q err=%v", out, err)
 	}
@@ -90,7 +90,7 @@ func TestFallbackZaxiraTayyorEmas(t *testing.T) {
 	sec := &stub{name: "openai", ready: false} // kalit yo'q
 	f := &Fallback{Primary: p, Secondary: sec}
 
-	if _, _, err := f.Generate(context.Background(), "s", "u"); err == nil ||
+	if _, _, err := f.Generate(context.Background(), "s", "u", GenOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "server o'chiq") {
 		t.Errorf("asl xato qaytishi kerak, keldi: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestFallbackIkkalasiXato(t *testing.T) {
 	sec := &stub{name: "openai", ready: true, err: errors.New("kvota tugadi")}
 	f := &Fallback{Primary: p, Secondary: sec}
 
-	_, _, err := f.Generate(context.Background(), "s", "u")
+	_, _, err := f.Generate(context.Background(), "s", "u", GenOptions{})
 	if err == nil || !strings.Contains(err.Error(), "lokal xato") || !strings.Contains(err.Error(), "kvota tugadi") {
 		t.Errorf("ikkala sabab ham ko'rinishi kerak: %v", err)
 	}

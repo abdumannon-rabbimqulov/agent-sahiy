@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"sahiy-agent/internal/ai"
 )
 
 // Gemini'ning haqiqiy javob shakli (kerakli qismi).
@@ -29,7 +31,7 @@ func TestGenerateUsageniOqiydi(t *testing.T) {
 	c := New("test-key", "gemini-2.5-flash-lite")
 	c.BaseURL = srv.URL // testda soxta serverga yo'naltiramiz
 
-	out, u, err := c.Generate(context.Background(), "system", "salom")
+	out, u, err := c.Generate(context.Background(), "system", "salom", ai.GenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

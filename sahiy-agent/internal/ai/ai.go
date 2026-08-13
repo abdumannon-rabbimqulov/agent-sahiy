@@ -4,10 +4,19 @@ package ai
 
 import (
 	"context"
-	"regexp"
-	"strconv"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
+)
+
+// Prompt kalitlari (models paketidagilar bilan bir xil — ai paketi models'ga
+// bog'lanmasligi uchun shu yerda ham e'lon qilingan).
+const (
+	PromptBase      = "base"
+	PromptClassify  = "classify"
+	PromptSummarize = "summarize"
+	catPrefix       = "cat:"
 )
 
 // Backend — bitta LLM provayderi (gemini, openai, ...).
@@ -22,18 +31,28 @@ type Backend interface {
 	// Kelishuv: javob ham, xato ham qaytsa — bu "qisman muvaffaqiyat"
 	// (masalan lokal modelda kontekst to'lib, prompt kesilgan). Javob
 	// ishlatiladi, xato esa ogohlantirish sifatida qayd etiladi.
-	Generate(ctx context.Context, system, user string) (string, Usage, error)
+	Generate(ctx context.Context, system, user string, opt GenOptions) (string, Usage, error)
+}
+
+// Prompts — promptlar manbai (prompts.Store shuni qondiradi). Promptlar
+// bazada yotadi va dashboarddan tahrirlanadi, shuning uchun ular HAR
+// CHAQIRUVDA yangidan o'qiladi — agentni qayta ishga tushirish shart emas.
+type Prompts interface {
+	// Get — kalit bo'yicha prompt matni (topilmasa bo'sh satr).
+	Get(key string) string
+	// Keys — prefiks bilan boshlanadigan kalitlar (masalan "cat:").
+	Keys(prefix string) []string
 }
 
 // Client — agent ishlatadigan yuqori darajali AI.
 type Client struct {
-	be     Backend
-	Prompt string // tizim (system) prompt — prompt.txt yoki .env'dan
+	be Backend
+	p  Prompts
 }
 
-// New yangi client (be — tanlangan provayder).
-func New(be Backend, systemPrompt string) *Client {
-	return &Client{be: be, Prompt: systemPrompt}
+// New yangi client (be — tanlangan provayder, p — promptlar manbai).
+func New(be Backend, p Prompts) *Client {
+	return &Client{be: be, p: p}
 }
 
 // Name — joriy provayder nomi.
@@ -42,8 +61,8 @@ func (c *Client) Name() string { return c.be.Name() }
 // generate — barcha so'rovlar shu yerdan o'tadi: javobni qaytaradi va
 // sarflangan tokenlarni ctx'dagi Meter'ga qo'shadi (xato bo'lsa qo'shmaydi —
 // muvaffaqiyatsiz so'rov uchun hisob kelmaydi).
-func (c *Client) generate(ctx context.Context, system, user string) (string, error) {
-	out, u, err := c.be.Generate(ctx, system, user)
+func (c *Client) generate(ctx context.Context, system, user string, opt GenOptions) (string, error) {
+	out, u, err := c.be.Generate(ctx, system, user, opt)
 	// Javob bor, lekin xato ham bor — qisman muvaffaqiyat: javobni
 	// ishlatamiz, xatoni ogohlantirish qilib yozamiz.
 	if err != nil && out != "" {
@@ -64,32 +83,50 @@ func (c *Client) Ready() bool { return c.be != nil && c.be.Ready() }
 
 // Request — javob yozish uchun yig'ilgan kontekst.
 type Request struct {
-	Transcript string // suhbatning yangi qismi (Window natijasi)
-	Category   string // tanlangan kategoriya matni (bo'lmasligi mumkin)
-	OrderInfo  string // track/client id bo'yicha topilgan buyurtma holati (xom JSON)
-	HasImage   bool   // mijoz rasm yuborgan — agent uni ko'ra olmaydi
+	// Transcript — mijozning ORIGINAL matni (suhbat oynasi). Hech qanday
+	// xulosa yoki qayta yozish yo'q: buyurtma raqami mijoz yozgan holida
+	// modelga yetib boradi.
+	Transcript string
+	// CategoryKey — router tanlagan kategoriya slug'i ("yetkazib-berish").
+	CategoryKey string
+	OrderInfo   string // track/client id bo'yicha topilgan buyurtma holati (xom JSON)
+	HasImage    bool   // mijoz rasm yuborgan — agent uni ko'ra olmaydi
 }
 
 // Ask suhbat konteksti asosida agent javobini yozadi.
+//
+// System prompt qat'iy TARTIBDA yig'iladi — o'zgarmas qism boshda turadi,
+// bu provayderning prompt-keshi (KV-cache) ishlashi uchun muhim:
+//
+//  1. base        — har doim bir xil, eng katta bo'lak
+//  2. bugungi sana — kuniga bir marta o'zgaradi
+//  3. cat:<slug>  — kategoriyaga qarab
+//  4. buyurtma JSON — har suhbatda boshqa
+//  5. rasm qoidasi  — kamdan-kam
 func (c *Client) Ask(ctx context.Context, req Request) (string, error) {
-	// Bugungi sana — usiz model "12-15 kun ichida" kabi muddatlarni
-	// buyurtma sanasidan hisoblay olmaydi.
-	system := c.Prompt + "\n\nBugungi sana: " + time.Now().Format("2006-01-02")
-	if req.Category != "" {
-		system += "\n\n--- Shu savolga oid ma'lumot ---\n" + req.Category +
-			"\n\nJavobingni faqat shu ma'lumotga tayanib yoz. Bu yerda yo'q narsani o'ylab topma."
+	var b strings.Builder
+	b.WriteString(c.p.Get(PromptBase))
+	b.WriteString("\n\nBugungi sana: " + time.Now().Format("2006-01-02"))
+
+	if req.CategoryKey != "" {
+		if cat := c.p.Get(catPrefix + req.CategoryKey); cat != "" {
+			b.WriteString("\n\n--- Shu savolga oid ma'lumot ---\n" + cat +
+				"\n\nJavobingni faqat shu ma'lumotga tayanib yoz. Bu yerda yo'q narsani o'ylab topma.")
+		}
 	}
 	if req.OrderInfo != "" {
-		system += "\n\n--- Mijozning buyurtmasi (tizimdan olingan, real holat) ---" + req.OrderInfo +
+		b.WriteString("\n\n--- Mijozning buyurtmasi (tizimdan olingan, real holat) ---" + req.OrderInfo +
 			"\n\nBu JSON tizimdan olingan haqiqiy ma'lumot. Mijozga uni tushunarli\n" +
 			"tilda tushuntir: buyurtma qayerda, holati nima, keyingi qadam nima.\n" +
 			"JSON'ni o'zini ko'chirib yozma. Bu yerda yo'q maydonni o'ylab topma.\n" +
-			"Agar ma'lumot savolga javob bermasa yoki ziddiyatli bo'lsa — #ESCALATE yoz."
+			"Agar ma'lumot savolga javob bermasa yoki ziddiyatli bo'lsa — #ESCALATE yoz.")
 	}
 	if req.HasImage {
-		system += "\n\n--- Muhim: suhbatda rasm bor ---\n" + imageRule(req.OrderInfo != "")
+		b.WriteString("\n\n--- Muhim: suhbatda rasm bor ---\n" + imageRule(req.OrderInfo != ""))
 	}
-	return c.generate(ctx, system, req.Transcript)
+
+	// user qismi — mijoz matni o'zgarishsiz.
+	return c.generate(ctx, b.String(), req.Transcript, GenOptions{})
 }
 
 // imageRule — mijoz rasm yuborganda beriladigan qoida. Agent rasmni ko'rmaydi,
@@ -148,29 +185,13 @@ func (d Daraja) Sarlavha() string {
 // Summarize suhbatni xodimlar guruhi uchun qisqa xulosaga aylantiradi va
 // muammoning shoshilinchlik darajasini aniqlaydi.
 func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (Daraja, string, error) {
-	system := "Sen support jamoasiga muammoni tushuntiruvchi yordamchisan.\n" +
-		"Quyida mijoz bilan bo'lgan suhbat tarixi berilgan. Uni to'liq o'qib chiq va\n" +
-		"navbatchi xodim uchun qisqa xulosa yoz — xodim suhbatni o'qimasdan ham\n" +
-		"muammoni tushunishi kerak.\n\n" +
-		"Aynan quyidagi 4 qatorni yoz (o'zbek tilida):\n" +
-		"Daraja: <yuqori | o'rta | past>\n" +
-		"Muammo: <mijozning umumiy muammosi>\n" +
-		"Tafsilot: <muhim faktlar: buyurtma/track raqami, sana, nima urinib ko'rilgan>\n" +
-		"Kerak: <xodimdan aniq nima talab qilinadi>\n\n" +
-		"Daraja qanday tanlanadi:\n" +
-		"- yuqori: yetkazish muddati o'tgan, buyurtma yo'qolgan yoki shikastlangan,\n" +
-		"  pul qaytarish yoki to'lov nizosi, mijoz jahli chiqqan yoki bir necha\n" +
-		"  marta javobsiz murojaat qilgan\n" +
-		"- o'rta: holat noaniq, tekshirish kerak, lekin shoshilinch emas\n" +
-		"- past: oddiy savol yoki ma'lumot yetishmayotgani uchun aniqlik kerak\n\n" +
-		"Boshqa hech narsa yozma. Suhbatda yo'q ma'lumotni o'ylab topma —\n" +
-		"bilinmasa \"noma'lum\" deb yoz."
+	system := c.p.Get(PromptSummarize)
 
 	if orderInfo != "" {
 		transcript += "\n\n--- Tizimdan olingan buyurtma ma'lumoti ---" + orderInfo
 	}
 
-	out, err := c.generate(ctx, system, transcript)
+	out, err := c.generate(ctx, system, transcript, GenOptions{})
 	if err != nil {
 		return Orta, "", err
 	}
@@ -200,29 +221,64 @@ func splitDaraja(out string) (Daraja, string) {
 	return daraja, strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
-// Classify mijoz savoliga mos kategoriya id'sini tanlaydi.
-// Mos kategoriya topilmasa 0 qaytaradi (xato emas).
-func (c *Client) Classify(ctx context.Context, catalog, transcript string) (uint, error) {
-	if catalog == "" {
-		return 0, nil
-	}
-	system := "Sen matnni tasniflaysan. Quyida kategoriyalar ro'yxati bor.\n\n" +
-		catalog +
-		"\nMijozning oxirgi savoli qaysi kategoriyaga tegishli ekanini aniqla.\n" +
-		"Javob sifatida FAQAT bitta raqam (kategoriya id) yoz. Hech qanday izoh yozma.\n" +
-		"Agar hech qaysi kategoriyaga to'g'ri kelmasa 0 yoz."
+// Route — routerning qarori. Faqat shu ikki maydon o'qiladi: router mijoz
+// matnini qayta yozsa ham, u e'tiborga olinmaydi.
+type Route struct {
+	Category string `json:"category"`
+	Escalate bool   `json:"escalate"`
+}
 
-	out, err := c.generate(ctx, system, transcript)
+// routerOptions — router javobi qisqa va deterministik bo'lishi kerak.
+var routerOptions = GenOptions{MaxTokens: 20, TempZero: true, JSON: true}
+
+// Classify mijoz murojaatini kategoriyaga ajratadi.
+//
+// Kategoriyalar ro'yxati bazadagi "cat:" promptlaridan DINAMIK yig'iladi —
+// dashboarddan yangi kategoriya qo'shilsa router uni darhol ko'radi.
+// Kategoriya bo'lmasa router umuman chaqirilmaydi (bekorga token ketmasin).
+func (c *Client) Classify(ctx context.Context, transcript string) (Route, error) {
+	keys := c.p.Keys(catPrefix)
+	if len(keys) == 0 {
+		return Route{}, nil
+	}
+	tmpl := c.p.Get(PromptClassify)
+	if tmpl == "" {
+		return Route{}, nil
+	}
+
+	var list strings.Builder
+	valid := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		slug := strings.TrimPrefix(k, catPrefix)
+		valid[slug] = true
+		fmt.Fprintf(&list, "- %s\n", slug)
+	}
+	system := strings.ReplaceAll(tmpl, "{{CATEGORIES}}", strings.TrimRight(list.String(), "\n"))
+
+	out, err := c.generate(ctx, system, transcript, routerOptions)
 	if err != nil {
-		return 0, err
+		return Route{}, err
 	}
-	m := regexp.MustCompile(`\d+`).FindString(out)
-	if m == "" {
-		return 0, nil
+
+	r := parseRoute(out)
+	// Router o'ylab topgan kategoriya qabul qilinmaydi — faqat ro'yxatdagisi.
+	if r.Category != "" && !valid[r.Category] {
+		r.Category = ""
 	}
-	id, err := strconv.ParseUint(m, 10, 64)
-	if err != nil {
-		return 0, nil
+	return r, nil
+}
+
+// parseRoute router javobidan JSON'ni ajratadi. Model JSON atrofiga matn
+// yoki ```json bloki qo'shsa ham ishlaydi.
+func parseRoute(out string) Route {
+	var r Route
+	s := strings.TrimSpace(out)
+	if i, j := strings.Index(s, "{"), strings.LastIndex(s, "}"); i >= 0 && j > i {
+		s = s[i : j+1]
 	}
-	return uint(id), nil
+	if err := json.Unmarshal([]byte(s), &r); err != nil {
+		return Route{}
+	}
+	r.Category = strings.TrimSpace(strings.ToLower(r.Category))
+	return r
 }

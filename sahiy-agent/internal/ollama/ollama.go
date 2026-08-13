@@ -120,6 +120,7 @@ type chatRequest struct {
 	Messages  []message `json:"messages"`
 	Stream    bool      `json:"stream"`
 	KeepAlive string    `json:"keep_alive"`
+	Format    string    `json:"format,omitempty"` // "json" — qat'iy JSON javob
 	Options   opts      `json:"options"`
 }
 
@@ -151,7 +152,7 @@ type chatResponse struct {
 //
 // Kontekst to'lib ketgan bo'lsa javob bilan birga ErrContextFull qaytadi —
 // chaqiruvchi javobni ishlatishi mumkin, lekin ogohlantirishi kerak.
-func (c *Client) Generate(ctx context.Context, system, user string) (string, ai.Usage, error) {
+func (c *Client) Generate(ctx context.Context, system, user string, opt ai.GenOptions) (string, ai.Usage, error) {
 	if !c.Ready() {
 		return "", ai.Usage{}, fmt.Errorf("ollama sozlanmagan (OLLAMA_URL/OLLAMA_MODEL)")
 	}
@@ -162,15 +163,28 @@ func (c *Client) Generate(ctx context.Context, system, user string) (string, ai.
 	}
 	msgs = append(msgs, message{Role: "user", Content: user})
 
+	// So'rov sozlamalari: chaqiruvchi bergani ustun turadi.
+	numPredict, temp := c.MaxTokens, c.Temperature
+	if opt.MaxTokens > 0 {
+		numPredict = opt.MaxTokens
+	}
+	if t, ok := opt.Temp(); ok {
+		temp = t
+	}
+	format := ""
+	if opt.JSON {
+		format = "json"
+	}
 	body, err := json.Marshal(chatRequest{
 		Model:     c.Model,
 		Messages:  msgs,
 		Stream:    false, // butun javobni bir marta olamiz
 		KeepAlive: c.KeepAlive,
+		Format:    format,
 		Options: opts{
 			NumCtx:      c.NumCtx,
-			NumPredict:  c.MaxTokens,
-			Temperature: c.Temperature,
+			NumPredict:  numPredict,
+			Temperature: temp,
 		},
 	})
 	if err != nil {

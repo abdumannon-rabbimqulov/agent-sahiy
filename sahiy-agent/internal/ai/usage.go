@@ -54,6 +54,31 @@ func (u Usage) String() string {
 	return s
 }
 
+// GenOptions — bitta so'rovning generatsiya sozlamalari. Nol qiymat —
+// provayderning o'z default'i.
+type GenOptions struct {
+	// MaxTokens — javobning eng ko'p tokeni (router uchun juda kichik).
+	MaxTokens int
+	// Temperature — 0 bo'lsa TempZero bilan aniq nol so'ralishi mumkin.
+	Temperature float64
+	// TempZero — true bo'lsa temperature=0 yuboriladi (deterministik javob).
+	TempZero bool
+	// JSON — provayderdan qat'iy JSON javob so'raladi.
+	JSON bool
+}
+
+// Temp — yuboriladigan temperature va uni umuman yuborish kerakligini
+// qaytaradi.
+func (o GenOptions) Temp() (float64, bool) {
+	if o.TempZero {
+		return 0, true
+	}
+	if o.Temperature > 0 {
+		return o.Temperature, true
+	}
+	return 0, false
+}
+
 // Meter — bitta suhbatga ketgan tokenlarni yig'ib boradigan hisoblagich.
 // Context orqali uzatiladi, shuning uchun Ask/Classify/Summarize imzolari
 // o'zgarmaydi. Mutex — bir ctx bir nechta goroutinada ishlatilsa ham xavfsiz.

@@ -2,6 +2,7 @@ package support
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,5 +129,24 @@ func TestLastClientMessageRasm(t *testing.T) {
 	id, text := LastClientMessage(msgs)
 	if id != 2 || text != "[rasm]" {
 		t.Errorf("id=%d text=%q — rasm URL o'rniga [rasm] kutilgan", id, text)
+	}
+}
+
+func TestTrackRaqamiOynadaAynanQoladi(t *testing.T) {
+	// Muhim: mijoz yozgan buyurtma raqami AI'ga aynan shu holda yetishi
+	// kerak — hech qanday xulosa, qisqartirish yoki qayta yozish yo'q.
+	const track = "DG60582375"
+	msgs := []Message{
+		at(1, "client", "salom", time.Minute),
+		at(2, "agent", "qaysi raqam?", time.Minute),
+		at(3, "client", "mana: "+track+" qayerda?", time.Minute),
+	}
+	window := Window(msgs, 2, 4, 20, 24*time.Hour)
+	out := Transcript(window)
+	if !strings.Contains(out, track) {
+		t.Fatalf("track raqami yo'qoldi:\n%s", out)
+	}
+	if !strings.Contains(out, "client: mana: "+track+" qayerda?") {
+		t.Errorf("mijoz matni o'zgargan:\n%s", out)
 	}
 }

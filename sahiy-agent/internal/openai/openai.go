@@ -57,8 +57,16 @@ func (c *Client) Ready() bool { return c.APIKey != "" }
 // --- so'rov/javob tuzilmalari ---
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+	Model          string          `json:"model"`
+	Messages       []message       `json:"messages"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
+	Temperature    *float64        `json:"temperature,omitempty"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+}
+
+// responseFormat — {"type":"json_object"} qat'iy JSON javob uchun.
+type responseFormat struct {
+	Type string `json:"type"`
 }
 
 type message struct {
@@ -86,12 +94,12 @@ type chatResponse struct {
 }
 
 // Generate — matnli so'rov.
-func (c *Client) Generate(ctx context.Context, system, user string) (string, ai.Usage, error) {
-	return c.send(ctx, system, user)
+func (c *Client) Generate(ctx context.Context, system, user string, opt ai.GenOptions) (string, ai.Usage, error) {
+	return c.send(ctx, system, user, opt)
 }
 
 // send — OpenAI'ga so'rov yuboradi (429/5xx da qayta urinish bilan).
-func (c *Client) send(ctx context.Context, systemPrompt, userContent string) (string, ai.Usage, error) {
+func (c *Client) send(ctx context.Context, systemPrompt, userContent string, opt ai.GenOptions) (string, ai.Usage, error) {
 	if c.APIKey == "" {
 		return "", ai.Usage{}, fmt.Errorf("OPENAI_API_KEY bo'sh")
 	}
@@ -102,7 +110,14 @@ func (c *Client) send(ctx context.Context, systemPrompt, userContent string) (st
 	}
 	msgs = append(msgs, message{Role: "user", Content: userContent})
 
-	data, err := json.Marshal(chatRequest{Model: c.Model, Messages: msgs})
+	req0 := chatRequest{Model: c.Model, Messages: msgs, MaxTokens: opt.MaxTokens}
+	if t, ok := opt.Temp(); ok {
+		req0.Temperature = &t
+	}
+	if opt.JSON {
+		req0.ResponseFormat = &responseFormat{Type: "json_object"}
+	}
+	data, err := json.Marshal(req0)
 	if err != nil {
 		return "", ai.Usage{}, err
 	}

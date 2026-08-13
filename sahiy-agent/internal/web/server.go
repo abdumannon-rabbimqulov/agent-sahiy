@@ -16,6 +16,7 @@ import (
 	"sahiy-agent/internal/category"
 	"sahiy-agent/internal/escalation"
 	"sahiy-agent/internal/models"
+	"sahiy-agent/internal/prompts"
 	"sahiy-agent/internal/settings"
 	"sahiy-agent/internal/store"
 )
@@ -42,13 +43,14 @@ type Server struct {
 	cats  *category.Store
 	esc   *escalation.Store
 	set   *settings.Store
+	prm   *prompts.Store
 	opt   Options
 	files fs.FS
 }
 
 // New yangi web server.
 func New(st *store.Store, cats *category.Store, esc *escalation.Store,
-	set *settings.Store, opt Options) *Server {
+	set *settings.Store, prm *prompts.Store, opt Options) *Server {
 	var files fs.FS
 	if opt.Dev {
 		files = os.DirFS("internal/web/static")
@@ -59,7 +61,7 @@ func New(st *store.Store, cats *category.Store, esc *escalation.Store,
 		}
 		files = sub
 	}
-	return &Server{store: st, cats: cats, esc: esc, set: set, opt: opt, files: files}
+	return &Server{store: st, cats: cats, esc: esc, set: set, prm: prm, opt: opt, files: files}
 }
 
 // Start HTTP serverni ishga tushiradi (blokirovka qiladi).
@@ -74,11 +76,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(s.files)))
 	mux.HandleFunc("GET /{$}", s.page("index.html"))
 	mux.HandleFunc("GET /categories", s.page("categories.html"))
+	mux.HandleFunc("GET /prompts", s.page("prompts.html"))
 
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/escalations", s.handleEscalations)
 	mux.HandleFunc("GET /api/costs", s.handleCosts)
+	mux.HandleFunc("GET /api/prompts", s.handlePromptList)
+	mux.HandleFunc("PUT /api/prompts/{key...}", s.handlePromptSave)
+	mux.HandleFunc("GET /api/prompt-history/{key...}", s.handlePromptHistory)
+	mux.HandleFunc("POST /api/prompt-rollback/{key...}", s.handlePromptRollback)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", s.handleSettingsSet)
 	mux.HandleFunc("POST /api/interactions/{id}/send", s.handleApprove)
@@ -233,6 +240,97 @@ func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, items)
+}
+
+// --- promptlar ---
+
+// handlePromptList barcha promptlarni qaytaradi (o'chirilganlari ham).
+func (s *Server) handlePromptList(w http.ResponseWriter, r *http.Request) {
+	items, err := s.prm.All()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if items == nil {
+		items = []models.Prompt{}
+	}
+	writeJSON(w, items)
+}
+
+// handlePromptSave promptni saqlaydi. Versiya oshishi, tarixga yozilishi va
+// keshning yangilanishi — hammasi model hook'lari ichida.
+// Tanasi: {"content":"...","enabled":true}
+func (s *Server) handlePromptSave(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "kalit ko'rsatilmagan", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20)).Decode(&body); err != nil {
+		http.Error(w, "json o'qib bo'lmadi: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Content) != "" {
+		if err := s.prm.Set(key, body.Content); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Enabled != nil {
+		if err := s.prm.SetEnabled(key, *body.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	s.onePrompt(w, key)
+}
+
+// handlePromptHistory promptning eski versiyalarini qaytaradi.
+func (s *Server) handlePromptHistory(w http.ResponseWriter, r *http.Request) {
+	items, err := s.prm.History(r.PathValue("key"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if items == nil {
+		items = []models.PromptHistory{}
+	}
+	writeJSON(w, items)
+}
+
+// handlePromptRollback promptni eski versiyaga qaytaradi (?version=3).
+func (s *Server) handlePromptRollback(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	v, err := strconv.Atoi(r.URL.Query().Get("version"))
+	if err != nil || v <= 0 {
+		http.Error(w, "noto'g'ri version", http.StatusBadRequest)
+		return
+	}
+	if err := s.prm.Rollback(key, v); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.onePrompt(w, key)
+}
+
+// onePrompt — saqlangandan keyin yangilangan yozuvni qaytaradi.
+func (s *Server) onePrompt(w http.ResponseWriter, key string) {
+	items, err := s.prm.All()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, p := range items {
+		if p.Key == key {
+			writeJSON(w, p)
+			return
+		}
+	}
+	http.Error(w, "prompt topilmadi", http.StatusNotFound)
 }
 
 // --- sozlamalar (AI yoqish/o'chirish) ---

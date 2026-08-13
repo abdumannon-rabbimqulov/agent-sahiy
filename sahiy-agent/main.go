@@ -29,6 +29,7 @@ import (
 	"sahiy-agent/internal/openai"
 	"sahiy-agent/internal/orders"
 	"sahiy-agent/internal/pricing"
+	"sahiy-agent/internal/prompts"
 	"sahiy-agent/internal/service"
 	"sahiy-agent/internal/settings"
 	"sahiy-agent/internal/store"
@@ -70,6 +71,7 @@ type app struct {
 	db        *gorm.DB        // byudjet ogohlantirishi bir marta yuborilishi uchun
 	local     *ollama.Client  // lokal model (AI_PROVIDER=ollama bo'lsa), aks holda nil
 	set       *settings.Store // dashboarddan boshqariladigan sozlamalar
+	prompts   *prompts.Store  // promptlar (bazadan, xotirada keshlangan)
 	cachePath string          // token cache fayli (DataDir ostida)
 }
 
@@ -126,6 +128,26 @@ func main() {
 		set:       settings.New(database),
 		cachePath: filepath.Join(cfg.DataDir, "token.json"),
 	}
+	// Promptlar: bazadan o'qiladi, xotirada keshlanadi. prompt.txt zaxira
+	// bo'lib qoladi — baza ishlamasa "base" o'shandan olinadi.
+	a.prompts = prompts.New(database, promptFile())
+	if err := a.prompts.Seed(); err != nil {
+		fmt.Fprintln(os.Stderr, "prompt seed xatosi:", err)
+	}
+	if err := a.prompts.Reload(); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  promptlar bazadan o'qilmadi (%v)\n"+
+			"   prompt.txt dagi zaxira matn ishlatiladi.\n", err)
+	} else {
+		fmt.Printf("📝 %d ta prompt yuklandi (dashboard: /prompts)\n", a.prompts.Len())
+	}
+	// Prompt dashboarddan saqlanganda kesh darhol yangilanadi.
+	models.PromptChanged = func() {
+		if err := a.prompts.Reload(); err != nil {
+			fmt.Fprintln(os.Stderr, "prompt keshi yangilanmadi:", err)
+		}
+	}
+	go a.prompts.Watch(ctx)
+
 	// Sozlamalar: .env dagi qiymat faqat birinchi marta yoziladi, keyin
 	// dashboarddagi tugma ustun turadi.
 	if err := a.set.Init(settings.AutoReply, cfg.AutoReply); err != nil {
@@ -136,7 +158,7 @@ func main() {
 	}
 
 	backend, local := pickBackend(cfg)
-	a.ai, a.local = ai.New(backend, cfg.AgentPrompt), local
+	a.ai, a.local = ai.New(backend, a.prompts), local
 
 	// Ikkinchi sayt (service API) — buyurtma holatini id/track bo'yicha ko'rish.
 	svc := service.New(cfg.ServiceBaseURL, service.LoginRequest{
@@ -190,7 +212,7 @@ func main() {
 	}
 
 	// Web dashboard.
-	srv := web.New(a.hist, a.cats, a.esc, a.set, web.Options{
+	srv := web.New(a.hist, a.cats, a.esc, a.set, a.prompts, web.Options{
 		Addr:      cfg.WebAddr,
 		AdminUser: cfg.AdminUser,
 		AdminPass: cfg.AdminPass,
@@ -354,17 +376,12 @@ func (a *app) runCycle(ctx context.Context) {
 		return
 	}
 
-	catalog, err := a.cats.Catalog()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "    kategoriyalar xatosi:", err)
-	}
-
 	handled := 0
 	for _, ch := range fresh {
 		if ctx.Err() != nil {
 			return
 		}
-		if a.handleChat(ctx, c, senderID, ch, catalog) {
+		if a.handleChat(ctx, c, senderID, ch) {
 			handled++
 		}
 	}
@@ -425,7 +442,7 @@ func (a *app) baseline(c *client.Client, chats []support.Conversation) {
 
 // handleChat bitta suhbatga ishlov beradi. Javob berilgan bo'lsa true.
 func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
-	ch support.Conversation, catalog string) bool {
+	ch support.Conversation) bool {
 
 	msgs, err := support.FetchMessages(c, ch.ID, 1, a.fetchLimit())
 	if err != nil {
@@ -470,29 +487,29 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	tr.add("📚", "%d ta xabar o'qildi: yangilari + %d ta kontekst (jami tarix %d ta)",
 		len(window), a.cfg.ContextBefore, len(msgs))
 
-	// 2-qadam: mos kategoriyani aniqlash.
+	// 2-qadam: router — mijoz murojaatini kategoriyaga ajratadi. U faqat
+	// kategoriya kalitini qaytaradi; mijoz matniga tegmaydi.
 	var (
-		catID   *uint
-		catInfo string
+		catID    *uint
+		catKey   string
+		escalate bool
 	)
-	if catalog == "" {
-		tr.add("🏷", "Kategoriya bosqichi o'tkazib yuborildi (katalog bo'sh)")
-	} else {
-		id, err := a.ai.Classify(ctx, catalog, transcript)
-		switch {
-		case err != nil:
-			tr.add("⚠️", "Kategoriya aniqlanmadi (xato: %v)", err)
-		case id == 0:
-			tr.add("🏷", "Mos kategoriya topilmadi — umumiy bilim bilan javob beriladi")
-		default:
-			cat, cerr := a.cats.Get(id)
-			if cerr != nil || !cat.Active {
-				tr.add("🏷", "Kategoriya %d tanlandi, lekin o'chirilgan/topilmadi", id)
-			} else {
-				catID, catInfo = &cat.ID, cat.Content
-				tr.add("🏷", "Kategoriya: %s (id %d)", cat.Name, cat.ID)
-			}
+	route, rerr := a.ai.Classify(ctx, transcript)
+	switch {
+	case rerr != nil:
+		tr.add("⚠️", "Kategoriya aniqlanmadi (xato: %v)", rerr)
+	case route.Category == "":
+		tr.add("🏷", "Mos kategoriya topilmadi — umumiy bilim bilan javob beriladi")
+	default:
+		catKey = route.Category
+		tr.add("🏷", "Kategoriya: %s", catKey)
+		if cat, err := a.cats.BySlug(catKey); err == nil && cat.Active {
+			catID = &cat.ID
 		}
+	}
+	if route.Escalate {
+		escalate = true
+		tr.add("🆘", "Router muammoni xodimga yo'naltirdi (escalate=true)")
 	}
 
 	// 3-qadam: rasmlar. Rasm AI'ga yuborilmaydi (token tejash) — faqat
@@ -506,12 +523,23 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	// holatini ikkinchi saytdan olish.
 	orderInfo := a.lookupOrders(&tr, ch, lastText)
 
+	// Router "xodim kerak" desa — javob yozib o'tirmaymiz (bitta so'rov tejaladi).
+	if escalate {
+		if ids := support.ClientMessageIDs(msgs); len(ids) > 0 {
+			_ = support.MarkRead(c, ids)
+		}
+		a.escalate(ctx, ch, lastText, transcript, orderInfo, imgURLs, meter, &tr)
+		_ = a.track.Commit(ch.ID, lastID)
+		return true
+	}
+
 	// 5-qadam: kategoriya + buyurtma ma'lumoti bilan javob yozish.
+	// user qismi — mijozning original matni, o'zgarishsiz.
 	reply, err := a.ai.Ask(ctx, ai.Request{
-		Transcript: transcript,
-		Category:   catInfo,
-		OrderInfo:  orderInfo,
-		HasImage:   len(imgURLs) > 0,
+		Transcript:  transcript,
+		CategoryKey: catKey,
+		OrderInfo:   orderInfo,
+		HasImage:    len(imgURLs) > 0,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    AI xatosi:", err)
@@ -555,6 +583,15 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	a.record(ch, in)
 	_ = a.track.Commit(ch.ID, lastID)
 	return true
+}
+
+// promptFile — zaxira prompt fayli yo'li (.env dagi AGENT_PROMPT_FILE yoki
+// ishchi katalogdagi prompt.txt).
+func promptFile() string {
+	if p := os.Getenv("AGENT_PROMPT_FILE"); p != "" {
+		return p
+	}
+	return "prompt.txt"
 }
 
 // handledByAI — "kim hal qildi" ustuni uchun (masalan "AI (openai gpt-4o-mini)").

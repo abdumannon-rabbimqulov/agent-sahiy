@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"sahiy-agent/internal/ai"
 )
 
 // Ollama /api/chat javobining haqiqiy shakli (kerakli qismi).
@@ -34,7 +36,7 @@ func TestGenerateJavobVaTokenlar(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "llama3.1:8b", Options{KeepAlive: "0", NumCtx: 4096, MaxTokens: 600})
-	out, u, err := c.Generate(context.Background(), "sen agentsan", "salom")
+	out, u, err := c.Generate(context.Background(), "sen agentsan", "salom", ai.GenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestGenerateKontekstTolgan(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "llama3.1:8b", Options{NumCtx: 1024})
-	out, u, err := c.Generate(context.Background(), "s", "u")
+	out, u, err := c.Generate(context.Background(), "s", "u", ai.GenOptions{})
 	if !errors.Is(err, ErrContextFull) {
 		t.Fatalf("ErrContextFull kutilgan, keldi: %v", err)
 	}
@@ -95,13 +97,13 @@ func TestGenerateXatolar(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "yo-q-model", Options{})
-	if _, _, err := c.Generate(context.Background(), "s", "u"); err == nil {
+	if _, _, err := c.Generate(context.Background(), "s", "u", ai.GenOptions{}); err == nil {
 		t.Error("404 uchun xato kutilgan")
 	}
 
 	// Server o'chiq — ulanish xatosi.
 	dead := New("http://127.0.0.1:1", "llama3.1:8b", Options{})
-	if _, _, err := dead.Generate(context.Background(), "s", "u"); err == nil {
+	if _, _, err := dead.Generate(context.Background(), "s", "u", ai.GenOptions{}); err == nil {
 		t.Error("ulanish xatosi kutilgan")
 	}
 
@@ -110,7 +112,7 @@ func TestGenerateXatolar(t *testing.T) {
 		w.Write([]byte(`{"message":{"content":"   "},"done":true}`))
 	}))
 	defer empty.Close()
-	if _, _, err := New(empty.URL, "m", Options{}).Generate(context.Background(), "s", "u"); err == nil {
+	if _, _, err := New(empty.URL, "m", Options{}).Generate(context.Background(), "s", "u", ai.GenOptions{}); err == nil {
 		t.Error("bo'sh javob uchun xato kutilgan")
 	}
 }

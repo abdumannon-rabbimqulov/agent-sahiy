@@ -19,6 +19,7 @@ import (
 	"sahiy-agent/internal/db"
 	"sahiy-agent/internal/escalation"
 	"sahiy-agent/internal/models"
+	"sahiy-agent/internal/prompts"
 	"sahiy-agent/internal/settings"
 	"sahiy-agent/internal/store"
 )
@@ -52,7 +53,7 @@ func TestBoshqaruv(t *testing.T) {
 	// Yuborilgan javoblarni ushlab qolamiz (haqiqiy API'ga bormaydi).
 	var sentTo int64
 	var sentText string
-	srv := New(st, category.New(gdb), escalation.New(gdb), set, Options{
+	srv := New(st, category.New(gdb), escalation.New(gdb), set, prompts.New(gdb, ""), Options{
 		SendReply: func(conversationID int64, text string) error {
 			sentTo, sentText = conversationID, text
 			return nil

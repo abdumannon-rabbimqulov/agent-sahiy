@@ -50,8 +50,16 @@ func (c *Client) Ready() bool { return c.APIKey != "" }
 // --- so'rov/javob tuzilmalari ---
 
 type genRequest struct {
-	SystemInstruction *content  `json:"systemInstruction,omitempty"`
-	Contents          []content `json:"contents"`
+	SystemInstruction *content   `json:"systemInstruction,omitempty"`
+	Contents          []content  `json:"contents"`
+	GenerationConfig  *genConfig `json:"generationConfig,omitempty"`
+}
+
+// genConfig — javob uzunligi, temperature va qat'iy JSON.
+type genConfig struct {
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64 `json:"temperature,omitempty"`
+	ResponseMimeType string   `json:"responseMimeType,omitempty"`
 }
 
 type content struct {
@@ -81,12 +89,27 @@ type genResponse struct {
 }
 
 // Generate — Gemini'ga bitta matnli so'rov (429/5xx da qayta urinish bilan).
-func (c *Client) Generate(ctx context.Context, system, user string) (string, ai.Usage, error) {
-	return c.send(ctx, system, []part{{Text: user}})
+func (c *Client) Generate(ctx context.Context, system, user string, opt ai.GenOptions) (string, ai.Usage, error) {
+	return c.send(ctx, system, []part{{Text: user}}, opt)
+}
+
+// genCfg — GenOptions'ni Gemini formatiga o'giradi (kerak bo'lmasa nil).
+func genCfg(opt ai.GenOptions) *genConfig {
+	cfg := &genConfig{MaxOutputTokens: opt.MaxTokens}
+	if t, ok := opt.Temp(); ok {
+		cfg.Temperature = &t
+	}
+	if opt.JSON {
+		cfg.ResponseMimeType = "application/json"
+	}
+	if cfg.MaxOutputTokens == 0 && cfg.Temperature == nil && cfg.ResponseMimeType == "" {
+		return nil
+	}
+	return cfg
 }
 
 // send — Gemini'ga so'rov yuboradi (429/5xx da qayta urinish bilan).
-func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (string, ai.Usage, error) {
+func (c *Client) send(ctx context.Context, systemPrompt string, parts []part, opt ai.GenOptions) (string, ai.Usage, error) {
 	if c.APIKey == "" {
 		return "", ai.Usage{}, fmt.Errorf("GEMINI_API_KEY bo'sh")
 	}
@@ -96,6 +119,9 @@ func (c *Client) send(ctx context.Context, systemPrompt string, parts []part) (s
 	}
 	if systemPrompt != "" {
 		reqBody.SystemInstruction = &content{Parts: []part{{Text: systemPrompt}}}
+	}
+	if cfg := genCfg(opt); cfg != nil {
+		reqBody.GenerationConfig = cfg
 	}
 	data, err := json.Marshal(reqBody)
 	if err != nil {

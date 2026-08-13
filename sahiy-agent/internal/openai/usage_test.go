@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"sahiy-agent/internal/ai"
 )
 
 // OpenAI'ning haqiqiy javob shakli (kerakli qismi).
@@ -31,7 +33,7 @@ func TestGenerateUsageniOqiydi(t *testing.T) {
 	defer srv.Close()
 
 	c := New("test-key", "gpt-4o-mini", srv.URL)
-	out, u, err := c.Generate(context.Background(), "system", "salom")
+	out, u, err := c.Generate(context.Background(), "system", "salom", ai.GenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +50,7 @@ func TestGenerateUsageniOqiydi(t *testing.T) {
 
 func TestKalitsizSorovYuborilmaydi(t *testing.T) {
 	c := New("", "gpt-4o-mini", "")
-	if _, _, err := c.Generate(context.Background(), "s", "u"); err == nil {
+	if _, _, err := c.Generate(context.Background(), "s", "u", ai.GenOptions{}); err == nil {
 		t.Error("kalit bo'lmasa xato kutilgan")
 	}
 }

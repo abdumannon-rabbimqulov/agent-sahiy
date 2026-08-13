@@ -6,8 +6,11 @@ import "time"
 // Category — agent javob berishda ishlatadigan bilim bo'limi.
 // Masalan id=1 "Yetkazib berish": narx, muddat, punktlar haqida ma'lumot.
 type Category struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"size:200;not null" json:"name"`
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"size:200;not null" json:"name"`
+	// Slug — prompt kaliti uchun ("Yetkazib berish" → "yetkazib-berish").
+	// Kategoriya bilimlari prompts jadvalida "cat:<slug>" kaliti bilan yotadi.
+	Slug        string    `gorm:"size:120;uniqueIndex" json:"slug"`
 	Description string    `gorm:"size:500" json:"description"` // AI qachon tanlashini bilishi uchun qisqa izoh
 	Content     string    `gorm:"type:text;not null" json:"content"`
 	Active      bool      `gorm:"not null;default:true;index" json:"active"`

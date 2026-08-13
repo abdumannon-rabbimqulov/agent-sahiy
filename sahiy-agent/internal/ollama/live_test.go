@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"sahiy-agent/internal/ai"
 )
 
 func TestTirikModel(t *testing.T) {
@@ -24,7 +26,7 @@ func TestTirikModel(t *testing.T) {
 	out, u, err := c.Generate(ctx,
 		"Sen matnni tasniflaysan.\n1. Yetkazib berish — muddat, punkt, narx\n2. To'lov — karta, qaytarish\n"+
 			"Mijozning savoli qaysi kategoriyaga tegishli? FAQAT bitta raqam yoz.",
-		"client: buyurtmam qachon yetib keladi?")
+		"client: buyurtmam qachon yetib keladi?", ai.GenOptions{MaxTokens: 20, TempZero: true, JSON: true})
 	if err != nil {
 		t.Fatal("Classify:", err)
 	}
@@ -33,7 +35,7 @@ func TestTirikModel(t *testing.T) {
 	// 2) Oddiy support javobi — o'zbek tilida yozilyaptimi?
 	out2, u2, err := c.Generate(ctx,
 		"Sen Sahiy support agentisan. Mijozga O'ZBEK TILIDA qisqa, xushmuomala javob yoz.",
-		"client: salom, buyurtmam qayerda?")
+		"client: salom, buyurtmam qayerda?", ai.GenOptions{})
 	if err != nil {
 		t.Fatal("Ask:", err)
 	}

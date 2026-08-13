@@ -39,15 +39,15 @@ func (f *Fallback) secondaryUsable() bool {
 // Generate avval asosiy provayderga murojaat qiladi; u xato bersa zaxiraga
 // o'tadi. Kontekst bekor qilinganda (dastur to'xtayapti yoki timeout) zaxira
 // ishlatilmaydi — bu vaqtinchalik nosozlik emas.
-func (f *Fallback) Generate(ctx context.Context, system, user string) (string, Usage, error) {
+func (f *Fallback) Generate(ctx context.Context, system, user string, opt GenOptions) (string, Usage, error) {
 	if f.Primary == nil || !f.Primary.Ready() {
 		if !f.secondaryUsable() {
 			return "", Usage{}, fmt.Errorf("hech qaysi AI provayderi tayyor emas")
 		}
-		return f.Secondary.Generate(ctx, system, user)
+		return f.Secondary.Generate(ctx, system, user, opt)
 	}
 
-	out, u, err := f.Primary.Generate(ctx, system, user)
+	out, u, err := f.Primary.Generate(ctx, system, user, opt)
 	if err == nil {
 		return out, u, nil
 	}
@@ -66,7 +66,7 @@ func (f *Fallback) Generate(ctx context.Context, system, user string) (string, U
 	fmt.Fprintf(os.Stderr, "⚠️  %s xato berdi (%v) — %s ga o'tildi\n",
 		f.Primary.Name(), err, f.Secondary.Name())
 
-	out, u2, err2 := f.Secondary.Generate(ctx, system, user)
+	out, u2, err2 := f.Secondary.Generate(ctx, system, user, opt)
 	if err2 != nil {
 		// Ikkalasi ham ishlamadi — ikkala sababni ham ko'rsatamiz.
 		return "", u2, fmt.Errorf("%s: %w; zaxira %s: %v",
