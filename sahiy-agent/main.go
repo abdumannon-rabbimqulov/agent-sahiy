@@ -94,14 +94,8 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "groups":
-			if err := listGroups(ctx, cfg); err != nil {
-				fmt.Fprintln(os.Stderr, "guruhlarni olish xatosi:", err)
-				os.Exit(1)
-			}
-			return
 		default:
-			fmt.Fprintf(os.Stderr, "noma'lum buyruq: %s (login | groups)\n", os.Args[1])
+			fmt.Fprintf(os.Stderr, "noma'lum buyruq: %s (login)\n", os.Args[1])
 			os.Exit(1)
 		}
 	}
@@ -1006,42 +1000,6 @@ func loginCmd(ctx context.Context, cfg *config.Config) error {
 		false,
 	)
 	return ub.Login(ctx)
-}
-
-// listGroups saqlangan sessiya orqali a'zo bo'lgan guruhlarni chop etadi.
-func listGroups(ctx context.Context, cfg *config.Config) error {
-	if cfg.TgAPIID == 0 || cfg.TgAPIHash == "" {
-		return fmt.Errorf("API_ID va API_HASH .env da bo'lishi kerak")
-	}
-	// requireSession=true — bu buyruq hech qachon yangi login boshlamaydi.
-	ub := userbot.New(
-		cfg.TgAPIID, cfg.TgAPIHash, cfg.TgPhone, cfg.TgSession, nil, nil,
-		noPrompt("Telegram kod"), noPrompt("2FA parol"), true,
-	)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- ub.Run(ctx) }()
-
-	groups, err := ub.ListGroups(ctx)
-	if err != nil {
-		select {
-		case runErr := <-errCh:
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				return runErr
-			}
-		default:
-		}
-		return err
-	}
-
-	fmt.Println("\n=== Guruhlar (ALLOWED_GROUPS uchun id) ===")
-	for _, g := range groups {
-		fmt.Printf("  %-14d  %s  (%s)\n", g.BotAPIID, g.Title, g.Kind)
-	}
-	fmt.Println("\nKerakli guruh id'sini .env dagi ALLOWED_GROUPS ga yozing.")
-	return nil
 }
 
 // stdinPrompt terminaldan qiymat o'qiydigan funksiya qaytaradi.

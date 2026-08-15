@@ -329,66 +329,6 @@ func extractMessageID(u tg.UpdatesClass) int64 {
 	return 0
 }
 
-// Group — dialoglardagi guruh (ro'yxat uchun).
-type Group struct {
-	BotAPIID int64  // -100... ko'rinishidagi id (ALLOWED_GROUPS ga yoziladi)
-	RawID    int64  // ichki (musbat) id
-	Title    string // guruh nomi
-	Kind     string // "supergroup/channel" yoki "group"
-}
-
-// ListGroups akkaunt a'zo bo'lgan guruhlarni qaytaradi.
-// Ready bo'lguncha kutadi (Run goroutine'da ishlab turishi kerak).
-func (b *Bot) ListGroups(ctx context.Context) ([]Group, error) {
-	select {
-	case <-b.ready:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(120 * time.Second):
-		return nil, fmt.Errorf("userbot tayyor emas (timeout)")
-	}
-
-	b.mu.Lock()
-	api := b.api
-	b.mu.Unlock()
-
-	res, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-		OffsetPeer: &tg.InputPeerEmpty{},
-		Limit:      200,
-	})
-	if err != nil {
-		return nil, err
-	}
-	var chats []tg.ChatClass
-	switch d := res.(type) {
-	case *tg.MessagesDialogs:
-		chats = d.Chats
-	case *tg.MessagesDialogsSlice:
-		chats = d.Chats
-	}
-
-	var out []Group
-	for _, ch := range chats {
-		switch c := ch.(type) {
-		case *tg.Channel:
-			out = append(out, Group{
-				BotAPIID: -(1000000000000 + c.ID),
-				RawID:    c.ID,
-				Title:    c.Title,
-				Kind:     "supergroup/channel",
-			})
-		case *tg.Chat:
-			out = append(out, Group{
-				BotAPIID: -c.ID,
-				RawID:    c.ID,
-				Title:    c.Title,
-				Kind:     "group",
-			})
-		}
-	}
-	return out, nil
-}
-
 // Login faqat bir martalik interaktiv kirish uchun: kod (va kerak bo'lsa 2FA)
 // so'raydi, sessiyani sessionPath ga saqlaydi va darhol chiqadi.
 // Shundan keyin agent hech qachon kod so'ramaydi.
