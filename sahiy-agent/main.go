@@ -21,6 +21,7 @@ import (
 	"sahiy-agent/internal/category"
 	"sahiy-agent/internal/client"
 	"sahiy-agent/internal/config"
+	"sahiy-agent/internal/daigou"
 	"sahiy-agent/internal/db"
 	"sahiy-agent/internal/escalation"
 	"sahiy-agent/internal/gemini"
@@ -66,7 +67,8 @@ type app struct {
 	hist      *store.Store
 	esc       *escalation.Store
 	cats      *category.Store
-	ord       *orders.Lookup  // buyurtma holati (ikkinchi sayt)
+	ord       *orders.Lookup  // buyurtma holati (delivery API — O'zbekistondagi holat)
+	dg        *daigou.Client  // adminka daigou-orders (Xitoy tomoni: yo'lga chiqqan sana)
 	staff     staffChannel    // nil bo'lishi mumkin
 	db        *gorm.DB        // byudjet ogohlantirishi bir marta yuborilishi uchun
 	local     *ollama.Client  // lokal model (AI_PROVIDER=ollama bo'lsa), aks holda nil
@@ -122,17 +124,24 @@ func main() {
 		set:       settings.New(database),
 		cachePath: filepath.Join(cfg.DataDir, "token.json"),
 	}
-	// Promptlar: bazadan o'qiladi, xotirada keshlanadi. prompt.txt zaxira
-	// bo'lib qoladi — baza ishlamasa "base" o'shandan olinadi.
-	a.prompts = prompts.New(database, promptFile())
+	// Promptlar: YAGONA manba — Postgres. Kodda ham, faylda ham zaxira
+	// matn yo'q; hammasi dashboarddan (/prompts) boshqariladi.
+	a.prompts = prompts.New(database)
 	if err := a.prompts.Seed(); err != nil {
-		fmt.Fprintln(os.Stderr, "prompt seed xatosi:", err)
+		fmt.Fprintln(os.Stderr, "kategoriya promptlari xatosi:", err)
 	}
 	if err := a.prompts.Reload(); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  promptlar bazadan o'qilmadi (%v)\n"+
-			"   prompt.txt dagi zaxira matn ishlatiladi.\n", err)
-	} else {
-		fmt.Printf("📝 %d ta prompt yuklandi (dashboard: /prompts)\n", a.prompts.Len())
+		fmt.Fprintf(os.Stderr, "❌ promptlar bazadan o'qilmadi: %v\n", err)
+		os.Exit(1)
+	}
+	if missing := a.prompts.Missing(models.RequiredPrompts); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "❌ bazada majburiy promptlar yo'q: %s\n"+
+			"   Dashboard → /prompts bo'limida ularni yozing.\n", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
+	fmt.Printf("📝 %d ta prompt yuklandi (dashboard: /prompts)\n", a.prompts.Len())
+	if opt := a.prompts.Missing(models.OptionalPrompts); len(opt) > 0 {
+		fmt.Printf("ℹ️  Ixtiyoriy promptlar yo'q (blok qo'shilmaydi): %s\n", strings.Join(opt, ", "))
 	}
 	// Prompt dashboarddan saqlanganda kesh darhol yangilanadi.
 	models.PromptChanged = func() {
@@ -169,6 +178,15 @@ func main() {
 		fmt.Printf("📦 Buyurtma qidiruvi yoqilgan (%s)\n", cfg.ServiceBaseURL)
 	} else {
 		fmt.Println("ℹ️  Buyurtma qidiruvi o'chiq — .env da SERVICE_PHONE/SERVICE_PASSWORD yo'q")
+	}
+
+	// Adminka daigou-orders — Xitoy tomonidagi ma'lumot (yo'lga chiqqan
+	// sana, posilka, trek). "Buyurtmam qachon keladi?" shu manbadan.
+	a.dg = daigou.New(cfg.UserBaseURL, cfg.AdminkaToken)
+	if a.dg.Enabled() {
+		fmt.Printf("🚚 Adminka buyurtmalari yoqilgan (%s)\n", a.dg.BaseURL)
+	} else {
+		fmt.Println("ℹ️  Adminka buyurtmalari o'chiq — .env da ADMINKA_TOKEN_BEARER yo'q")
 	}
 
 	// Narx: .env dagi qiymat kod jadvalidan ustun turadi.
@@ -513,9 +531,22 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 		tr.add("📷", "Mijoz %d ta rasm yubordi — rasm tahlil qilinmaydi, buyurtma raqami so'raladi", len(imgURLs))
 	}
 
-	// 4-qadam: xabardagi track raqami yoki mijoz id'si bo'yicha buyurtma
-	// holatini ikkinchi saytdan olish.
-	orderInfo := a.lookupOrders(&tr, ch, lastText)
+	// 4-qadam: buyurtma tekshiruvi. Router (birinchi prompt) "mijoz o'z
+	// buyurtmasi haqida so'rayapti" desa — AYNAN SHU PAYTDA Dashboard
+	// API'lariga GET so'rov ketadi. Router boshqa narsa desa ham, xabarda
+	// aniq buyurtma yoki track raqami bo'lsa qidiriladi (zaxira yo'l).
+	orderInfo := ""
+	nums := orderNumbers(lastText)
+	switch {
+	case route.Order:
+		tr.add("🔎", "Router: mijoz buyurtmasi haqida so'rayapti — Dashboard tekshirilmoqda")
+		orderInfo = a.lookupOrders(&tr, ch, nums)
+	case len(nums) > 0:
+		tr.add("🔎", "Xabarda buyurtma/track raqami bor (%s) — Dashboard tekshirilmoqda", strings.Join(nums, ", "))
+		orderInfo = a.lookupOrders(&tr, ch, nums)
+	default:
+		tr.add("📦", "Buyurtma haqida savol emas — Dashboard'ga so'rov yuborilmadi")
+	}
 
 	// Router "xodim kerak" desa — javob yozib o'tirmaymiz (bitta so'rov tejaladi).
 	if escalate {
@@ -577,15 +608,6 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	a.record(ch, in)
 	_ = a.track.Commit(ch.ID, lastID)
 	return true
-}
-
-// promptFile — zaxira prompt fayli yo'li (.env dagi AGENT_PROMPT_FILE yoki
-// ishchi katalogdagi prompt.txt).
-func promptFile() string {
-	if p := os.Getenv("AGENT_PROMPT_FILE"); p != "" {
-		return p
-	}
-	return "prompt.txt"
 }
 
 // handledByAI — "kim hal qildi" ustuni uchun (masalan "AI (openai gpt-4o-mini)").
@@ -653,55 +675,123 @@ func (a *app) sendReply(conversationID int64, text string) error {
 	return nil
 }
 
-// lookupOrders mijoz xabaridagi track raqami bo'yicha, u bo'lmasa mijoz
-// id'si bo'yicha buyurtmalarni ikkinchi saytdan qidiradi.
-func (a *app) lookupOrders(tr *trace, ch support.Conversation, lastText string) string {
+// orderNumbers — mijoz xabaridagi buyurtma (DG...) va track raqamlari.
+func orderNumbers(text string) []string { return orders.Tracks(text) }
+
+// lookupOrders buyurtma holatini IKKI manbadan oladi va birlashtiradi:
+//
+//   - delivery/orders/filter — O'zbekistondagi holat: qaysi filialda,
+//     topshirilganmi, to'lov (internal/orders)
+//   - admin/daigou-orders    — Xitoy tomoni: yo'lga chiqqan/qadoqlangan/
+//     omborga kirgan sanalar, posilka, trek (internal/daigou)
+//
+// nums — xabardan topilgan buyurtma/track raqamlari (bo'sh bo'lsa mijoz
+// id'si bo'yicha qidiriladi).
+func (a *app) lookupOrders(tr *trace, ch support.Conversation, nums []string) string {
+	var parts []string
+	if s := a.deliveryOrders(tr, ch, nums); s != "" {
+		parts = append(parts, s)
+	}
+	if s := a.daigouOrders(tr, ch, nums); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// deliveryOrders — birinchi manba (service API).
+func (a *app) deliveryOrders(tr *trace, ch support.Conversation, nums []string) string {
 	if !a.ord.Enabled() {
-		tr.add("📦", "Buyurtma qidiruvi o'chiq (SERVICE_PHONE/PASSWORD yo'q)")
+		tr.add("📦", "Yetkazma qidiruvi o'chiq (SERVICE_PHONE/PASSWORD yo'q)")
 		return ""
 	}
 
-	// Avval xabardagi track raqamlari — eng aniq qidiruv.
-	if tracks := orders.Tracks(lastText); len(tracks) > 0 {
-		tr.add("🔎", "Xabardan track raqami topildi: %s", strings.Join(tracks, ", "))
-		var all []orders.Order
-		for _, t := range tracks {
-			list, err := a.ord.ByTrack(t)
-			if err != nil {
-				tr.add("⚠️", "Track %s qidiruvida xato: %v", t, err)
-				continue
-			}
-			if len(list) == 0 {
-				tr.add("❌", "Track %s bo'yicha buyurtma topilmadi", t)
-				continue
-			}
-			tr.add("📦", "Track %s: %d ta buyurtma topildi", t, len(list))
-			all = append(all, list...)
+	// Avval xabardagi raqamlar — eng aniq qidiruv.
+	var all []orders.Order
+	for _, t := range nums {
+		list, err := a.ord.ByTrack(t)
+		if err != nil {
+			tr.add("⚠️", "Track %s qidiruvida xato: %v", t, err)
+			continue
 		}
-		if len(all) > 0 {
-			return orders.Summary(all)
+		if len(list) == 0 {
+			continue
 		}
+		tr.add("📦", "Yetkazma: %s bo'yicha %d ta buyurtma", t, len(list))
+		all = append(all, list...)
+	}
+	if len(all) > 0 {
+		return orders.Summary(all)
 	}
 
-	// Track yo'q — mijozning barcha buyurtmalarini ko'ramiz.
+	// Raqam yo'q yoki topilmadi — mijozning barcha buyurtmalarini ko'ramiz.
 	// support.chat.conversation dagi client_id delivery API'dagi user_id
 	// bilan bir xil (tekshirilgan: client_id 7911997 → o'sha user_id'dagi
-	// buyurtmalar). Yangi qo'shiladigan saytlarda ham shu id ishlatiladi.
+	// buyurtmalar).
 	if ch.ClientID == nil || *ch.ClientID == 0 {
-		tr.add("📦", "Xabarda track raqami yo'q va mijoz id'si noma'lum — buyurtma ko'rilmadi")
+		tr.add("📦", "Yetkazma: raqam ham, mijoz id'si ham yo'q — ko'rilmadi")
 		return ""
 	}
 	list, err := a.ord.ByUser(*ch.ClientID)
 	if err != nil {
-		tr.add("⚠️", "Mijoz %d buyurtmalarini olishda xato: %v", *ch.ClientID, err)
+		tr.add("⚠️", "Mijoz %d yetkazmalarini olishda xato: %v", *ch.ClientID, err)
 		return ""
 	}
 	if len(list) == 0 {
-		tr.add("❌", "Mijoz %d bo'yicha buyurtma topilmadi", *ch.ClientID)
+		tr.add("❌", "Yetkazma: mijoz %d bo'yicha buyurtma topilmadi", *ch.ClientID)
 		return ""
 	}
-	tr.add("📦", "Mijoz %d bo'yicha %d ta buyurtma topildi", *ch.ClientID, len(list))
+	tr.add("📦", "Yetkazma: mijoz %d bo'yicha %d ta buyurtma", *ch.ClientID, len(list))
 	return orders.Summary(list)
+}
+
+// daigouOrders — ikkinchi manba (adminka daigou-orders). Buyurtma raqami
+// (DG...) berilgan bo'lsa order_sn bo'yicha, uzun raqam bo'lsa express_num
+// bo'yicha, ikkalasi ham bo'lmasa mijoz id'si bo'yicha qidiradi.
+func (a *app) daigouOrders(tr *trace, ch support.Conversation, nums []string) string {
+	if !a.dg.Enabled() {
+		tr.add("🚚", "Adminka qidiruvi o'chiq (ADMINKA_TOKEN_BEARER yo'q)")
+		return ""
+	}
+
+	var all []daigou.Order
+	for _, n := range nums {
+		var (
+			list []daigou.Order
+			err  error
+		)
+		if strings.HasPrefix(strings.ToUpper(n), "DG") {
+			list, err = a.dg.ByOrderSN(n)
+		} else {
+			list, err = a.dg.ByExpressNum(n)
+		}
+		if err != nil {
+			tr.add("⚠️", "Adminka %s qidiruvida xato: %v", n, err)
+			continue
+		}
+		if len(list) == 0 {
+			continue
+		}
+		tr.add("🚚", "Adminka: %s bo'yicha %d ta buyurtma", n, len(list))
+		all = append(all, list...)
+	}
+	if len(all) > 0 {
+		return daigou.Summary(all)
+	}
+
+	if ch.ClientID == nil || *ch.ClientID == 0 {
+		return ""
+	}
+	list, err := a.dg.ByUser(*ch.ClientID)
+	if err != nil {
+		tr.add("⚠️", "Mijoz %d adminka buyurtmalarida xato: %v", *ch.ClientID, err)
+		return ""
+	}
+	if len(list) == 0 {
+		tr.add("❌", "Adminka: mijoz %d bo'yicha buyurtma topilmadi", *ch.ClientID)
+		return ""
+	}
+	tr.add("🚚", "Adminka: mijoz %d bo'yicha %d ta buyurtma", *ch.ClientID, len(list))
+	return daigou.Summary(list)
 }
 
 // escalate muammoni xodimlar guruhiga yuboradi. Guruhga faqat oxirgi savol

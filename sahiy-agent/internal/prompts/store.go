@@ -33,39 +33,38 @@ type Store struct {
 	m  atomic.Pointer[map[string]string]
 	db *gorm.DB
 
-	// fallbackBase — baza ishlamasa ishlatiladigan asosiy prompt
-	// (prompt.txt dan o'qiladi).
-	fallbackBase string
-
 	// Oxirgi ko'rilgan holat — o'zgarishni shu ikki son bilan aniqlaymiz.
 	lastVersion atomic.Int64
 	lastCount   atomic.Int64
 }
 
-// New yangi Store. fallbackPath — prompt.txt yo'li (bo'lmasa ham ishlaydi).
-func New(db *gorm.DB, fallbackPath string) *Store {
+// New yangi Store. Promptlarning YAGONA manbai — Postgres; kodda yoki
+// faylda zaxira matn yo'q.
+func New(db *gorm.DB) *Store {
 	s := &Store{db: db}
 	empty := map[string]string{}
 	s.m.Store(&empty)
-
-	if data, err := os.ReadFile(fallbackPath); err == nil {
-		s.fallbackBase = strings.TrimSpace(string(data))
-	}
 	return s
 }
 
-// Get promptni qaytaradi. Topilmasa bo'sh satr; "base" uchun esa
-// prompt.txt dagi zaxira matn.
+// Get promptni qaytaradi. Bazada bo'lmasa — bo'sh satr.
 func (s *Store) Get(key string) string {
 	if m := s.m.Load(); m != nil {
-		if v, ok := (*m)[key]; ok {
-			return v
-		}
-	}
-	if key == models.PromptBase {
-		return s.fallbackBase
+		return strings.TrimSpace((*m)[key])
 	}
 	return ""
+}
+
+// Missing — berilgan kalitlardan qaysilari keshda yo'q (yoki bo'sh).
+// Ishga tushishda majburiy promptlar borligini tekshirish uchun.
+func (s *Store) Missing(keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		if s.Get(k) == "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // Keys berilgan prefiks bilan boshlanadigan kalitlarni qaytaradi (tartiblangan).

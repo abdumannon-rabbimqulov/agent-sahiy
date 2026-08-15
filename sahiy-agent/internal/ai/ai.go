@@ -16,7 +16,20 @@ const (
 	PromptBase      = "base"
 	PromptClassify  = "classify"
 	PromptSummarize = "summarize"
+	BlockCategory   = "block:category"
+	BlockOrder      = "block:order"
+	BlockImage      = "block:image"
+	BlockImageOrder = "block:image_order"
 	catPrefix       = "cat:"
+)
+
+// Placeholder'lar — bazadagi prompt matni ichida shu belgilar bo'lsa,
+// o'rniga tegishli ma'lumot qo'yiladi. Belgi bo'lmasa ma'lumot prompt
+// oxiriga qo'shiladi (prompt matnini yozgan odam joyini o'zi tanlaydi).
+const (
+	phDate     = "{{DATE}}"
+	phCategory = "{{CATEGORY}}"
+	phOrders   = "{{ORDERS}}"
 )
 
 // Backend — bitta LLM provayderi (gemini, openai, ...).
@@ -95,58 +108,62 @@ type Request struct {
 
 // Ask suhbat konteksti asosida agent javobini yozadi.
 //
-// System prompt qat'iy TARTIBDA yig'iladi — o'zgarmas qism boshda turadi,
-// bu provayderning prompt-keshi (KV-cache) ishlashi uchun muhim:
+// MUHIM: bu yerda birorta prompt matni yo'q — hammasi Postgres'dan
+// (dashboard /prompts) olinadi. Kod faqat bloklarni TARTIB bilan yig'adi;
+// tartib o'zgarmas, chunki provayderning prompt-keshi (KV-cache) shunga
+// tayanadi:
 //
-//  1. base        — har doim bir xil, eng katta bo'lak
-//  2. bugungi sana — kuniga bir marta o'zgaradi
-//  3. cat:<slug>  — kategoriyaga qarab
-//  4. buyurtma JSON — har suhbatda boshqa
-//  5. rasm qoidasi  — kamdan-kam
+//  1. base            — har doim bir xil, eng katta bo'lak
+//  2. block:category  — kategoriyaga qarab
+//  3. block:order     — tizimdan olingan buyurtma (har suhbatda boshqa)
+//  4. block:image     — kamdan-kam
+//
+// Blok prompti bazada bo'lmasa — o'sha blok umuman qo'shilmaydi.
 func (c *Client) Ask(ctx context.Context, req Request) (string, error) {
 	var b strings.Builder
-	b.WriteString(c.p.Get(PromptBase))
-	b.WriteString("\n\nBugungi sana: " + time.Now().Format("2006-01-02"))
+	b.WriteString(render(c.p.Get(PromptBase)))
 
 	if req.CategoryKey != "" {
 		if cat := c.p.Get(catPrefix + req.CategoryKey); cat != "" {
-			b.WriteString("\n\n--- Shu savolga oid ma'lumot ---\n" + cat +
-				"\n\nJavobingni faqat shu ma'lumotga tayanib yoz. Bu yerda yo'q narsani o'ylab topma.")
+			b.WriteString(block(render(c.p.Get(BlockCategory)), phCategory, cat))
 		}
 	}
 	if req.OrderInfo != "" {
-		b.WriteString("\n\n--- Mijozning buyurtmasi (tizimdan olingan, real holat) ---" + req.OrderInfo +
-			"\n\nBu JSON tizimdan olingan haqiqiy ma'lumot. Mijozga uni tushunarli\n" +
-			"tilda tushuntir: buyurtma qayerda, holati nima, keyingi qadam nima.\n" +
-			"JSON'ni o'zini ko'chirib yozma. Bu yerda yo'q maydonni o'ylab topma.\n" +
-			"Agar ma'lumot savolga javob bermasa yoki ziddiyatli bo'lsa — #ESCALATE yoz.")
+		b.WriteString(block(render(c.p.Get(BlockOrder)), phOrders, req.OrderInfo))
 	}
 	if req.HasImage {
-		b.WriteString("\n\n--- Muhim: suhbatda rasm bor ---\n" + imageRule(req.OrderInfo != ""))
+		key := BlockImage
+		if req.OrderInfo != "" {
+			key = BlockImageOrder
+		}
+		b.WriteString(block(render(c.p.Get(key)), "", ""))
 	}
 
 	// user qismi — mijoz matni o'zgarishsiz.
 	return c.generate(ctx, b.String(), req.Transcript, GenOptions{})
 }
 
-// imageRule — mijoz rasm yuborganda beriladigan qoida. Agent rasmni ko'rmaydi,
-// shuning uchun rasmdagi ma'lumotni taxmin qilmasdan buyurtma raqamini so'raydi.
-func imageRule(haveOrder bool) string {
-	base := "Mijoz suhbatda rasm (skrinshot) yubordi, transkriptda u \"[rasm]\" deb\n" +
-		"ko'rsatilgan. Sen rasmni KO'RA OLMAYSAN. Rasmda nima borligini taxmin qilma\n" +
-		"va \"rasmni ko'rdim\" deb yozma.\n"
-	if haveOrder {
-		return base +
-			"Buyurtma ma'lumoti yuqorida bor — javobni o'shanga tayanib yoz. Agar rasm\n" +
-			"boshqa buyurtmaga tegishli bo'lsa, mijozdan o'sha buyurtmaning raqamini\n" +
-			"(yoki track raqamini) matn ko'rinishida yozib yuborishini so'ra."
+// render — har qanday prompt matnidagi umumiy placeholder'larni to'ldiradi.
+func render(tmpl string) string {
+	return strings.ReplaceAll(tmpl, phDate, time.Now().Format("2006-01-02"))
+}
+
+// block — bitta blokni system promptga qo'shiladigan ko'rinishga keltiradi.
+// tmpl bo'sh bo'lsa (bazada bunday prompt yo'q) — bo'sh satr qaytadi.
+// tmpl ichida placeholder bo'lsa ma'lumot o'sha joyga, bo'lmasa oxiriga
+// qo'yiladi.
+func block(tmpl, placeholder, data string) string {
+	if tmpl == "" {
+		return ""
 	}
-	return base +
-		"Mijozdan buyurtma raqamini yoki track raqamini MATN ko'rinishida yozib\n" +
-		"yuborishini xushmuomala so'ra — shunda holatni tizimdan tekshirib bera olasan.\n" +
-		"Masalan: \"Rasmni ko'ra olmayapman. Iltimos, buyurtma raqamingizni yoki track\n" +
-		"raqamingizni yozib yuboring — darhol tekshirib beraman.\"\n" +
-		"Raqam so'rashdan boshqa hech narsani o'ylab topma."
+	switch {
+	case data == "":
+	case strings.Contains(tmpl, placeholder):
+		tmpl = strings.ReplaceAll(tmpl, placeholder, data)
+	default:
+		tmpl += "\n" + data
+	}
+	return "\n\n" + tmpl
 }
 
 // Daraja — muammoning shoshilinchlik darajasi.
@@ -185,10 +202,9 @@ func (d Daraja) Sarlavha() string {
 // Summarize suhbatni xodimlar guruhi uchun qisqa xulosaga aylantiradi va
 // muammoning shoshilinchlik darajasini aniqlaydi.
 func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (Daraja, string, error) {
-	system := c.p.Get(PromptSummarize)
-
+	system := render(c.p.Get(PromptSummarize))
 	if orderInfo != "" {
-		transcript += "\n\n--- Tizimdan olingan buyurtma ma'lumoti ---" + orderInfo
+		system += block(render(c.p.Get(BlockOrder)), phOrders, orderInfo)
 	}
 
 	out, err := c.generate(ctx, system, transcript, GenOptions{})
@@ -221,15 +237,20 @@ func splitDaraja(out string) (Daraja, string) {
 	return daraja, strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
-// Route — routerning qarori. Faqat shu ikki maydon o'qiladi: router mijoz
+// Route — routerning qarori. Faqat shu uch maydon o'qiladi: router mijoz
 // matnini qayta yozsa ham, u e'tiborga olinmaydi.
 type Route struct {
 	Category string `json:"category"`
 	Escalate bool   `json:"escalate"`
+	// Order — mijoz o'z buyurtmasi haqida so'rayaptimi. true bo'lsa agent
+	// Dashboard API'ga GET so'rov yuborib, buyurtma holatini oladi.
+	// Router bu maydonni qaytarmasa false bo'ladi (bunda so'rov faqat
+	// xabarda aniq buyurtma/track raqami bo'lsa yuboriladi).
+	Order bool `json:"order"`
 }
 
 // routerOptions — router javobi qisqa va deterministik bo'lishi kerak.
-var routerOptions = GenOptions{MaxTokens: 20, TempZero: true, JSON: true}
+var routerOptions = GenOptions{MaxTokens: 40, TempZero: true, JSON: true}
 
 // Classify mijoz murojaatini kategoriyaga ajratadi.
 //
@@ -253,7 +274,7 @@ func (c *Client) Classify(ctx context.Context, transcript string) (Route, error)
 		valid[slug] = true
 		fmt.Fprintf(&list, "- %s\n", slug)
 	}
-	system := strings.ReplaceAll(tmpl, "{{CATEGORIES}}", strings.TrimRight(list.String(), "\n"))
+	system := render(strings.ReplaceAll(tmpl, "{{CATEGORIES}}", strings.TrimRight(list.String(), "\n")))
 
 	out, err := c.generate(ctx, system, transcript, routerOptions)
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 
 // Prompt kalitlari.
 const (
-	// PromptBase — agentning asosiy ko'rsatmasi (eski prompt.txt).
+	// PromptBase — agentning asosiy ko'rsatmasi.
 	PromptBase = "base"
 	// PromptClassify — router: mijoz savolini kategoriyaga ajratadi.
 	PromptClassify = "classify"
@@ -18,7 +18,31 @@ const (
 	PromptSummarize = "summarize"
 	// PromptCatPrefix — kategoriya bilimlari: "cat:yetkazib-berish".
 	PromptCatPrefix = "cat:"
+
+	// Quyidagilar — system prompt ichiga qo'shiladigan bloklar. Ular ham
+	// bazada yotadi: kodda birorta prompt matni saqlanmaydi.
+
+	// PromptBlockCategory — kategoriya bilimlari qo'shilayotgandagi ko'rsatma.
+	// Matn ichida {{CATEGORY}} bo'lsa, kategoriya bilimlari o'sha joyga qo'yiladi.
+	PromptBlockCategory = "block:category"
+	// PromptBlockOrder — tizimdan olingan buyurtma ma'lumoti bloki.
+	// {{ORDERS}} o'rniga buyurtmalar ro'yxati qo'yiladi.
+	PromptBlockOrder = "block:order"
+	// PromptBlockImage — mijoz rasm yuborgan, buyurtma ma'lumoti YO'Q.
+	PromptBlockImage = "block:image"
+	// PromptBlockImageOrder — mijoz rasm yuborgan, buyurtma ma'lumoti BOR.
+	PromptBlockImageOrder = "block:image_order"
 )
+
+// RequiredPrompts — agent ishlashi uchun bazada bo'lishi SHART bo'lgan
+// promptlar. Bittasi yo'q bo'lsa agent ishga tushmaydi (kodda zaxira matn
+// yo'q — barcha promptlar Postgres'da).
+var RequiredPrompts = []string{PromptBase, PromptClassify, PromptSummarize}
+
+// OptionalPrompts — bo'lmasa tegishli blok qo'shilmaydi, agent ishlayveradi.
+var OptionalPrompts = []string{
+	PromptBlockCategory, PromptBlockOrder, PromptBlockImage, PromptBlockImageOrder,
+}
 
 // Prompt — bazada saqlanadigan prompt. Dashboarddan tahrirlanadi va
 // o'zgarish darhol kuchga kiradi (agent qayta ishga tushirilmaydi).

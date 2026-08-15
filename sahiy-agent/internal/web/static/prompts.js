@@ -3,10 +3,20 @@ const $ = id => document.getElementById(id);
 
 // Kalit → tushunarli nom va izoh.
 const INFO = {
-  base:      ["Asosiy prompt", "Agentning xarakteri va qat'iy qoidalari. Faqat mijozga javob yozishda ishlatiladi."],
-  classify:  ["Router", "Murojaatni kategoriyaga ajratadi. {{CATEGORIES}} o'rniga ro'yxat avtomatik qo'yiladi."],
+  base:      ["Asosiy prompt", "Agentning xarakteri va qat'iy qoidalari. Faqat mijozga javob yozishda ishlatiladi. {{DATE}} — bugungi sana."],
+  classify:  ["Router (birinchi prompt)", "Murojaatni kategoriyaga ajratadi. {{CATEGORIES}} o'rniga ro'yxat avtomatik qo'yiladi. Javob JSON: {\"category\":\"...\",\"escalate\":false,\"order\":false} — order:true bo'lsa agent Dashboard'ga GET so'rov yuborib buyurtmani tekshiradi."],
   summarize: ["Xulosa", "Xodimlar guruhiga yuboriladigan qisqa xulosa."],
+  'block:order':       ["Blok: buyurtma ma'lumoti", "Tizimdan olingan buyurtmalar javobga qo'shilganda beriladigan ko'rsatma. {{ORDERS}} — buyurtmalar ro'yxati joyi."],
+  'block:category':    ["Blok: kategoriya bilimi", "Kategoriya bilimlari qo'shilganda beriladigan ko'rsatma. {{CATEGORY}} — bilim matni joyi."],
+  'block:image':       ["Blok: rasm (buyurtmasiz)", "Mijoz rasm yuborgan, lekin tizimdan buyurtma topilmagan holat."],
+  'block:image_order': ["Blok: rasm (buyurtma bilan)", "Mijoz rasm yuborgan va tizimda buyurtmasi topilgan holat."],
 };
+
+// Bazada bo'lishi SHART bo'lgan promptlar — bittasi yo'q bo'lsa agent
+// ishga tushmaydi (kodda zaxira matn yo'q).
+const REQUIRED = ['base', 'classify', 'summarize'];
+const OPTIONAL = ['block:order', 'block:category', 'block:image', 'block:image_order'];
+
 function info(key){
   if(INFO[key]) return INFO[key];
   if(key.startsWith('cat:')) return ["Kategoriya: " + key.slice(4), "Shu kategoriya tanlanganda javobga qo'shiladigan bilim."];
@@ -43,7 +53,15 @@ function render(){
       </div>
       <div class="hist" hidden></div>
     </form>`;
-  }).join('') || '<div class="msg">Prompt yo\'q — agent ishga tushganda bazaga ko\'chiriladi.</div>';
+  }).join('') || '<div class="msg">Prompt yo\'q — quyidagi shakl orqali qo\'shing.</div>';
+
+  const have = new Set(items.map(p => p.key));
+  const miss = REQUIRED.filter(k => !have.has(k));
+  const opt  = OPTIONAL.filter(k => !have.has(k));
+  let warn = '';
+  if(miss.length) warn += `<div class="err" style="display:block">❌ Majburiy promptlar yo'q: <b>${esc(miss.join(', '))}</b> — ularsiz agent ishga tushmaydi.</div>`;
+  if(opt.length)  warn += `<div class="msg">ℹ️ Ixtiyoriy promptlar yo'q (blok qo'shilmaydi): ${esc(opt.join(', '))}</div>`;
+  $('warn').innerHTML = warn;
 }
 
 async function load(){
@@ -78,7 +96,26 @@ document.addEventListener('submit', async e => {
       }),
     });
     if(!res.ok) throw new Error(await res.text());
+    await // Yangi prompt qo'shish.
+$('add').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').textContent = '';
+  const key = $('newkey').value.trim();
+  const content = $('newcontent').value;
+  if(!key || !content.trim()){ $('err').textContent = 'Kalit va matn bo\'sh bo\'lmasligi kerak.'; return; }
+  try{
+    const res = await fetch('/api/prompts/' + encodeURIComponent(key), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content, enabled: true}),
+    });
+    if(!res.ok) throw new Error(await res.text());
+    $('newkey').value = ''; $('newcontent').value = '';
     await load();
+  }catch(err){ $('err').textContent = 'Qo\'shilmadi: ' + err.message; }
+});
+
+load();
   }catch(err){ $('err').textContent = 'Saqlanmadi: ' + err.message; }
   finally{ btn.disabled = false; }
 });
@@ -112,9 +149,47 @@ document.addEventListener('click', async e => {
     try{
       const res = await fetch(`/api/prompt-rollback/${encodeURIComponent(key)}?version=${roll.dataset.roll}`, {method:'POST'});
       if(!res.ok) throw new Error(await res.text());
-      await load();
+      await // Yangi prompt qo'shish.
+$('add').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').textContent = '';
+  const key = $('newkey').value.trim();
+  const content = $('newcontent').value;
+  if(!key || !content.trim()){ $('err').textContent = 'Kalit va matn bo\'sh bo\'lmasligi kerak.'; return; }
+  try{
+    const res = await fetch('/api/prompts/' + encodeURIComponent(key), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content, enabled: true}),
+    });
+    if(!res.ok) throw new Error(await res.text());
+    $('newkey').value = ''; $('newcontent').value = '';
+    await load();
+  }catch(err){ $('err').textContent = 'Qo\'shilmadi: ' + err.message; }
+});
+
+load();
     }catch(err){ $('err').textContent = 'Qaytarilmadi: ' + err.message; }
   }
+});
+
+// Yangi prompt qo'shish.
+$('add').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').textContent = '';
+  const key = $('newkey').value.trim();
+  const content = $('newcontent').value;
+  if(!key || !content.trim()){ $('err').textContent = 'Kalit va matn bo\'sh bo\'lmasligi kerak.'; return; }
+  try{
+    const res = await fetch('/api/prompts/' + encodeURIComponent(key), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content, enabled: true}),
+    });
+    if(!res.ok) throw new Error(await res.text());
+    $('newkey').value = ''; $('newcontent').value = '';
+    await load();
+  }catch(err){ $('err').textContent = 'Qo\'shilmadi: ' + err.message; }
 });
 
 load();

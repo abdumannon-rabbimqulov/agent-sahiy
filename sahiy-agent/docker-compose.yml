@@ -30,13 +30,10 @@ services:
       # Lokal model hostda ishlaydi — konteynerdan shu manzil orqali ko'rinadi.
       OLLAMA_URL: http://host.docker.internal:11434
       DATA_DIR: /data
-      AGENT_PROMPT_FILE: /app/prompt.txt
       # Sessiya /data volume'da saqlanadi — bir marta login qilinsa yetadi.
       TG_SESSION: /data/tg-session.json
     volumes:
       - agentdata:/data
-      # Promptni tahrirlash uchun (rebuild shart emas, restart yetarli):
-      - ./prompt.txt:/app/prompt.txt:ro
     ports:
       - "${WEB_PORT:-8080}:8080"
 
@@ -46,5 +43,5 @@ volumes:
 
 # Birinchi (va yagona) Telegram login:
 #   docker compose run --rm agent login
-# Guruh id'larini ko'rish:
-#   docker compose run --rm agent groups
+#
+# Promptlar Postgres'da yashaydi va dashboarddan tahrirlanadi: /prompts

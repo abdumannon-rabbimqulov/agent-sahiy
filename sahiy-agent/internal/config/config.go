@@ -27,11 +27,12 @@ const (
 // Config dasturga kerakli sozlamalar.
 type Config struct {
 	// API kirish
-	Login       string
-	Password    string
-	LoginField  string // login body'dagi maydon nomi (login/username/phone)
-	BaseURL     string
-	UserBaseURL string // api.sahiy.uz (user overview uchun)
+	Login        string
+	Password     string
+	LoginField   string // login body'dagi maydon nomi (login/username/phone)
+	BaseURL      string
+	UserBaseURL  string // api.sahiy.uz (adminka daigou-orders uchun)
+	AdminkaToken string // ADMINKA_TOKEN_BEARER — daigou-orders uchun Bearer token
 
 	// AI provayderi: "openai" | "gemini" | "" (auto — OpenAI kaliti bo'lsa OpenAI)
 	AIProvider string
@@ -39,7 +40,6 @@ type Config struct {
 	// Gemini
 	GeminiAPIKey string
 	GeminiModel  string
-	AgentPrompt  string // tizim prompt — .env'dan (o'zgaruvchan)
 
 	// AI xarajati (0 bo'lsa kod jadvalidagi narx ishlatiladi)
 	PriceIn       float64 // USD / 1M kirish tokeni
@@ -111,14 +111,15 @@ func Load(envPath string) (*Config, error) {
 	_ = loadDotEnv(envPath) // .env ixtiyoriy
 
 	cfg := &Config{
-		Login:        os.Getenv("LOGIN"),
-		LoginField:   os.Getenv("LOGIN_FIELD"),
-		Password:     os.Getenv("PASSWORD"),
-		BaseURL:      os.Getenv("BASE_URL"),
-		UserBaseURL:  os.Getenv("USER_BASE_URL"),
+		Login:       os.Getenv("LOGIN"),
+		LoginField:  os.Getenv("LOGIN_FIELD"),
+		Password:    os.Getenv("PASSWORD"),
+		BaseURL:     os.Getenv("BASE_URL"),
+		UserBaseURL: os.Getenv("USER_BASE_URL"),
+		// Eski .env'larda kalit ADMINKA_TOKEN_BAARER deb yozilgan.
+		AdminkaToken: firstNonEmpty(os.Getenv("ADMINKA_TOKEN_BEARER"), os.Getenv("ADMINKA_TOKEN_BAARER")),
 		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
 		GeminiModel:  os.Getenv("GEMINI_MODEL"),
-		AgentPrompt:  os.Getenv("AGENT_PROMPT"),
 
 		AIProvider:    strings.ToLower(strings.TrimSpace(os.Getenv("AI_PROVIDER"))),
 		OpenAIModel:   os.Getenv("OPENAI_MODEL"),
@@ -140,17 +141,6 @@ func Load(envPath string) (*Config, error) {
 	cfg.Backfill = strings.EqualFold(os.Getenv("BACKFILL"), "true")
 	if cfg.LoginField == "" {
 		cfg.LoginField = "login"
-	}
-	// Uzun prompt fayldan o'qiladi (AGENT_PROMPT bo'sh bo'lsa).
-	// AGENT_PROMPT_FILE bo'lmasa, ishchi katalogdagi prompt.txt tekshiriladi.
-	if cfg.AgentPrompt == "" {
-		promptFile := os.Getenv("AGENT_PROMPT_FILE")
-		if promptFile == "" {
-			promptFile = "prompt.txt"
-		}
-		if data, err := os.ReadFile(promptFile); err == nil {
-			cfg.AgentPrompt = strings.TrimSpace(string(data))
-		}
 	}
 	if cfg.EscalateMarker == "" {
 		cfg.EscalateMarker = "#ESCALATE"
@@ -335,4 +325,14 @@ func parseIDs(s string) []int64 {
 		}
 	}
 	return out
+}
+
+// firstNonEmpty — birinchi bo'sh bo'lmagan qiymat.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
