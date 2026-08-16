@@ -337,24 +337,21 @@ var b2cPaths = []string{
 	"sku_info." + b2cKey,
 }
 
-// ClientType — mijoz B2C mi yoki B2B mi.
+// ClientType — mijoz turi: faqat "B2C" yoki "B2B".
 //
 // B2C_percentage — B2C mijozga qo'shiladigan foiz: noldan katta bo'lsa mijoz
-// B2C, nol bo'lsa B2B hisoblanadi. Maydon umuman topilmasa bo'sh satr
-// qaytadi va bu qator ma'lumotga qo'shilmaydi (taxmin qilinmaydi).
+// B2C, nol bo'lsa B2B. Maydon umuman topilmasa bo'sh satr qaytadi va bu
+// qator ma'lumotga qo'shilmaydi (taxmin qilinmaydi).
 func ClientType(o Order) string {
 	raw := strings.TrimSpace(Pick(o, b2cKey, b2cPaths...))
 	if raw == "" {
 		return ""
 	}
 	pct, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return raw // kutilmagan qiymat — xom holida ko'rsatamiz
+	if err != nil || pct <= 0 {
+		return "B2B"
 	}
-	if pct > 0 {
-		return fmt.Sprintf("B2C (%s%%)", strconv.FormatFloat(pct, 'f', -1, 64))
-	}
-	return "B2B"
+	return "B2C"
 }
 
 // Pick — berilgan yo'llarni tartib bilan sinaydi, topilmasa kalit bo'yicha
