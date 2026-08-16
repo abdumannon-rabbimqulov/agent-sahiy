@@ -303,7 +303,6 @@ function render(){
     const stt = STATUS[r.status] || STATUS.ai_sent;
     const by = r.handled_by ? `<div class="msg by">${esc(r.handled_by)}</div>` : '';
     const tag = `<span class="tag ${stt.cls}">${stt.label}</span>${by}`;
-    const cat = r.category ? `<span class="tag cat">${esc(r.category.name)}</span>` : '';
     // Agent shu javobga qanday kelgani — bosqichma-bosqich.
     const steps = (r.steps||'').trim();
     const stepsCell = steps
@@ -337,8 +336,8 @@ function render(){
 
     return `<tr><td>${t}</td><td class="w">${who}</td><td class="w msg">${msgHtml}${shotsHtml}</td>`
          + `<td class="w reply">${repHtml}${costHtml}${actHtml}</td><td class="w">${stepsCell}</td>`
-         + `<td>${cat}</td><td>${tag}</td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="msg">Bu holatda yozuv yo\'q</td></tr>';
+         + `<td>${tag}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="msg">Bu holatda yozuv yo\'q</td></tr>';
 }
 
 load();

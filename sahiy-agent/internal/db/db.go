@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -49,7 +48,6 @@ func Connect(dsn string) (*gorm.DB, error) {
 // Migrate jadvallarni modellarga qarab yaratadi/yangilaydi va seed qiladi.
 func Migrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
-		&models.Category{},
 		&models.Interaction{},
 		&models.Escalation{},
 		&models.ConversationState{},
@@ -59,10 +57,7 @@ func Migrate(db *gorm.DB) error {
 	); err != nil {
 		return fmt.Errorf("migratsiya: %w", err)
 	}
-	if err := migrateEscalationStatus(db); err != nil {
-		return err
-	}
-	return seedCategories(db)
+	return migrateEscalationStatus(db)
 }
 
 // migrateEscalationStatus eski `resolved` ustunidagi ma'lumotni yangi
@@ -81,34 +76,6 @@ func migrateEscalationStatus(db *gorm.DB) error {
 		return fmt.Errorf("eski resolved ustunini o'chirish: %w", err)
 	}
 	log.Println("✓ Eskalatsiya holatlari yangi `status` ustuniga ko'chirildi")
-	return nil
-}
-
-// seedCategories jadval bo'sh bo'lsa birinchi kategoriyani qo'shadi.
-func seedCategories(db *gorm.DB) error {
-	var n int64
-	if err := db.Model(&models.Category{}).Count(&n).Error; err != nil {
-		return fmt.Errorf("kategoriyalarni sanash: %w", err)
-	}
-	if n > 0 {
-		return nil
-	}
-
-	seed := []models.Category{
-		{
-			Name:        "Yetkazib berish",
-			Description: "yetkazib berish, punktlar, muddat, og'irlik chegarasi, dostavka narxi",
-			Content: strings.Join([]string{
-				"- O'zbekistonning barcha viloyatlarida punktlar mavjud (batafsil ma'lumot Sahiy ilovasi profil sahifasining quyi qismida bor).",
-				"- Toshkent shahri va Toshkent viloyatiga uyingizgacha bepul yetkazib beriladi.",
-				"- Bitta buyurtma 7 kg dan oshmasligi kerak. Agar 7 kg dan oshsa, narxini mutaxassislar aytadi.",
-			}, "\n"),
-		},
-	}
-	if err := db.Create(&seed).Error; err != nil {
-		return fmt.Errorf("kategoriya seed: %w", err)
-	}
-	log.Println("✓ Boshlang'ich kategoriya qo'shildi (id=1 Yetkazib berish)")
 	return nil
 }
 

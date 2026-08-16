@@ -13,7 +13,6 @@ import (
 // bog'lanmasligi uchun shu yerda ham e'lon qilingan).
 const (
 	PromptBase      = "base"
-	PromptSummarize = "summarize"
 	BlockCategory   = "block:category"
 	BlockOrder      = "block:order"
 	BlockImage      = "block:image"
@@ -313,44 +312,6 @@ func (d Daraja) Sarlavha() string {
 	default:
 		return "O'RTA"
 	}
-}
-
-// Summarize suhbatni xodimlar guruhi uchun qisqa xulosaga aylantiradi va
-// muammoning shoshilinchlik darajasini aniqlaydi.
-func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (Daraja, string, error) {
-	system := render(c.p.Get(PromptSummarize))
-	if orderInfo != "" {
-		system += blockData(render(c.p.Get(BlockOrder)), phOrders, orderHeader, withToday(orderInfo))
-	}
-
-	out, err := c.generate(ctx, system, transcript, GenOptions{})
-	if err != nil {
-		return Orta, "", err
-	}
-	daraja, body := splitDaraja(out)
-	return daraja, body, nil
-}
-
-// splitDaraja javobdan "Daraja:" qatorini ajratib oladi; qolgan matn
-// xodimga ko'rsatiladigan xulosa bo'lib qoladi.
-func splitDaraja(out string) (Daraja, string) {
-	daraja := Orta
-	var kept []string
-	for _, line := range strings.Split(out, "\n") {
-		i := strings.Index(line, ":")
-		if i > 0 && strings.ToLower(strings.Trim(line[:i], "*_-# \t")) == "daraja" {
-			val := strings.ToLower(strings.Trim(line[i+1:], "*_ \t."))
-			switch {
-			case strings.Contains(val, "yuqori"):
-				daraja = Yuqori
-			case strings.Contains(val, "past"):
-				daraja = Past
-			}
-			continue // bu qator xulosaga kirmaydi
-		}
-		kept = append(kept, line)
-	}
-	return daraja, strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 // extractJSON matn ichidan birinchi `{` dan oxirgi `}` gacha bo'lgan bo'lakni

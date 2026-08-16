@@ -3,22 +3,32 @@ const $ = id => document.getElementById(id);
 
 // Kalit → tushunarli nom va izoh.
 const INFO = {
-  base:      ["Asosiy prompt", "Murojaatni kategoriyaga ajratadi va JSON qaytaradi: dashboard/adminka (buyurtma holati), incorrect_order (muammo, pul qaytarish), deliver (umumiy savol) yoki category:false. Javob mijozga YUBORILMAYDI — agent unga qarab harakat tanlaydi. {{DATE}} — bugungi sana."],
-  summarize: ["Xulosa (hozircha ishlatilmaydi)", "Guruhga endi cat:order promtining help matni yuboriladi. Bu prompt zaxira sifatida qolgan."],
-  'block:order':       ["Blok: buyurtma ma'lumoti", "Tizimdan olingan buyurtmalar javobga qo'shilganda beriladigan ko'rsatma. {{ORDERS}} — buyurtmalar ro'yxati joyi."],
-  'block:category':    ["Blok: kategoriya bilimi", "Kategoriya bilimlari qo'shilganda beriladigan ko'rsatma. {{CATEGORY}} — bilim matni joyi."],
-  'block:image':       ["Blok: rasm (buyurtmasiz)", "Mijoz rasm yuborgan, lekin tizimdan buyurtma topilmagan holat."],
-  'block:image_order': ["Blok: rasm (buyurtma bilan)", "Mijoz rasm yuborgan va tizimda buyurtmasi topilgan holat."],
+  base: ["Asosiy prompt (1-qadam)",
+    "Murojaatni kategoriyaga ajratadi va JSON qaytaradi: dashboard/adminka (buyurtma holati), incorrect_order (muammo), deliver (umumiy savol) yoki category:false. Javob mijozga YUBORILMAYDI — agent unga qarab keyingi promptni tanlaydi. {{DATE}} — bugungi sana."],
+  order: ["Buyurtma holati (2-qadam)",
+    "1-kategoriya uchun. Tizimdan olingan buyurtma ma'lumoti bilan chaqiriladi. Javob JSON: client — mijozga yoziladigan matn, help — xodimlar guruhiga izoh (kerak bo'lmasa bo'sh)."],
+  'cat:xato-mahsulot-kelganda': ["Buyurtmada muammo (2-qadam)",
+    "2-kategoriya uchun: yo'qolgan, shikastlangan, noto'g'ri tovar, pul qaytarish. Javob JSON: client va help."],
+  'cat:yetkazib-berish': ["Yetkazib berish (2-qadam)",
+    "3-kategoriya uchun: shartlar, muddat, punktlar, narx. Javob — oddiy matn, mijozga yuboriladi."],
+  'block:order': ["Blok: buyurtma ma'lumoti",
+    "Tizimdan olingan buyurtmalar promptga qo'shilganda beriladigan ko'rsatma. {{ORDERS}} — buyurtmalar ro'yxati joyi. Bo'lmasa ma'lumot minimal sarlavha bilan qo'shiladi."],
+  'block:category': ["Blok: kategoriya bilimi",
+    "Kategoriya bilimlari qo'shilganda beriladigan ko'rsatma. {{CATEGORY}} — bilim matni joyi."],
+  'block:image': ["Blok: rasm (buyurtmasiz)",
+    "Mijoz rasm yuborgan, lekin tizimdan buyurtma topilmagan holat."],
+  'block:image_order': ["Blok: rasm (buyurtma bilan)",
+    "Mijoz rasm yuborgan va tizimda buyurtmasi topilgan holat."],
 };
 
 // Bazada bo'lishi SHART bo'lgan promptlar — bittasi yo'q bo'lsa agent
 // ishga tushmaydi (kodda zaxira matn yo'q).
 const REQUIRED = ['base'];
-const OPTIONAL = ['summarize', 'block:order', 'block:category', 'block:image', 'block:image_order'];
+const OPTIONAL = ['block:order', 'block:category', 'block:image', 'block:image_order'];
 
 function info(key){
   if(INFO[key]) return INFO[key];
-  if(key.startsWith('cat:')) return ["Kategoriya: " + key.slice(4), "Shu kategoriya tanlanganda javobga qo'shiladigan bilim."];
+  if(key.startsWith('cat:')) return ["Kategoriya: " + key.slice(4), "Shu kategoriya tanlanganda ishlatiladigan bilim."];
   return [key, ""];
 }
 
@@ -31,6 +41,7 @@ let items = [];
 function render(){
   $('list').innerHTML = items.map(p => {
     const [title, hint] = info(p.key);
+    const required = REQUIRED.includes(p.key);
     return `
     <form class="box" data-key="${esc(p.key)}">
       <div class="row" style="justify-content:space-between">
@@ -46,6 +57,8 @@ function render(){
       <div class="row">
         <button type="submit">Saqlash</button>
         <button type="button" class="ghost" data-hist>Tarix</button>
+        <button type="button" class="ghost" data-rename>Kalitni o'zgartirish</button>
+        ${required ? '' : '<button type="button" class="ghost" data-del>O\'chirish</button>'}
         <label class="row" style="gap:6px;margin-left:auto">
           <input type="checkbox" name="enabled" ${p.enabled ? 'checked' : ''}> yoqilgan
         </label>
@@ -70,6 +83,25 @@ async function load(){
   }catch(e){ $('err').textContent = 'Promptlar yuklanmadi: ' + e.message; }
 }
 
+// So'rov yuborish uchun umumiy yordamchi: muvaffaqiyatda ro'yxat yangilanadi,
+// xatoda server matni ko'rsatiladi.
+async function call(url, opt, failMsg){
+  $('err').textContent = '';
+  try{
+    const res = await fetch(url, opt);
+    if(!res.ok) throw new Error((await res.text()).trim());
+    await load();
+    return true;
+  }catch(err){
+    $('err').textContent = failMsg + ': ' + err.message;
+    return false;
+  }
+}
+
+const jsonBody = (method, body) => ({
+  method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+});
+
 // Token hisoblagichi yozayotganda yangilanadi.
 document.addEventListener('input', e => {
   const ta = e.target.closest('textarea[name=content]');
@@ -77,54 +109,25 @@ document.addEventListener('input', e => {
   ta.closest('form').querySelector('[data-tok]').textContent = `≈ ${num(tok(ta.value))} token`;
 });
 
-// Saqlash.
+// Saqlash (tahrirlash).
 document.addEventListener('submit', async e => {
   const form = e.target.closest('form[data-key]');
   if(!form) return;
   e.preventDefault();
-  $('err').textContent = '';
   const btn = form.querySelector('button[type=submit]');
   btn.disabled = true;
-  try{
-    const res = await fetch('/api/prompts/' + encodeURIComponent(form.dataset.key), {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        content: form.content.value,
-        enabled: form.enabled.checked,
-      }),
-    });
-    if(!res.ok) throw new Error(await res.text());
-    await // Yangi prompt qo'shish.
-$('add').addEventListener('submit', async e => {
-  e.preventDefault();
-  $('err').textContent = '';
-  const key = $('newkey').value.trim();
-  const content = $('newcontent').value;
-  if(!key || !content.trim()){ $('err').textContent = 'Kalit va matn bo\'sh bo\'lmasligi kerak.'; return; }
-  try{
-    const res = await fetch('/api/prompts/' + encodeURIComponent(key), {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content, enabled: true}),
-    });
-    if(!res.ok) throw new Error(await res.text());
-    $('newkey').value = ''; $('newcontent').value = '';
-    await load();
-  }catch(err){ $('err').textContent = 'Qo\'shilmadi: ' + err.message; }
+  await call('/api/prompts/' + encodeURIComponent(form.dataset.key),
+    jsonBody('PUT', {content: form.content.value, enabled: form.enabled.checked}), 'Saqlanmadi');
+  btn.disabled = false;
 });
 
-load();
-  }catch(err){ $('err').textContent = 'Saqlanmadi: ' + err.message; }
-  finally{ btn.disabled = false; }
-});
-
-// Tarix va rollback.
+// Tarix · rollback · kalitni o'zgartirish · o'chirish.
 document.addEventListener('click', async e => {
   const form = e.target.closest('form[data-key]');
   if(!form) return;
   const key = form.dataset.key;
 
+  // Tarixni ochish/yopish.
   if(e.target.closest('[data-hist]')){
     const box = form.querySelector('.hist');
     if(!box.hidden){ box.hidden = true; return; }
@@ -142,53 +145,42 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  // Eski versiyaga qaytarish.
   const roll = e.target.closest('[data-roll]');
   if(roll){
     if(!confirm(`v${roll.dataset.roll} ga qaytarilsinmi? Hozirgi matn tarixda saqlanadi.`)) return;
-    try{
-      const res = await fetch(`/api/prompt-rollback/${encodeURIComponent(key)}?version=${roll.dataset.roll}`, {method:'POST'});
-      if(!res.ok) throw new Error(await res.text());
-      await // Yangi prompt qo'shish.
-$('add').addEventListener('submit', async e => {
-  e.preventDefault();
-  $('err').textContent = '';
-  const key = $('newkey').value.trim();
-  const content = $('newcontent').value;
-  if(!key || !content.trim()){ $('err').textContent = 'Kalit va matn bo\'sh bo\'lmasligi kerak.'; return; }
-  try{
-    const res = await fetch('/api/prompts/' + encodeURIComponent(key), {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content, enabled: true}),
-    });
-    if(!res.ok) throw new Error(await res.text());
-    $('newkey').value = ''; $('newcontent').value = '';
-    await load();
-  }catch(err){ $('err').textContent = 'Qo\'shilmadi: ' + err.message; }
-});
+    await call(`/api/prompt-rollback/${encodeURIComponent(key)}?version=${roll.dataset.roll}`,
+      {method: 'POST'}, 'Qaytarilmadi');
+    return;
+  }
 
-load();
-    }catch(err){ $('err').textContent = 'Qaytarilmadi: ' + err.message; }
+  // Kalitni o'zgartirish — tarix yozuvlari ham ko'chadi.
+  if(e.target.closest('[data-rename]')){
+    const next = prompt(`"${key}" kalitini nimaga o'zgartiramiz?`, key);
+    if(next === null) return;
+    const val = next.trim();
+    if(!val || val === key) return;
+    await call('/api/prompt-rename/' + encodeURIComponent(key),
+      jsonBody('POST', {key: val}), "Kalit o'zgartirilmadi");
+    return;
+  }
+
+  // O'chirish — prompt ham, uning butun tarixi ham.
+  if(e.target.closest('[data-del]')){
+    if(!confirm(`"${key}" prompti va uning butun tarixi o'chiriladi. Davom etamizmi?`)) return;
+    await call('/api/prompts/' + encodeURIComponent(key), {method: 'DELETE'}, "O'chirilmadi");
   }
 });
 
 // Yangi prompt qo'shish.
 $('add').addEventListener('submit', async e => {
   e.preventDefault();
-  $('err').textContent = '';
   const key = $('newkey').value.trim();
   const content = $('newcontent').value;
-  if(!key || !content.trim()){ $('err').textContent = 'Kalit va matn bo\'sh bo\'lmasligi kerak.'; return; }
-  try{
-    const res = await fetch('/api/prompts/' + encodeURIComponent(key), {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content, enabled: true}),
-    });
-    if(!res.ok) throw new Error(await res.text());
+  if(!key || !content.trim()){ $('err').textContent = "Kalit va matn bo'sh bo'lmasligi kerak."; return; }
+  if(await call('/api/prompts/' + encodeURIComponent(key), jsonBody('PUT', {content, enabled: true}), "Qo'shilmadi")){
     $('newkey').value = ''; $('newcontent').value = '';
-    await load();
-  }catch(err){ $('err').textContent = 'Qo\'shilmadi: ' + err.message; }
+  }
 });
 
 load();

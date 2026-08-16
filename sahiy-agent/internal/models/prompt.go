@@ -1,9 +1,7 @@
 package models
 
 import (
-	"strings"
 	"time"
-	"unicode"
 
 	"gorm.io/gorm"
 )
@@ -13,9 +11,6 @@ const (
 	// PromptBase — agentning asosiy ko'rsatmasi. Murojaatni kategoriyaga
 	// ajratib, JSON qaror qaytaradi (ai.Decision).
 	PromptBase = "base"
-	// PromptSummarize — xodimlar guruhi uchun xulosa. HOZIRCHA
-	// ISHLATILMAYDI: guruhga "cat:order" promtining help matni yuboriladi.
-	PromptSummarize = "summarize"
 	// PromptCatPrefix — kategoriya bilimlari: "cat:yetkazib-berish".
 	PromptCatPrefix = "cat:"
 
@@ -41,7 +36,6 @@ var RequiredPrompts = []string{PromptBase}
 
 // OptionalPrompts — bo'lmasa tegishli blok qo'shilmaydi, agent ishlayveradi.
 var OptionalPrompts = []string{
-	PromptSummarize,
 	PromptBlockCategory, PromptBlockOrder, PromptBlockImage, PromptBlockImageOrder,
 }
 
@@ -116,31 +110,4 @@ func (p *Prompt) AfterSave(*gorm.DB) error {
 func (p *Prompt) AfterDelete(*gorm.DB) error {
 	notifyPromptChanged()
 	return nil
-}
-
-// CatKey — kategoriya slug'idan prompt kaliti yasaydi.
-func CatKey(slug string) string { return PromptCatPrefix + slug }
-
-// Slugify nomdan kalit yasaydi: "Yetkazib berish" → "yetkazib-berish".
-// O'zbekcha apostrof va boshqa belgilar tashlab yuboriladi.
-func Slugify(name string) string {
-	var b strings.Builder
-	dash := false
-	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			// Faqat ASCII harflar va raqamlar kalitda qoladi; qolgani
-			// (kirill, apostrof) tashlanadi.
-			if r < 128 {
-				b.WriteRune(r)
-				dash = false
-			}
-		case r == ' ' || r == '-' || r == '_' || r == '/':
-			if !dash && b.Len() > 0 {
-				b.WriteByte('-')
-				dash = true
-			}
-		}
-	}
-	return strings.Trim(b.String(), "-")
 }

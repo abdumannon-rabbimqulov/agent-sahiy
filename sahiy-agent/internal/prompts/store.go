@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -193,6 +194,67 @@ func (s *Store) SetEnabled(key string, enabled bool) error {
 	p := cur[0]
 	p.Enabled = enabled
 	return s.db.Save(&p).Error
+}
+
+// Delete promptni va uning butun tarixini o'chiradi. Majburiy promptlarni
+// (models.RequiredPrompts) o'chirib bo'lmaydi — ularsiz agent ishlamaydi.
+func (s *Store) Delete(key string) error {
+	if slices.Contains(models.RequiredPrompts, key) {
+		return fmt.Errorf("%s — majburiy prompt, o'chirib bo'lmaydi", key)
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("key = ?", key).Delete(&models.PromptHistory{}).Error; err != nil {
+			return err
+		}
+		res := tx.Where("key = ?", key).Delete(&models.Prompt{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("prompt topilmadi: %s", key)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.Reload() // Delete hook'i tranzaksiya ichida ishlamaydi
+}
+
+// Rename prompt kalitini o'zgartiradi ("order" → "cat:order"): prompt ham,
+// uning tarix yozuvlari ham ko'chiriladi. Yangi kalit band bo'lsa xato.
+func (s *Store) Rename(oldKey, newKey string) error {
+	oldKey, newKey = strings.TrimSpace(oldKey), strings.TrimSpace(newKey)
+	if newKey == "" {
+		return fmt.Errorf("yangi kalit bo'sh")
+	}
+	if oldKey == newKey {
+		return nil
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var busy int64
+		if err := tx.Model(&models.Prompt{}).Where("key = ?", newKey).Count(&busy).Error; err != nil {
+			return err
+		}
+		if busy > 0 {
+			return fmt.Errorf("%s kaliti allaqachon band", newKey)
+		}
+		// Kalit — birlamchi kalit, shuning uchun to'g'ridan-to'g'ri UPDATE.
+		res := tx.Model(&models.Prompt{}).Where("key = ?", oldKey).
+			UpdateColumn("key", newKey)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("prompt topilmadi: %s", oldKey)
+		}
+		return tx.Model(&models.PromptHistory{}).Where("key = ?", oldKey).
+			UpdateColumn("key", newKey).Error
+	})
+	if err != nil {
+		return err
+	}
+	return s.Reload()
 }
 
 // All — dashboard uchun barcha promptlar (o'chirilganlari ham).

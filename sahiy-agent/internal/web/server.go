@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"sahiy-agent/internal/category"
 	"sahiy-agent/internal/escalation"
 	"sahiy-agent/internal/models"
 	"sahiy-agent/internal/prompts"
@@ -40,7 +39,6 @@ type Options struct {
 // Server statistika, tarix va kategoriyalarni ko'rsatadigan dashboard.
 type Server struct {
 	store *store.Store
-	cats  *category.Store
 	esc   *escalation.Store
 	set   *settings.Store
 	prm   *prompts.Store
@@ -49,7 +47,7 @@ type Server struct {
 }
 
 // New yangi web server.
-func New(st *store.Store, cats *category.Store, esc *escalation.Store,
+func New(st *store.Store, esc *escalation.Store,
 	set *settings.Store, prm *prompts.Store, opt Options) *Server {
 	var files fs.FS
 	if opt.Dev {
@@ -61,7 +59,7 @@ func New(st *store.Store, cats *category.Store, esc *escalation.Store,
 		}
 		files = sub
 	}
-	return &Server{store: st, cats: cats, esc: esc, set: set, prm: prm, opt: opt, files: files}
+	return &Server{store: st, esc: esc, set: set, prm: prm, opt: opt, files: files}
 }
 
 // Start HTTP serverni ishga tushiradi (blokirovka qiladi).
@@ -75,7 +73,6 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(s.files)))
 	mux.HandleFunc("GET /{$}", s.page("index.html"))
-	mux.HandleFunc("GET /categories", s.page("categories.html"))
 	mux.HandleFunc("GET /prompts", s.page("prompts.html"))
 
 	mux.HandleFunc("GET /api/stats", s.handleStats)
@@ -84,16 +81,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/costs", s.handleCosts)
 	mux.HandleFunc("GET /api/prompts", s.handlePromptList)
 	mux.HandleFunc("PUT /api/prompts/{key...}", s.handlePromptSave)
+	mux.HandleFunc("DELETE /api/prompts/{key...}", s.handlePromptDelete)
+	mux.HandleFunc("POST /api/prompt-rename/{key...}", s.handlePromptRename)
 	mux.HandleFunc("GET /api/prompt-history/{key...}", s.handlePromptHistory)
 	mux.HandleFunc("POST /api/prompt-rollback/{key...}", s.handlePromptRollback)
 	mux.HandleFunc("GET /api/settings", s.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", s.handleSettingsSet)
 	mux.HandleFunc("POST /api/interactions/{id}/send", s.handleApprove)
 	mux.HandleFunc("POST /api/interactions/{id}/reject", s.handleReject)
-	mux.HandleFunc("GET /api/categories", s.handleCategoryList)
-	mux.HandleFunc("POST /api/categories", s.handleCategoryCreate)
-	mux.HandleFunc("PUT /api/categories/{id}", s.handleCategoryUpdate)
-	mux.HandleFunc("DELETE /api/categories/{id}", s.handleCategoryDelete)
 
 	return s.auth(mux)
 }
@@ -289,6 +284,43 @@ func (s *Server) handlePromptSave(w http.ResponseWriter, r *http.Request) {
 	s.onePrompt(w, key)
 }
 
+// handlePromptDelete promptni va uning tarixini o'chiradi.
+// Majburiy prompt (base) o'chirilmaydi — 409 qaytadi.
+func (s *Server) handlePromptDelete(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "kalit ko'rsatilmagan", http.StatusBadRequest)
+		return
+	}
+	if err := s.prm.Delete(key); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePromptRename prompt kalitini o'zgartiradi.
+// Tanasi: {"key":"yangi-kalit"}
+func (s *Server) handlePromptRename(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "kalit ko'rsatilmagan", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, "json o'qib bo'lmadi: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.prm.Rename(key, body.Key); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	s.onePrompt(w, strings.TrimSpace(body.Key))
+}
+
 // handlePromptHistory promptning eski versiyalarini qaytaradi.
 func (s *Server) handlePromptHistory(w http.ResponseWriter, r *http.Request) {
 	items, err := s.prm.History(r.PathValue("key"))
@@ -424,80 +456,7 @@ func (s *Server) draft(w http.ResponseWriter, r *http.Request) (*models.Interact
 	return in, true
 }
 
-// --- kategoriyalar ---
-
-func (s *Server) handleCategoryList(w http.ResponseWriter, r *http.Request) {
-	items, err := s.cats.List(false)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, items)
-}
-
-func (s *Server) handleCategoryCreate(w http.ResponseWriter, r *http.Request) {
-	c, err := decodeCategory(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.cats.Create(c); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(c)
-}
-
-func (s *Server) handleCategoryUpdate(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	c, err := decodeCategory(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.cats.Update(id, c); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	updated, err := s.cats.Get(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	writeJSON(w, updated)
-}
-
-func (s *Server) handleCategoryDelete(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.cats.Delete(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // --- yordamchilar ---
-
-func decodeCategory(r *http.Request) (*models.Category, error) {
-	var c models.Category
-	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20)).Decode(&c); err != nil {
-		return nil, fmt.Errorf("json o'qib bo'lmadi: %w", err)
-	}
-	c.Name = strings.TrimSpace(c.Name)
-	c.Description = strings.TrimSpace(c.Description)
-	c.Content = strings.TrimSpace(c.Content)
-	return &c, nil
-}
 
 func pathID(r *http.Request) (uint, error) {
 	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)

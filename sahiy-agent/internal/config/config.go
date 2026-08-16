@@ -34,13 +34,6 @@ type Config struct {
 	UserBaseURL  string // api.sahiy.uz (adminka daigou-orders uchun)
 	AdminkaToken string // ADMINKA_TOKEN_BEARER — daigou-orders uchun Bearer token
 
-	// AI provayderi: "openai" | "gemini" | "" (auto — OpenAI kaliti bo'lsa OpenAI)
-	AIProvider string
-
-	// Gemini
-	GeminiAPIKey string
-	GeminiModel  string
-
 	// AI xarajati (0 bo'lsa kod jadvalidagi narx ishlatiladi)
 	PriceIn       float64 // USD / 1M kirish tokeni
 	PriceCachedIn float64 // USD / 1M kesh'dan olingan kirish tokeni
@@ -56,14 +49,9 @@ type Config struct {
 	OllamaTemperature float64       // 0 — paketdagi default
 	OllamaTimeout     time.Duration // lokal model sekin — uzun timeout
 
-	// OpenAI
-	OpenAIAPIKey  string
-	OpenAIModel   string
-	OpenAIBaseURL string // OpenAI-mos boshqa API uchun (odatda bo'sh)
-
 	// Agent xatti-harakati
 	AgentSenderID int64 // 0 bo'lsa token'dagi "sub" ishlatiladi
-	AutoReply     bool  // true bo'lsa Gemini javobini avtomatik yuboradi
+	AutoReply     bool  // true bo'lsa AI javobini mijozga darhol yuboradi
 	HistoryLimit  int   // AI'ga beriladigan xabarlarning eng ko'p soni (yuqori chegara)
 
 	// Token tejash: AI'ga butun tarix emas, faqat yangi xabarlar beriladi.
@@ -71,9 +59,7 @@ type Config struct {
 	MaxMessageAge time.Duration // shundan eski mijoz xabariga javob yozilmaydi (0 — cheklovsiz)
 
 	// Telegram eskalatsiya (xodimlar guruhi)
-	TelegramToken  string // bot token (Bot API rejimi, ixtiyoriy)
 	TelegramChatID string // eskalatsiya boradigan guruh id (bo'sh bo'lsa ALLOWED_GROUPS[0])
-	EscalateMarker string // Gemini javobida shu belgi bo'lsa eskalatsiya
 
 	// Telegram userbot (MTProto)
 	TgAPIID       int     // API_ID
@@ -118,32 +104,16 @@ func Load(envPath string) (*Config, error) {
 		UserBaseURL: os.Getenv("USER_BASE_URL"),
 		// Eski .env'larda kalit ADMINKA_TOKEN_BAARER deb yozilgan.
 		AdminkaToken: firstNonEmpty(os.Getenv("ADMINKA_TOKEN_BEARER"), os.Getenv("ADMINKA_TOKEN_BAARER")),
-		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
-		GeminiModel:  os.Getenv("GEMINI_MODEL"),
 
-		AIProvider:    strings.ToLower(strings.TrimSpace(os.Getenv("AI_PROVIDER"))),
-		OpenAIModel:   os.Getenv("OPENAI_MODEL"),
-		OpenAIBaseURL: os.Getenv("OPENAI_BASE_URL"),
-
-		TelegramToken:  os.Getenv("TELEGRAM_TOKEN"),
 		TelegramChatID: os.Getenv("TELEGRAM_CHAT_ID"),
-		EscalateMarker: os.Getenv("ESCALATE_MARKER"),
 		WebAddr:        os.Getenv("WEB_ADDR"),
 		AdminUser:      os.Getenv("ADMIN_USER"),
 		AdminPass:      os.Getenv("ADMIN_PASS"),
-	}
-	// OPENAI_API_KEY asosiy nom; OPEN_API_KEY — eski .env'lar uchun.
-	cfg.OpenAIAPIKey = os.Getenv("OPENAI_API_KEY")
-	if cfg.OpenAIAPIKey == "" {
-		cfg.OpenAIAPIKey = os.Getenv("OPEN_API_KEY")
 	}
 	cfg.WebDev = strings.EqualFold(os.Getenv("WEB_DEV"), "true")
 	cfg.Backfill = strings.EqualFold(os.Getenv("BACKFILL"), "true")
 	if cfg.LoginField == "" {
 		cfg.LoginField = "login"
-	}
-	if cfg.EscalateMarker == "" {
-		cfg.EscalateMarker = "#ESCALATE"
 	}
 	if cfg.WebAddr == "" {
 		cfg.WebAddr = ":8080"

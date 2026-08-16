@@ -18,16 +18,13 @@ import (
 
 	"sahiy-agent/internal/ai"
 	"sahiy-agent/internal/auth"
-	"sahiy-agent/internal/category"
 	"sahiy-agent/internal/client"
 	"sahiy-agent/internal/config"
 	"sahiy-agent/internal/daigou"
 	"sahiy-agent/internal/db"
 	"sahiy-agent/internal/escalation"
-	"sahiy-agent/internal/gemini"
 	"sahiy-agent/internal/models"
 	"sahiy-agent/internal/ollama"
-	"sahiy-agent/internal/openai"
 	"sahiy-agent/internal/orders"
 	"sahiy-agent/internal/pricing"
 	"sahiy-agent/internal/prompts"
@@ -35,7 +32,6 @@ import (
 	"sahiy-agent/internal/settings"
 	"sahiy-agent/internal/store"
 	"sahiy-agent/internal/support"
-	"sahiy-agent/internal/telegram"
 	"sahiy-agent/internal/tgtext"
 	"sahiy-agent/internal/userbot"
 	"sahiy-agent/internal/web"
@@ -84,7 +80,6 @@ type app struct {
 	track     *support.Tracker
 	hist      *store.Store
 	esc       *escalation.Store
-	cats      *category.Store
 	ord       *orders.Lookup  // buyurtma holati (delivery API — O'zbekistondagi holat)
 	dg        *daigou.Client  // adminka daigou-orders (Xitoy tomoni: yo'lga chiqqan sana)
 	staff     staffChannel    // nil bo'lishi mumkin
@@ -137,7 +132,6 @@ func main() {
 		track:     support.NewTracker(database),
 		hist:      store.New(database),
 		esc:       escalation.New(database),
-		cats:      category.New(database),
 		db:        database,
 		set:       settings.New(database),
 		cachePath: filepath.Join(cfg.DataDir, "token.json"),
@@ -145,9 +139,6 @@ func main() {
 	// Promptlar: YAGONA manba — Postgres. Kodda ham, faylda ham zaxira
 	// matn yo'q; hammasi dashboarddan (/prompts) boshqariladi.
 	a.prompts = prompts.New(database)
-	if err := a.prompts.Seed(); err != nil {
-		fmt.Fprintln(os.Stderr, "kategoriya promptlari xatosi:", err)
-	}
 	if err := a.prompts.Reload(); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ promptlar bazadan o'qilmadi: %v\n", err)
 		os.Exit(1)
@@ -178,8 +169,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sozlama xatosi:", err)
 	}
 
-	backend, local := pickBackend(cfg)
-	a.ai, a.local = ai.New(backend, a.prompts), local
+	a.local = newBackend(cfg)
+	a.ai = ai.New(a.local, a.prompts)
 
 	// Ikkinchi sayt (service API) — buyurtma holatini id/track bo'yicha ko'rish.
 	svc := service.New(cfg.ServiceBaseURL, service.LoginRequest{
@@ -216,9 +207,6 @@ func main() {
 			a.local.Model, a.local.KeepAlive, a.local.NumCtx)
 		if err := a.local.Check(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  %v\n", err)
-			if cfg.OpenAIAPIKey != "" {
-				fmt.Fprintln(os.Stderr, "   Zaxira sifatida OpenAI ishlatiladi.")
-			}
 		}
 	}
 	if a.ai.Ready() {
@@ -242,7 +230,7 @@ func main() {
 	}
 
 	// Web dashboard.
-	srv := web.New(a.hist, a.cats, a.esc, a.set, a.prompts, web.Options{
+	srv := web.New(a.hist, a.esc, a.set, a.prompts, web.Options{
 		Addr:      cfg.WebAddr,
 		AdminUser: cfg.AdminUser,
 		AdminPass: cfg.AdminPass,
@@ -284,44 +272,24 @@ func main() {
 	}
 }
 
-// pickBackend .env asosida AI provayderini tanlaydi. AI_PROVIDER berilmasa:
-// OPENAI_API_KEY bo'lsa OpenAI, aks holda Gemini.
-func pickBackend(cfg *config.Config) (ai.Backend, *ollama.Client) {
-	switch cfg.AIProvider {
-	case "openai":
-		return openai.New(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL), nil
-	case "gemini":
-		return gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel), nil
-	case "ollama":
-		// Lokal model asosiy; OpenAI kaliti bo'lsa u zaxira bo'lib qoladi —
-		// Ollama o'chib qolsa mijoz javobsiz qolmaydi.
-		local := ollama.New(cfg.OllamaURL, cfg.OllamaModel, ollama.Options{
-			KeepAlive:   cfg.OllamaKeepAlive,
-			NumCtx:      cfg.OllamaNumCtx,
-			MaxTokens:   cfg.OllamaMaxTokens,
-			Temperature: cfg.OllamaTemperature,
-			Timeout:     cfg.OllamaTimeout,
-		})
-		if cfg.OpenAIAPIKey != "" {
-			return &ai.Fallback{
-				Primary:   local,
-				Secondary: openai.New(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL),
-			}, local
-		}
-		return local, local
-	}
-	// Avtomatik tanlashda lokal model hech qachon o'zi tanlanmaydi.
-	if cfg.OpenAIAPIKey != "" {
-		return openai.New(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL), nil
-	}
-	return gemini.New(cfg.GeminiAPIKey, cfg.GeminiModel), nil
+// newBackend lokal Ollama modelini yaratadi. Loyihada yagona AI provayderi
+// shu — barcha so'rovlar (qaror, javob) shu modelga ketadi.
+func newBackend(cfg *config.Config) *ollama.Client {
+	return ollama.New(cfg.OllamaURL, cfg.OllamaModel, ollama.Options{
+		KeepAlive:   cfg.OllamaKeepAlive,
+		NumCtx:      cfg.OllamaNumCtx,
+		MaxTokens:   cfg.OllamaMaxTokens,
+		Temperature: cfg.OllamaTemperature,
+		Timeout:     cfg.OllamaTimeout,
+	})
 }
 
-// setupTelegram userbot yoki Bot API kanalini sozlaydi.
+// setupTelegram userbot (MTProto) kanalini sozlaydi — eskalatsiya shu
+// orqali xodimlar guruhiga boradi.
 func (a *app) setupTelegram(ctx context.Context) {
 	cfg := a.cfg
 
-	// 1) Userbot (MTProto) — API_ID/API_HASH va ALLOWED_GROUPS bo'lsa.
+	// API_ID/API_HASH va ALLOWED_GROUPS bo'lmasa eskalatsiya o'chiq.
 	if cfg.TgAPIID != 0 && cfg.TgAPIHash != "" && len(cfg.AllowedGroups) > 0 {
 		target := escalationTarget(cfg)
 		if target == 0 {
@@ -355,14 +323,6 @@ func (a *app) setupTelegram(ctx context.Context) {
 		a.staff = ch
 		fmt.Printf("📨 Userbot eskalatsiya yoqilgan (guruh %d)\n", target)
 		return
-	}
-
-	// 2) Bot API — TELEGRAM_TOKEN bo'lsa.
-	if cfg.TelegramToken != "" && cfg.TelegramChatID != "" {
-		bot := telegram.New(cfg.TelegramToken)
-		a.staff = &botChannel{bot: bot, chatID: cfg.TelegramChatID}
-		go a.pollBotAPI(ctx, bot)
-		fmt.Println("📨 Bot API eskalatsiya yoqilgan")
 	}
 }
 
@@ -583,8 +543,7 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	case ai.KindDeliver:
 		// Yetkazib berish shartlari haqida umumiy savol — javobni
 		// "cat:yetkazib-berish" bilimi asosida yozib, mijozga yuboramiz.
-		tr.add("🚚", "Yetkazib berish shartlari — %s%s bilimi bilan javob yozilmoqda",
-			models.PromptCatPrefix, deliverCategory)
+		tr.add("🚚", "Yetkazib berish shartlari — %s promti bilan javob yozilmoqda", deliverCategory)
 		reply, err := a.ai.Answer(ctx, ai.Request{
 			Transcript:  transcript,
 			CategoryKey: deliverCategory,
@@ -601,7 +560,6 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 		in := &models.Interaction{
 			ClientMessage: lastText, AIReply: reply,
 			HandledBy:  handledByAI(a.ai.Name()),
-			CategoryID: a.categoryID(deliverCategory),
 			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
 		}
 		switch {
@@ -704,7 +662,6 @@ func (a *app) clientHelpFlow(ctx context.Context, c *client.Client, senderID int
 	in := &models.Interaction{
 		ClientMessage: lastText, AIReply: rep.Client,
 		HandledBy:  handledByAI(a.ai.Name()),
-		CategoryID: a.categoryID(catKey),
 		ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
 	}
 
@@ -777,16 +734,6 @@ func (a *app) finish(ch support.Conversation, in *models.Interaction,
 // tasdiqlaganda yuboriladi.
 func (a *app) autoReply() bool {
 	return a.set.Bool(settings.AutoReply, a.cfg.AutoReply)
-}
-
-// categoryID — slug bo'yicha kategoriya id'si (dashboarddagi "Kategoriya"
-// ustuni uchun). Topilmasa yoki o'chirilgan bo'lsa nil.
-func (a *app) categoryID(slug string) *uint {
-	cat, err := a.cats.BySlug(slug)
-	if err != nil || !cat.Active {
-		return nil
-	}
-	return &cat.ID
 }
 
 // handledByAI — "kim hal qildi" ustuni uchun (masalan "AI (openai gpt-4o-mini)").
@@ -1122,30 +1069,6 @@ func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 		item.ConversationID, models.StatusLabel(models.StatusStaffSent))
 }
 
-// pollBotAPI Bot API rejimida xodim javoblarini poll qiladi.
-func (a *app) pollBotAPI(ctx context.Context, bot *telegram.Bot) {
-	var offset int64
-	for ctx.Err() == nil {
-		updates, err := bot.GetUpdates(offset, 50)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "telegram poll xatosi:", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		for _, u := range updates {
-			offset = u.UpdateID + 1
-			if u.Message == nil || u.Message.ReplyTo == nil || strings.TrimSpace(u.Message.Text) == "" {
-				continue
-			}
-			from := u.Message.From.FirstName
-			if from == "" {
-				from = u.Message.From.Username
-			}
-			a.onStaffReply(u.Message.ReplyTo.MessageID, u.Message.Text, from)
-		}
-	}
-}
-
 // apiClient token oladi va 401 da o'zini yangilaydigan client qaytaradi.
 func (a *app) apiClient() (*client.Client, int64, error) {
 	token, err := auth.GetToken(a.cfg, a.cachePath)
@@ -1212,15 +1135,6 @@ func (u *ubChannel) Send(text string, code []tgtext.Span) (int64, error) {
 		return 0, fmt.Errorf("telegram sessiyasi yo'q — `agent login` bajaring")
 	}
 	return u.bot.SendToGroup(u.ctx, u.target, text, code)
-}
-
-type botChannel struct {
-	bot    *telegram.Bot
-	chatID string
-}
-
-func (b *botChannel) Send(text string, code []tgtext.Span) (int64, error) {
-	return b.bot.SendMessage(b.chatID, text, code)
 }
 
 // escalationTarget eskalatsiya boradigan guruhni aniqlaydi.
