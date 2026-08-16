@@ -34,6 +34,10 @@ const (
 	StatusFailed = "failed"
 	// StatusRejected — admin AI javobini ko'rib chiqib rad etdi (yuborilmadi).
 	StatusRejected = "rejected"
+	// StatusUnclear — AI murojaatni hech qaysi kategoriyaga qo'sha olmadi
+	// (base prompti {"category":false} qaytardi). Mijozga hech narsa
+	// yuborilmagan — admin dashboarddan suhbatni o'zi ko'rib chiqadi.
+	StatusUnclear = "unclear"
 )
 
 // StatusLabel — statusning o'zbekcha nomi (dashboard va loglar uchun).
@@ -51,6 +55,8 @@ func StatusLabel(status string) string {
 		return "Xatolik"
 	case StatusRejected:
 		return "Admin rad etdi"
+	case StatusUnclear:
+		return "AI tushunmadi — ko'rib chiqing"
 	}
 	return status
 }

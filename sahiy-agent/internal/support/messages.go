@@ -210,27 +210,20 @@ func Stale(msgs []Message, maxAge time.Duration) (bool, time.Duration) {
 	return age > maxAge, age
 }
 
-// Window AI'ga beriladigan xabarlar oynasini ajratadi — butun tarix emas,
-// faqat kerakli qismi:
+// Window — AI'ga beriladigan xabarlar oynasi: javob berilmagan YANGI
+// xabarlar va ulardan oldingi `before` ta kontekst xabari.
 //
-//   - afterID dan keyingi (hali javob berilmagan) barcha xabarlar;
-//   - ulardan oldingi `before` ta xabar — kontekst uchun;
-//   - maxAge dan eski xabarlar butunlay tashlanadi (maxAge <= 0 — cheklovsiz);
-//   - jami `max` tadan oshmaydi (max <= 0 — cheklovsiz).
+// Oyna hech qachon MinHistory (10) tadan kam bo'lmaydi — suhbatda shuncha
+// xabar bo'lsa, agent oxirgi 10 tasini baribir o'qiydi. `max` yuqori
+// chegara (HISTORY_LIMIT).
 //
-// afterID = 0 (suhbat birinchi marta ko'rilmoqda) bo'lsa oxirgi before+1 ta
-// xabar olinadi.
-func Window(msgs []Message, afterID int64, before, max int, maxAge time.Duration) []Message {
-	sorted := make([]Message, 0, len(msgs))
-	now := time.Now()
-	for _, m := range msgs {
-		if maxAge > 0 {
-			if age, ok := m.Age(now); ok && age > maxAge {
-				continue // eski xabar — kontekstga ham kirmaydi
-			}
-		}
-		sorted = append(sorted, m)
-	}
+// Xabar yoshi bu yerda tekshirilmaydi: eski suhbatga umuman javob berish
+// kerakmi degan qarorni Stale() alohida qabul qiladi. Yoshi bo'yicha
+// filtrlash kontekstni yeb qo'yardi — eski xabarlar tashlanib, modelga
+// suhbatning bitta oxirgi qatori borardi.
+func Window(msgs []Message, afterID int64, before, max int) []Message {
+	sorted := make([]Message, len(msgs))
+	copy(sorted, msgs)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 
 	// Yangi xabarlar qayerdan boshlanadi.
@@ -253,6 +246,15 @@ func Window(msgs []Message, afterID int64, before, max int, maxAge time.Duration
 		before = start
 	}
 	out := sorted[start-before:]
+
+	// Kontekst juda qisqa chiqsa — oxirgi MinHistory tagacha kengaytiramiz.
+	if len(out) < MinHistory && len(sorted) > len(out) {
+		n := MinHistory
+		if n > len(sorted) {
+			n = len(sorted)
+		}
+		out = sorted[len(sorted)-n:]
+	}
 	if max > 0 && len(out) > max {
 		out = out[len(out)-max:]
 	}

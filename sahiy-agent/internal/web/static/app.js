@@ -237,6 +237,7 @@ const STATUS = {
   staff_sent: {label:"Xodim hal qildi",    cls:"staff"},
   failed:     {label:"Xatolik",            cls:"failed"},
   rejected:   {label:"Admin rad etdi",     cls:"rejected"},
+  unclear:    {label:"AI tushunmadi — ko'rib chiqing", cls:"nosent"},
 };
 
 const LEVEL = {yuqori:"🔴 Yuqori", "o'rta":"🟡 O'rta", past:"🟢 Past"};

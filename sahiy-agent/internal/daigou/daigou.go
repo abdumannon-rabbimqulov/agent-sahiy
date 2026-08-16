@@ -278,11 +278,46 @@ func Summary(list []Order) string {
 		if amount := Pick(o, "amount"); amount != "" {
 			fmt.Fprintf(&b, "  Summa: %s %s\n", amount, Pick(o, "currency"))
 		}
+		if ct := ClientType(o); ct != "" {
+			fmt.Fprintf(&b, "  Mijoz turi: %s\n", ct)
+		}
 	}
 	if len(list) > len(shown) {
 		fmt.Fprintf(&b, "\n(jami %d ta buyurtma, birinchi %d tasi ko'rsatildi)\n", len(list), len(shown))
 	}
 	return b.String()
+}
+
+// b2cKey — mijoz turini ko'rsatadigan maydon. Asosiy yo'li
+// skus[0].sku_info.B2C_percentage; topilmasa buyurtma ichidan kalit
+// bo'yicha qidiriladi (javob shakli barqaror emas).
+const b2cKey = "B2C_percentage"
+
+// b2cPaths — b2cKey qidiriladigan aniq yo'llar.
+var b2cPaths = []string{
+	"skus[0].sku_info." + b2cKey,
+	"skus[0]." + b2cKey,
+	"sku_info." + b2cKey,
+}
+
+// ClientType — mijoz B2C mi yoki B2B mi.
+//
+// B2C_percentage — B2C mijozga qo'shiladigan foiz: noldan katta bo'lsa mijoz
+// B2C, nol bo'lsa B2B hisoblanadi. Maydon umuman topilmasa bo'sh satr
+// qaytadi va bu qator ma'lumotga qo'shilmaydi (taxmin qilinmaydi).
+func ClientType(o Order) string {
+	raw := strings.TrimSpace(Pick(o, b2cKey, b2cPaths...))
+	if raw == "" {
+		return ""
+	}
+	pct, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return raw // kutilmagan qiymat — xom holida ko'rsatamiz
+	}
+	if pct > 0 {
+		return fmt.Sprintf("B2C (%s%%)", strconv.FormatFloat(pct, 'f', -1, 64))
+	}
+	return "B2B"
 }
 
 // Pick — berilgan yo'llarni tartib bilan sinaydi, topilmasa kalit bo'yicha
@@ -317,20 +352,47 @@ func str(m Order, key string) string {
 	return ""
 }
 
-// path — "address.receiver_name" ko'rinishidagi aniq yo'l bo'yicha qiymat.
+// path — aniq yo'l bo'yicha qiymat. Nuqta bilan ajratilgan bo'laklar, kerak
+// bo'lsa massiv indeksi bilan:
+//
+//	"address.receiver_name"
+//	"skus[0].sku_info.B2C_percentage"
 func path(m Order, dotted string) string {
 	var cur any = map[string]any(m)
 	for _, part := range strings.Split(dotted, ".") {
-		obj, ok := cur.(map[string]any)
-		if !ok {
-			return ""
+		name, idx := splitIndex(part)
+		if name != "" {
+			obj, ok := cur.(map[string]any)
+			if !ok {
+				return ""
+			}
+			cur, ok = obj[name]
+			if !ok {
+				return ""
+			}
 		}
-		cur, ok = obj[part]
-		if !ok {
-			return ""
+		if idx >= 0 {
+			arr, ok := cur.([]any)
+			if !ok || idx >= len(arr) {
+				return ""
+			}
+			cur = arr[idx]
 		}
 	}
 	return toStr(named(cur))
+}
+
+// splitIndex — "skus[0]" ni "skus" va 0 ga ajratadi. Indeks bo'lmasa -1.
+func splitIndex(part string) (string, int) {
+	open := strings.IndexByte(part, '[')
+	if open < 0 || !strings.HasSuffix(part, "]") {
+		return part, -1
+	}
+	idx, err := strconv.Atoi(part[open+1 : len(part)-1])
+	if err != nil || idx < 0 {
+		return part, -1
+	}
+	return part[:open], idx
 }
 
 func searchDeep(v any, key string) string {

@@ -10,11 +10,11 @@ import (
 
 // Prompt kalitlari.
 const (
-	// PromptBase — agentning asosiy ko'rsatmasi.
+	// PromptBase — agentning asosiy ko'rsatmasi. Murojaatni kategoriyaga
+	// ajratib, JSON qaror qaytaradi (ai.Decision).
 	PromptBase = "base"
-	// PromptClassify — router: mijoz savolini kategoriyaga ajratadi.
-	PromptClassify = "classify"
-	// PromptSummarize — xodimlar guruhi uchun xulosa.
+	// PromptSummarize — xodimlar guruhi uchun xulosa. HOZIRCHA
+	// ISHLATILMAYDI: guruhga "cat:order" promtining help matni yuboriladi.
 	PromptSummarize = "summarize"
 	// PromptCatPrefix — kategoriya bilimlari: "cat:yetkazib-berish".
 	PromptCatPrefix = "cat:"
@@ -37,10 +37,11 @@ const (
 // RequiredPrompts — agent ishlashi uchun bazada bo'lishi SHART bo'lgan
 // promptlar. Bittasi yo'q bo'lsa agent ishga tushmaydi (kodda zaxira matn
 // yo'q — barcha promptlar Postgres'da).
-var RequiredPrompts = []string{PromptBase, PromptClassify, PromptSummarize}
+var RequiredPrompts = []string{PromptBase}
 
 // OptionalPrompts — bo'lmasa tegishli blok qo'shilmaydi, agent ishlayveradi.
 var OptionalPrompts = []string{
+	PromptSummarize,
 	PromptBlockCategory, PromptBlockOrder, PromptBlockImage, PromptBlockImageOrder,
 }
 

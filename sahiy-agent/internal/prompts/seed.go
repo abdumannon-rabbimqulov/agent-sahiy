@@ -14,7 +14,7 @@ import (
 // yozadi va har bir kategoriya matnini "cat:<slug>" prompti sifatida bazaga
 // ko'chiradi.
 //
-// base / classify / summarize kabi promptlar SEED QILINMAYDI — ular
+// base / summarize kabi promptlar SEED QILINMAYDI — ular
 // butunlay Postgres'da yashaydi va dashboarddan (/prompts) yoziladi.
 // Kod ichida birorta prompt matni saqlanmaydi.
 func (s *Store) Seed() error {

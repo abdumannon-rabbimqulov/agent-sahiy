@@ -4,7 +4,6 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,7 +13,6 @@ import (
 // bog'lanmasligi uchun shu yerda ham e'lon qilingan).
 const (
 	PromptBase      = "base"
-	PromptClassify  = "classify"
 	PromptSummarize = "summarize"
 	BlockCategory   = "block:category"
 	BlockOrder      = "block:order"
@@ -31,6 +29,12 @@ const (
 	phCategory = "{{CATEGORY}}"
 	phOrders   = "{{ORDERS}}"
 )
+
+// orderHeader — "block:order" prompti bazada bo'lmaganda ishlatiladigan
+// minimal sarlavha. Tizimdan olingan ma'lumot promptga yetib bormasa model
+// uni o'zidan to'qiydi, shuning uchun promptsiz ham qo'shiladi. Prompt
+// yozilgan bo'lsa bu matn umuman ishlatilmaydi.
+const orderHeader = "Tizimdagi buyurtma ma'lumoti (faqat shunga tayan, o'zingdan to'qima):"
 
 // Backend — bitta LLM provayderi (gemini, openai, ...).
 type Backend interface {
@@ -94,19 +98,20 @@ func (c *Client) generate(ctx context.Context, system, user string, opt GenOptio
 // Ready — provayder ishlashga tayyor (API kaliti bor).
 func (c *Client) Ready() bool { return c.be != nil && c.be.Ready() }
 
-// Request — javob yozish uchun yig'ilgan kontekst.
+// Request — qaror qabul qilish uchun yig'ilgan kontekst.
 type Request struct {
 	// Transcript — mijozning ORIGINAL matni (suhbat oynasi). Hech qanday
 	// xulosa yoki qayta yozish yo'q: buyurtma raqami mijoz yozgan holida
 	// modelga yetib boradi.
 	Transcript string
-	// CategoryKey — router tanlagan kategoriya slug'i ("yetkazib-berish").
+	// CategoryKey — kategoriya slug'i ("yetkazib-berish"). Bo'sh bo'lsa
+	// kategoriya bilimi promptga qo'shilmaydi.
 	CategoryKey string
 	OrderInfo   string // track/client id bo'yicha topilgan buyurtma holati (xom JSON)
 	HasImage    bool   // mijoz rasm yuborgan — agent uni ko'ra olmaydi
 }
 
-// Ask suhbat konteksti asosida agent javobini yozadi.
+// Decide suhbat konteksti asosida agent qarorini oladi.
 //
 // MUHIM: bu yerda birorta prompt matni yo'q — hammasi Postgres'dan
 // (dashboard /prompts) olinadi. Kod faqat bloklarni TARTIB bilan yig'adi;
@@ -119,7 +124,24 @@ type Request struct {
 //  4. block:image     — kamdan-kam
 //
 // Blok prompti bazada bo'lmasa — o'sha blok umuman qo'shilmaydi.
-func (c *Client) Ask(ctx context.Context, req Request) (string, error) {
+//
+// Model qaytargan JSON Decision'ga aylantiriladi; mijozga hech narsa
+// yuborilmaydi — harakatni chaqiruvchi (main.go) tanlaydi.
+func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
+	// user qismi — mijoz matni o'zgarishsiz.
+	out, err := c.generate(ctx, c.buildSystem(req), req.Transcript, decideOptions)
+	if err != nil {
+		return Decision{}, err
+	}
+	return ParseDecision(out)
+}
+
+// decideOptions — qaror qisqa va deterministik JSON bo'lishi kerak.
+var decideOptions = GenOptions{MaxTokens: 200, TempZero: true, JSON: true}
+
+// buildSystem — system promptni bloklardan yig'adi (tartib yuqorida
+// tushuntirilgan; o'zgartirilmaydi).
+func (c *Client) buildSystem(req Request) string {
 	var b strings.Builder
 	b.WriteString(render(c.p.Get(PromptBase)))
 
@@ -129,7 +151,7 @@ func (c *Client) Ask(ctx context.Context, req Request) (string, error) {
 		}
 	}
 	if req.OrderInfo != "" {
-		b.WriteString(block(render(c.p.Get(BlockOrder)), phOrders, req.OrderInfo))
+		b.WriteString(blockData(render(c.p.Get(BlockOrder)), phOrders, orderHeader, withToday(req.OrderInfo)))
 	}
 	if req.HasImage {
 		key := BlockImage
@@ -138,9 +160,81 @@ func (c *Client) Ask(ctx context.Context, req Request) (string, error) {
 		}
 		b.WriteString(block(render(c.p.Get(key)), "", ""))
 	}
+	return b.String()
+}
 
+// Answer — mijozga yuboriladigan MATNLI javob yozadi.
+//
+// Decide'dan farqi: system prompt "base" emas (u endi JSON qaror qaytaradi),
+// balki req.CategoryKey ko'rsatgan kategoriya bilimi ("cat:<slug>"). Ya'ni
+// javob faqat o'sha bo'lim bilimiga tayanadi.
+//
+// Kategoriya prompti bazada bo'lmasa xato qaytadi — kod ichida zaxira matn
+// yo'q, hammasi Postgres'da.
+func (c *Client) Answer(ctx context.Context, req Request) (string, error) {
+	system, err := c.buildCategorySystem(req)
+	if err != nil {
+		return "", err
+	}
 	// user qismi — mijoz matni o'zgarishsiz.
-	return c.generate(ctx, b.String(), req.Transcript, GenOptions{})
+	return c.generate(ctx, system, req.Transcript, GenOptions{})
+}
+
+// orderOptions — "cat:order" javobi JSON bo'lishi kerak, lekin ichida
+// mijozga yoziladigan to'liq matn bor — shuning uchun Decide'dan uzunroq.
+var orderOptions = GenOptions{MaxTokens: 600, TempZero: true, JSON: true}
+
+// OrderAnswer — buyurtmadagi muammo bo'yicha "cat:order" bilimi asosida
+// qaror: mijozga nima yozish va xodimlarga nima yetkazish (OrderReply).
+// Answer'dan farqi faqat shu — javob matn emas, JSON.
+func (c *Client) OrderAnswer(ctx context.Context, req Request) (OrderReply, error) {
+	system, err := c.buildCategorySystem(req)
+	if err != nil {
+		return OrderReply{}, err
+	}
+	out, err := c.generate(ctx, system, req.Transcript, orderOptions)
+	if err != nil {
+		return OrderReply{}, err
+	}
+	// Parse xatosida ham javob qaytadi (Raw to'ldirilgan bo'ladi): promt
+	// JSON qaytarishga sozlanmagan bo'lsa, chaqiruvchi matnni yo'qotmasin.
+	return ParseOrderReply(out)
+}
+
+// buildCategorySystem — kategoriya bilimidan ("cat:<slug>") system prompt
+// yig'adi. Kategoriya prompti bazada bo'lmasa xato qaytadi — kod ichida
+// zaxira matn yo'q, hammasi Postgres'da.
+func (c *Client) buildCategorySystem(req Request) (string, error) {
+	// Avval "cat:<slug>" (kategoriyalardan ko'chirilgan bilim), topilmasa
+	// shu nomdagi oddiy prompt ("order" kabi mustaqil yozilganlar uchun).
+	cat := c.p.Get(catPrefix + req.CategoryKey)
+	if strings.TrimSpace(cat) == "" {
+		cat = c.p.Get(req.CategoryKey)
+	}
+	if strings.TrimSpace(cat) == "" {
+		return "", fmt.Errorf("kategoriya prompti topilmadi: %s%s (yoki %s)",
+			catPrefix, req.CategoryKey, req.CategoryKey)
+	}
+
+	var b strings.Builder
+	// block:category bo'lsa — bilim o'sha ko'rsatma ichiga joylashtiriladi;
+	// bo'lmasa kategoriya matni o'zi system prompt bo'ladi.
+	if tmpl := c.p.Get(BlockCategory); tmpl != "" {
+		b.WriteString(strings.TrimPrefix(block(render(tmpl), phCategory, render(cat)), "\n\n"))
+	} else {
+		b.WriteString(render(cat))
+	}
+	if req.OrderInfo != "" {
+		b.WriteString(blockData(render(c.p.Get(BlockOrder)), phOrders, orderHeader, withToday(req.OrderInfo)))
+	}
+	if req.HasImage {
+		key := BlockImage
+		if req.OrderInfo != "" {
+			key = BlockImageOrder
+		}
+		b.WriteString(block(render(c.p.Get(key)), "", ""))
+	}
+	return b.String(), nil
 }
 
 // render — har qanday prompt matnidagi umumiy placeholder'larni to'ldiradi.
@@ -164,6 +258,28 @@ func block(tmpl, placeholder, data string) string {
 		tmpl += "\n" + data
 	}
 	return "\n\n" + tmpl
+}
+
+// withToday — buyurtma ma'lumoti oldiga bugungi sanani qo'yadi. Model
+// bugun qaysi kun ekanini bilmaydi, "oxirgi 3 kunda keldimi", "5 kundan
+// oshdimi" kabi qoidalar esa aynan shunga tayanadi.
+func withToday(data string) string {
+	if data == "" {
+		return ""
+	}
+	return "Bugungi sana: " + time.Now().Format("2006-01-02") + "\n\n" + data
+}
+
+// blockData — block() bilan bir xil, lekin shablon bo'lmasa ham MA'LUMOTNI
+// tashlab yubormaydi: qisqa sarlavha bilan qo'shadi.
+func blockData(tmpl, placeholder, header, data string) string {
+	if data == "" {
+		return ""
+	}
+	if tmpl == "" {
+		return "\n\n" + header + "\n" + data
+	}
+	return block(tmpl, placeholder, data)
 }
 
 // Daraja — muammoning shoshilinchlik darajasi.
@@ -204,7 +320,7 @@ func (d Daraja) Sarlavha() string {
 func (c *Client) Summarize(ctx context.Context, transcript, orderInfo string) (Daraja, string, error) {
 	system := render(c.p.Get(PromptSummarize))
 	if orderInfo != "" {
-		system += block(render(c.p.Get(BlockOrder)), phOrders, orderInfo)
+		system += blockData(render(c.p.Get(BlockOrder)), phOrders, orderHeader, withToday(orderInfo))
 	}
 
 	out, err := c.generate(ctx, system, transcript, GenOptions{})
@@ -237,69 +353,14 @@ func splitDaraja(out string) (Daraja, string) {
 	return daraja, strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
-// Route — routerning qarori. Faqat shu uch maydon o'qiladi: router mijoz
-// matnini qayta yozsa ham, u e'tiborga olinmaydi.
-type Route struct {
-	Category string `json:"category"`
-	Escalate bool   `json:"escalate"`
-	// Order — mijoz o'z buyurtmasi haqida so'rayaptimi. true bo'lsa agent
-	// Dashboard API'ga GET so'rov yuborib, buyurtma holatini oladi.
-	// Router bu maydonni qaytarmasa false bo'ladi (bunda so'rov faqat
-	// xabarda aniq buyurtma/track raqami bo'lsa yuboriladi).
-	Order bool `json:"order"`
-}
-
-// routerOptions — router javobi qisqa va deterministik bo'lishi kerak.
-var routerOptions = GenOptions{MaxTokens: 40, TempZero: true, JSON: true}
-
-// Classify mijoz murojaatini kategoriyaga ajratadi.
-//
-// Kategoriyalar ro'yxati bazadagi "cat:" promptlaridan DINAMIK yig'iladi —
-// dashboarddan yangi kategoriya qo'shilsa router uni darhol ko'radi.
-// Kategoriya bo'lmasa router umuman chaqirilmaydi (bekorga token ketmasin).
-func (c *Client) Classify(ctx context.Context, transcript string) (Route, error) {
-	keys := c.p.Keys(catPrefix)
-	if len(keys) == 0 {
-		return Route{}, nil
-	}
-	tmpl := c.p.Get(PromptClassify)
-	if tmpl == "" {
-		return Route{}, nil
-	}
-
-	var list strings.Builder
-	valid := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		slug := strings.TrimPrefix(k, catPrefix)
-		valid[slug] = true
-		fmt.Fprintf(&list, "- %s\n", slug)
-	}
-	system := render(strings.ReplaceAll(tmpl, "{{CATEGORIES}}", strings.TrimRight(list.String(), "\n")))
-
-	out, err := c.generate(ctx, system, transcript, routerOptions)
-	if err != nil {
-		return Route{}, err
-	}
-
-	r := parseRoute(out)
-	// Router o'ylab topgan kategoriya qabul qilinmaydi — faqat ro'yxatdagisi.
-	if r.Category != "" && !valid[r.Category] {
-		r.Category = ""
-	}
-	return r, nil
-}
-
-// parseRoute router javobidan JSON'ni ajratadi. Model JSON atrofiga matn
-// yoki ```json bloki qo'shsa ham ishlaydi.
-func parseRoute(out string) Route {
-	var r Route
+// extractJSON matn ichidan birinchi `{` dan oxirgi `}` gacha bo'lgan bo'lakni
+// qaytaradi. Model JSON atrofiga izoh yoki ```json bloki qo'shsa ham ishlaydi.
+// Topilmasa bo'sh satr.
+func extractJSON(out string) string {
 	s := strings.TrimSpace(out)
-	if i, j := strings.Index(s, "{"), strings.LastIndex(s, "}"); i >= 0 && j > i {
-		s = s[i : j+1]
+	i, j := strings.Index(s, "{"), strings.LastIndex(s, "}")
+	if i < 0 || j <= i {
+		return ""
 	}
-	if err := json.Unmarshal([]byte(s), &r); err != nil {
-		return Route{}
-	}
-	r.Category = strings.TrimSpace(strings.ToLower(r.Category))
-	return r
+	return s[i : j+1]
 }

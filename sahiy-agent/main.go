@@ -51,7 +51,25 @@ const (
 	// maxImages — bitta suhbatdan eslab qolinadigan rasm havolalari soni
 	// (rasmlar tahlil qilinmaydi — faqat "rasm bor" belgisi uchun).
 	maxImages = 3
+	// deliverCategory — yetkazib berish shartlari haqidagi umumiy savollarga
+	// javob yoziladigan kategoriya slug'i. Matni bazada "cat:yetkazib-berish"
+	// prompti sifatida yotadi va dashboarddan tahrirlanadi.
+	deliverCategory = "yetkazib-berish"
+	// orderCategory — buyurtma holati (1-kategoriya) bo'yicha qaror
+	// qiladigan promt. Bazada oddiy "order" kaliti bilan yotadi, shuning
+	// uchun buildCategorySystem uni "cat:order" topilmagach shu nom bilan
+	// oladi.
+	orderCategory = "order"
+	// wrongItemCategory — buyurtmadagi muammo (2-kategoriya: yo'qolgan,
+	// shikastlangan, noto'g'ri tovar, pul qaytarish) promti:
+	// "cat:xato-mahsulot-kelganda".
+	wrongItemCategory = "xato-mahsulot-kelganda"
 )
+
+// orderLevel — buyurtma muammosi guruhga chiqqanda sarlavhadagi daraja
+// belgisi. "cat:order" prompti keyinchalik darajani ham qaytarsa, shu
+// qiymat o'rniga o'sha ishlatiladi.
+const orderLevel = ai.Orta
 
 // staffChannel — xodimlar guruhiga xabar yuboradigan kanal
 // (userbot yoki Bot API).
@@ -211,7 +229,7 @@ func main() {
 			fmt.Printf("⚠️  %s narxi noma'lum — .env da AI_PRICE_IN va AI_PRICE_OUT ni o'rnating\n"+
 				"   (tokenlar baribir saqlanadi, narx qo'yilgach qayta hisoblash mumkin)\n", a.modelName())
 		}
-		if a.set.Bool(settings.AutoReply, cfg.AutoReply) {
+		if a.autoReply() {
 			fmt.Println("📤 Avto-javob YOQILGAN — AI javoblari mijozga darhol ketadi")
 		} else {
 			fmt.Println("👁  Avto-javob o'chirilgan — javoblar dashboardda tasdiqlashni kutadi")
@@ -487,120 +505,137 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	var tr trace
 
 	// meter — shu suhbatga ketgan barcha AI so'rovlarining tokenlarini yig'adi
-	// (Classify + Ask + kerak bo'lsa Summarize). Xarajat shundan hisoblanadi.
+	// (Decide + kerak bo'lsa Summarize). Xarajat shundan hisoblanadi.
 	meter := &ai.Meter{}
 	ctx = ai.WithMeter(ctx, meter)
 
 	// 1-qadam: butun tarix emas — faqat javob berilmagan YANGI xabarlar va
 	// ulardan oldingi CONTEXT_BEFORE ta xabar olinadi (token tejash).
 	prevID := a.track.LastID(ch.ID)
-	window := support.Window(msgs, prevID, a.cfg.ContextBefore, a.cfg.HistoryLimit, a.cfg.MaxMessageAge)
+	window := support.Window(msgs, prevID, a.cfg.ContextBefore, a.cfg.HistoryLimit)
 	transcript := support.Transcript(window)
 	tr.add("📚", "%d ta xabar o'qildi: yangilari + %d ta kontekst (jami tarix %d ta)",
 		len(window), a.cfg.ContextBefore, len(msgs))
 
-	// 2-qadam: router — mijoz murojaatini kategoriyaga ajratadi. U faqat
-	// kategoriya kalitini qaytaradi; mijoz matniga tegmaydi.
-	var (
-		catID    *uint
-		catKey   string
-		escalate bool
-	)
-	route, rerr := a.ai.Classify(ctx, transcript)
-	switch {
-	case rerr != nil:
-		tr.add("⚠️", "Kategoriya aniqlanmadi (xato: %v)", rerr)
-	case route.Category == "":
-		tr.add("🏷", "Mos kategoriya topilmadi — umumiy bilim bilan javob beriladi")
-	default:
-		catKey = route.Category
-		tr.add("🏷", "Kategoriya: %s", catKey)
-		if cat, err := a.cats.BySlug(catKey); err == nil && cat.Active {
-			catID = &cat.ID
-		}
-	}
-	if route.Escalate {
-		escalate = true
-		tr.add("🆘", "Router muammoni xodimga yo'naltirdi (escalate=true)")
-	}
-
-	// 3-qadam: rasmlar. Rasm AI'ga yuborilmaydi (token tejash) — faqat
-	// borligi qayd etiladi, javobda esa mijozdan buyurtma raqami so'raladi.
+	// 2-qadam: rasmlar. Rasm AI'ga yuborilmaydi (token tejash) — faqat
+	// borligi qayd etiladi.
 	imgURLs := support.ImageURLs(window, maxImages)
 	if len(imgURLs) > 0 {
-		tr.add("📷", "Mijoz %d ta rasm yubordi — rasm tahlil qilinmaydi, buyurtma raqami so'raladi", len(imgURLs))
+		tr.add("📷", "Mijoz %d ta rasm yubordi — rasm tahlil qilinmaydi", len(imgURLs))
 	}
 
-	// 4-qadam: buyurtma tekshiruvi. Router (birinchi prompt) "mijoz o'z
-	// buyurtmasi haqida so'rayapti" desa — AYNAN SHU PAYTDA Dashboard
-	// API'lariga GET so'rov ketadi. Router boshqa narsa desa ham, xabarda
-	// aniq buyurtma yoki track raqami bo'lsa qidiriladi (zaxira yo'l).
-	orderInfo := ""
-	nums := orderNumbers(lastText)
-	switch {
-	case route.Order:
-		tr.add("🔎", "Router: mijoz buyurtmasi haqida so'rayapti — Dashboard tekshirilmoqda")
-		orderInfo = a.lookupOrders(&tr, ch, nums)
-	case len(nums) > 0:
-		tr.add("🔎", "Xabarda buyurtma/track raqami bor (%s) — Dashboard tekshirilmoqda", strings.Join(nums, ", "))
-		orderInfo = a.lookupOrders(&tr, ch, nums)
-	default:
-		tr.add("📦", "Buyurtma haqida savol emas — Dashboard'ga so'rov yuborilmadi")
-	}
-
-	// Router "xodim kerak" desa — javob yozib o'tirmaymiz (bitta so'rov tejaladi).
-	if escalate {
-		if ids := support.ClientMessageIDs(msgs); len(ids) > 0 {
-			_ = support.MarkRead(c, ids)
-		}
-		a.escalate(ctx, ch, lastText, transcript, orderInfo, imgURLs, meter, &tr)
-		_ = a.track.Commit(ch.ID, lastID)
-		return true
-	}
-
-	// 5-qadam: kategoriya + buyurtma ma'lumoti bilan javob yozish.
-	// user qismi — mijozning original matni, o'zgarishsiz.
-	reply, err := a.ai.Ask(ctx, ai.Request{
-		Transcript:  transcript,
-		CategoryKey: catKey,
-		OrderInfo:   orderInfo,
-		HasImage:    len(imgURLs) > 0,
+	// 3-qadam: qaror. Asosiy prompt ("base") murojaatni kategoriyaga ajratadi
+	// va matndan buyurtma/ekspress raqamlarni chiqaradi. Bu JSON — ICHKI
+	// qaror: mijozga HECH QACHON yuborilmaydi.
+	dec, err := a.ai.Decide(ctx, ai.Request{
+		Transcript: transcript,
+		HasImage:   len(imgURLs) > 0,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    AI xatosi:", err)
+		if dec.Raw != "" {
+			fmt.Fprintf(os.Stderr, "    javob: %s\n", dec.Raw)
+		}
 		return false // keyingi tsiklda qayta urinamiz
 	}
 
-	// Xabar tayyor — endi o'qilgan deb belgilaymiz.
+	// Qaror tayyor — endi xabarlarni o'qilgan deb belgilaymiz.
 	if ids := support.ClientMessageIDs(msgs); len(ids) > 0 {
 		_ = support.MarkRead(c, ids)
 	}
 
-	// Eskalatsiya markeri bo'lsa xodimlarga.
-	if strings.Contains(reply, a.cfg.EscalateMarker) {
-		tr.add("🆘", "AI muammoni hal qila olmadi (%s) — xodimlar guruhiga yuborilmoqda", a.cfg.EscalateMarker)
-		a.escalate(ctx, ch, lastText, transcript, orderInfo, imgURLs, meter, &tr)
-		_ = a.track.Commit(ch.ID, lastID)
+	fmt.Printf("    🧠 %s | order_sn=%v express_num=%v\n", dec.Label(), dec.OrderSN, dec.ExpressNum)
+	fmt.Printf("    📄 %s\n", dec.Raw)
+	tr.add("🧠", "Qaror: %s", dec.Label())
+	tr.add("📄", "JSON: %s", dec.Raw)
+
+	// 4-qadam: qarorga qarab harakat. Harakati hali belgilanmagan
+	// kategoriyalar switch'dan keyin bir xil yoziladi.
+	status, clientMsg := models.StatusAIDraft, lastText
+
+	switch dec.Kind() {
+	case ai.KindOrderStatus:
+		// Buyurtma holati: "qachon keladi, yo'lga chiqdimi, qotib qoldimi".
+		// Manba bayroqlarini modelning o'zi qaytaradi (dashboard/adminka).
+		delivery, daigou := dec.Sources()
+		in := a.clientHelpFlow(ctx, c, senderID, ch, orderCategory,
+			lastText, transcript, dec, delivery, daigou, imgURLs, &tr)
+		if in == nil {
+			status = models.StatusFailed
+			break // qaror baribir tarixga yoziladi
+		}
+		a.finish(ch, in, meter, &tr, lastID)
 		return true
+
+	case ai.KindIncorrectOrder:
+		// Buyurtmada muammo: yo'qolgan, shikastlangan, noto'g'ri tovar,
+		// pul qaytarish. Bu yerda ikkala manba ham so'raladi — muammoni
+		// hal qilish uchun to'liq manzara kerak.
+		in := a.clientHelpFlow(ctx, c, senderID, ch, wrongItemCategory,
+			lastText, transcript, dec, true, true, imgURLs, &tr)
+		if in == nil {
+			status = models.StatusFailed
+			break
+		}
+		a.finish(ch, in, meter, &tr, lastID)
+		return true
+
+	case ai.KindDeliver:
+		// Yetkazib berish shartlari haqida umumiy savol — javobni
+		// "cat:yetkazib-berish" bilimi asosida yozib, mijozga yuboramiz.
+		tr.add("🚚", "Yetkazib berish shartlari — %s%s bilimi bilan javob yozilmoqda",
+			models.PromptCatPrefix, deliverCategory)
+		reply, err := a.ai.Answer(ctx, ai.Request{
+			Transcript:  transcript,
+			CategoryKey: deliverCategory,
+			HasImage:    len(imgURLs) > 0,
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "    javob yozilmadi:", err)
+			tr.add("⚠️", "Javob yozilmadi: %v", err)
+			status = models.StatusFailed
+			break // qaror baribir tarixga yoziladi
+		}
+		fmt.Printf("    🤖 %s\n", reply)
+
+		in := &models.Interaction{
+			ClientMessage: lastText, AIReply: reply,
+			HandledBy:  handledByAI(a.ai.Name()),
+			CategoryID: a.categoryID(deliverCategory),
+			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
+		}
+		switch {
+		case !a.autoReply():
+			tr.add("👁", "AI javob yozdi — dashboardda tasdiqlashingiz kutilmoqda")
+			in.Status = models.StatusAIDraft
+		default:
+			if _, err := support.SendMessage(c, senderID, ch.ID, "agent", reply); err != nil {
+				tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
+				in.Status = models.StatusFailed
+			} else {
+				tr.add("✅", "Javob mijozga yuborildi")
+				in.Sent, in.Status = true, models.StatusAISent
+			}
+		}
+		a.finish(ch, in, meter, &tr, lastID)
+		return true
+
+	default:
+		// AI murojaatni tushunmadi ({"category":false}) — mijozga hech narsa
+		// yuborilmaydi. Suhbat DASHBOARDGA "AI tushunmadi" holati bilan
+		// tushadi: kim yozgani (mijoz nomi/id) va uning xabarlari ko'rinadi,
+		// admin o'zi ko'rib chiqadi.
+		tr.add("🤷", "AI murojaatni tushunmadi — dashboardda ko'rib chiqish uchun belgilandi")
+		status = models.StatusUnclear
+		// Bitta oxirgi xabar emas — butun oyna: admin suhbatni to'liq ko'rsin.
+		clientMsg = transcript
 	}
 
-	fmt.Printf("    🤖 %s\n", reply)
-	sent, status := false, models.StatusAIDraft
-	if a.set.Bool(settings.AutoReply, a.cfg.AutoReply) {
-		if _, err := support.SendMessage(c, senderID, ch.ID, "agent", reply); err != nil {
-			tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
-			status = models.StatusFailed
-		} else {
-			sent, status = true, models.StatusAISent
-			tr.add("✅", "AI muammoni o'zi hal qildi va javobni mijozga yubordi")
-		}
-	} else {
-		tr.add("👁", "AI javob yozdi — dashboardda tekshirib tasdiqlashingiz kutilmoqda")
-	}
+	// Harakat qilinmagan kategoriyalar: mijozga hech narsa yuborilmaydi,
+	// qaror tarixga yoziladi va dashboardda ko'rinadi.
 	in := &models.Interaction{
-		ClientMessage: lastText, AIReply: reply, Sent: sent,
+		ClientMessage: clientMsg, AIReply: dec.Raw, Sent: false,
 		Status: status, HandledBy: handledByAI(a.ai.Name()),
-		CategoryID: catID,
 		ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
 	}
 	a.fillUsage(in, meter, &tr)
@@ -608,6 +643,150 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	a.record(ch, in)
 	_ = a.track.Commit(ch.ID, lastID)
 	return true
+}
+
+// clientHelpFlow — 2-qadam promti {"client":…,"help":…} qaytaradigan
+// kategoriyalar (buyurtma holati va buyurtmadagi muammo) uchun umumiy oqim:
+//
+//	buyurtma ma'lumotini olish → promtni chaqirish →
+//	client bo'lsa mijozga, help bo'lsa xodimlar guruhiga
+//
+// Tayyor Interaction qaytaradi (uni yozishni chaqiruvchi a.finish orqali
+// qiladi); promt javob bermasa nil qaytadi.
+func (a *app) clientHelpFlow(ctx context.Context, c *client.Client, senderID int64,
+	ch support.Conversation, catKey, lastText, transcript string, dec ai.Decision,
+	delivery, daigou bool, imgURLs []string, tr *trace) *models.Interaction {
+
+	// Raqamlarni asosiy promt ajratadi, lekin faqat suhbat matnida haqiqatan
+	// bor bo'lganlari olinadi — model raqamni o'zidan to'qishi mumkin.
+	nums, invented := dec.NumbersIn(transcript)
+	if len(invented) > 0 {
+		tr.add("⚠️", "Model to'qigan raqamlar tashlandi: %s", strings.Join(invented, ", "))
+	}
+	if len(nums) == 0 {
+		nums = orderNumbers(lastText)
+	}
+	if len(nums) > 0 {
+		tr.add("🔎", "Buyurtma raqamlari (%s) — tekshirilmoqda", strings.Join(nums, ", "))
+	}
+
+	orderInfo := a.lookupOrders(tr, ch, nums, delivery, daigou)
+	switch {
+	case orderInfo == "":
+		tr.add("⚠️", "Buyurtma ma'lumoti topilmadi — model faqat suhbat matniga tayanadi")
+	case a.prompts.Get(models.PromptBlockOrder) == "":
+		tr.add("📋", "Buyurtma ma'lumoti promptga qo'shildi (%d belgi) — block:order prompti yo'q, minimal sarlavha ishlatildi", len(orderInfo))
+	default:
+		tr.add("📋", "Buyurtma ma'lumoti promptga qo'shildi (%d belgi)", len(orderInfo))
+	}
+
+	tr.add("🧾", "%s promti bilan qaror qilinmoqda", catKey)
+	rep, err := a.ai.OrderAnswer(ctx, ai.Request{
+		Transcript:  transcript,
+		CategoryKey: catKey,
+		OrderInfo:   orderInfo,
+		HasImage:    len(imgURLs) > 0,
+	})
+	switch {
+	case err != nil && rep.Raw != "":
+		// Promt JSON qaytarishga sozlanmagan — matn yo'qolmasin: mijozga
+		// yuborilmaydi, butunligicha xodimlarga ketadi.
+		tr.add("⚠️", "%s javobi JSON emas — matn xodimlarga yuboriladi", catKey)
+		rep = ai.OrderReply{Help: rep.Raw, Raw: rep.Raw}
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "    %s xatosi: %v\n", catKey, err)
+		tr.add("⚠️", "%s javobi olinmadi: %v", catKey, err)
+		return nil
+	}
+	fmt.Printf("    📄 %s\n", rep.Raw)
+	tr.add("📄", "%s JSON: %s", catKey, rep.Raw)
+
+	in := &models.Interaction{
+		ClientMessage: lastText, AIReply: rep.Client,
+		HandledBy:  handledByAI(a.ai.Name()),
+		CategoryID: a.categoryID(catKey),
+		ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
+	}
+
+	// client — mijozga. AUTO_REPLY o'chiq bo'lsa yuborilmaydi: javob
+	// dashboardda tasdiqlashni kutadi ("✓ Yuborish" tugmasi).
+	//
+	// in.AIReply da FAQAT mijozga mo'ljallangan matn turadi — admin
+	// tasdiqlaganda aynan shu matn yuboriladi (internal/web/server.go).
+	if rep.Client != "" {
+		fmt.Printf("    🤖 %s\n", rep.Client)
+		switch {
+		case !a.autoReply():
+			tr.add("👁", "AI javob yozdi — dashboardda tasdiqlashingiz kutilmoqda")
+			in.Status = models.StatusAIDraft
+		default:
+			if _, err := support.SendMessage(c, senderID, ch.ID, "agent", rep.Client); err != nil {
+				tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
+				in.Status = models.StatusFailed
+			} else {
+				tr.add("✅", "Javob mijozga yuborildi")
+				in.Sent, in.Status = true, models.StatusAISent
+			}
+		}
+	}
+	// help — xodimlar guruhiga (mijozga emas), shuning uchun tasdiq
+	// so'ralmaydi. Mijozga javob tasdiq kutayotgan bo'lsa, o'sha holat
+	// ustun turadi — aks holda "✓ Yuborish" tugmasi ko'rinmay qoladi.
+	if rep.Help != "" {
+		tr.add("🆘", "Xodimlarga: %s", rep.Help)
+		if msgID, err := a.sendToStaff(ch, lastText, rep.Help, orderInfo, imgURLs, orderLevel, tr); err != nil {
+			if in.Status != models.StatusAIDraft {
+				in.Status = models.StatusFailed
+			}
+		} else {
+			in.EscalationID = &msgID
+			if in.Status != models.StatusAIDraft {
+				in.Status = models.StatusPending
+			}
+		}
+	}
+	// Promt bo'sh javob qaytardi (masalan JSON shartnomasiga sozlanmagan) —
+	// murojaat yo'qolmasin: suhbatni xodimlar guruhiga chiqaramiz.
+	if rep.Empty() {
+		tr.add("⚠️", "%s bo'sh javob qaytardi — murojaat xodimlarga yuborilmoqda", catKey)
+		help := fmt.Sprintf("AI javob yoza olmadi (%s promti bo'sh qaytardi) — suhbatni ko'rib chiqing.", catKey)
+		if msgID, err := a.sendToStaff(ch, lastText, help, orderInfo, imgURLs, orderLevel, tr); err != nil {
+			in.Status = models.StatusFailed
+		} else {
+			in.AIReply = "[" + help + "]"
+			in.Status, in.EscalationID = models.StatusPending, &msgID
+		}
+	}
+	return in
+}
+
+// finish — tayyor yozuvni xarajat va qadamlar bilan to'ldirib tarixga
+// yozadi va suhbatni "ko'rilgan" deb belgilaydi.
+func (a *app) finish(ch support.Conversation, in *models.Interaction,
+	meter *ai.Meter, tr *trace, lastID int64) {
+
+	a.fillUsage(in, meter, tr)
+	in.Steps = tr.String() // xarajat qadami ham tarixga tushsin
+	a.record(ch, in)
+	_ = a.track.Commit(ch.ID, lastID)
+}
+
+// autoReply — AI javobi mijozga darhol yuborilsinmi. Dashboarddagi
+// sozlama ustun; u qo'yilmagan bo'lsa .env dagi AUTO_REPLY ishlatiladi.
+// O'chiq bo'lsa javob "ai_draft" holatida saqlanadi va admin dashboarddan
+// tasdiqlaganda yuboriladi.
+func (a *app) autoReply() bool {
+	return a.set.Bool(settings.AutoReply, a.cfg.AutoReply)
+}
+
+// categoryID — slug bo'yicha kategoriya id'si (dashboarddagi "Kategoriya"
+// ustuni uchun). Topilmasa yoki o'chirilgan bo'lsa nil.
+func (a *app) categoryID(slug string) *uint {
+	cat, err := a.cats.BySlug(slug)
+	if err != nil || !cat.Active {
+		return nil
+	}
+	return &cat.ID
 }
 
 // handledByAI — "kim hal qildi" ustuni uchun (masalan "AI (openai gpt-4o-mini)").
@@ -687,13 +866,22 @@ func orderNumbers(text string) []string { return orders.Tracks(text) }
 //
 // nums — xabardan topilgan buyurtma/track raqamlari (bo'sh bo'lsa mijoz
 // id'si bo'yicha qidiriladi).
-func (a *app) lookupOrders(tr *trace, ch support.Conversation, nums []string) string {
+// delivery/daigou — qaysi manbadan so'rash kerakligi (asosiy promtning
+// dashboard/adminka bayroqlari). Ikkalasi ham false bo'lsa hech narsa
+// so'ralmaydi.
+func (a *app) lookupOrders(tr *trace, ch support.Conversation, nums []string,
+	delivery, daigou bool) string {
+
 	var parts []string
-	if s := a.deliveryOrders(tr, ch, nums); s != "" {
-		parts = append(parts, s)
+	if delivery {
+		if s := a.deliveryOrders(tr, ch, nums); s != "" {
+			parts = append(parts, s)
+		}
 	}
-	if s := a.daigouOrders(tr, ch, nums); s != "" {
-		parts = append(parts, s)
+	if daigou {
+		if s := a.daigouOrders(tr, ch, nums); s != "" {
+			parts = append(parts, s)
+		}
 	}
 	return strings.Join(parts, "\n")
 }
@@ -794,30 +982,24 @@ func (a *app) daigouOrders(tr *trace, ch support.Conversation, nums []string) st
 	return daigou.Summary(list)
 }
 
-// escalate muammoni xodimlar guruhiga yuboradi. Guruhga faqat oxirgi savol
-// emas, butun suhbatdan chiqarilgan umumiy muammo tushuntirishi ketadi.
-func (a *app) escalate(ctx context.Context, ch support.Conversation, question, transcript, orderInfo string,
-	imgURLs []string, meter *ai.Meter, tr *trace) {
+// sendToStaff tayyor matnni xodimlar guruhiga yuboradi va Escalation yozuvini
+// saqlaydi (xodim REPLY qilganda aynan shu yozuv topiladi).
+//
+// Interaction (dashboard tarixi) bu yerda YOZILMAYDI: bitta murojaatda ham
+// mijozga, ham guruhga xabar ketishi mumkin — yozuvni chaqiruvchi bir marta
+// o'zi tuzadi.
+//
+//	question — mijozning oxirgi xabari (xabar tepasida ko'rinadi)
+//	summary  — xodim o'qiydigan izoh ("cat:order" promtining help maydoni)
+//	daraja   — sarlavhadagi shoshilinchlik belgisi
+func (a *app) sendToStaff(ch support.Conversation, question, summary, orderInfo string,
+	imgURLs []string, daraja ai.Daraja, tr *trace) (int64, error) {
+
 	if a.staff == nil {
 		fmt.Fprintf(os.Stderr, "    ⚠️  Eskalatsiya kanali yo'q — xodimlarga yuborilmadi (#%d)\n", ch.ID)
 		tr.add("⚠️", "Eskalatsiya kanali yo'q — xodimlarga yuborilmadi")
-		fail := &models.Interaction{
-			ClientMessage: question, AIReply: "[ESKALATSIYA — kanal yo'q, yuborilmadi]",
-			Status:     models.StatusFailed,
-			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
-		}
-		a.fillUsage(fail, meter, tr)
-		fail.Steps = tr.String()
-		a.record(ch, fail)
-		return
+		return 0, fmt.Errorf("eskalatsiya kanali yo'q")
 	}
-
-	daraja, summary, err := a.ai.Summarize(ctx, transcript, orderInfo)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "    xulosa xatosi:", err)
-		summary = "(xulosa tayyorlanmadi — suhbatni dashboard'dan ko'ring)"
-	}
-	tr.add(daraja.Belgi(), "Muammo darajasi: %s", daraja.Sarlavha())
 
 	// Raqamlar backtick bilan belgilanadi — Telegram'da monospace bo'lib
 	// chiqadi va bosilganda nusxalanadi.
@@ -842,16 +1024,9 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "    telegram yuborish xatosi:", err)
 		tr.add("⚠️", "Telegram'ga yuborishda xato: %v", err)
-		fail := &models.Interaction{
-			ClientMessage: question, AIReply: "[ESKALATSIYA — yuborilmadi: " + err.Error() + "]",
-			Status:     models.StatusFailed,
-			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
-		}
-		a.fillUsage(fail, meter, tr)
-		fail.Steps = tr.String()
-		a.record(ch, fail)
-		return
+		return 0, err
 	}
+
 	var clientID int64
 	if ch.ClientID != nil {
 		clientID = *ch.ClientID
@@ -871,15 +1046,7 @@ func (a *app) escalate(ctx context.Context, ch support.Conversation, question, t
 	}
 	tr.add("📨", "Xodimlar guruhiga yuborildi (tg xabar id %d)", msgID)
 	tr.add("⏳", "Holat: %s", models.StatusLabel(models.StatusPending))
-	in := &models.Interaction{
-		ClientMessage: question,
-		AIReply:       "[" + daraja.Sarlavha() + " — xodimlar guruhiga yuborildi]\n\n" + summary,
-		Status:        models.StatusPending, EscalationID: &msgID,
-		ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
-	}
-	a.fillUsage(in, meter, tr)
-	in.Steps = tr.String()
-	a.record(ch, in)
+	return msgID, nil
 }
 
 // clientIDLabel mijoz id'sini "ID `7235`" ko'rinishida qaytaradi

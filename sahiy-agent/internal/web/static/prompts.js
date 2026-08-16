@@ -3,9 +3,8 @@ const $ = id => document.getElementById(id);
 
 // Kalit → tushunarli nom va izoh.
 const INFO = {
-  base:      ["Asosiy prompt", "Agentning xarakteri va qat'iy qoidalari. Faqat mijozga javob yozishda ishlatiladi. {{DATE}} — bugungi sana."],
-  classify:  ["Router (birinchi prompt)", "Murojaatni kategoriyaga ajratadi. {{CATEGORIES}} o'rniga ro'yxat avtomatik qo'yiladi. Javob JSON: {\"category\":\"...\",\"escalate\":false,\"order\":false} — order:true bo'lsa agent Dashboard'ga GET so'rov yuborib buyurtmani tekshiradi."],
-  summarize: ["Xulosa", "Xodimlar guruhiga yuboriladigan qisqa xulosa."],
+  base:      ["Asosiy prompt", "Murojaatni kategoriyaga ajratadi va JSON qaytaradi: dashboard/adminka (buyurtma holati), incorrect_order (muammo, pul qaytarish), deliver (umumiy savol) yoki category:false. Javob mijozga YUBORILMAYDI — agent unga qarab harakat tanlaydi. {{DATE}} — bugungi sana."],
+  summarize: ["Xulosa (hozircha ishlatilmaydi)", "Guruhga endi cat:order promtining help matni yuboriladi. Bu prompt zaxira sifatida qolgan."],
   'block:order':       ["Blok: buyurtma ma'lumoti", "Tizimdan olingan buyurtmalar javobga qo'shilganda beriladigan ko'rsatma. {{ORDERS}} — buyurtmalar ro'yxati joyi."],
   'block:category':    ["Blok: kategoriya bilimi", "Kategoriya bilimlari qo'shilganda beriladigan ko'rsatma. {{CATEGORY}} — bilim matni joyi."],
   'block:image':       ["Blok: rasm (buyurtmasiz)", "Mijoz rasm yuborgan, lekin tizimdan buyurtma topilmagan holat."],
@@ -14,8 +13,8 @@ const INFO = {
 
 // Bazada bo'lishi SHART bo'lgan promptlar — bittasi yo'q bo'lsa agent
 // ishga tushmaydi (kodda zaxira matn yo'q).
-const REQUIRED = ['base', 'classify', 'summarize'];
-const OPTIONAL = ['block:order', 'block:category', 'block:image', 'block:image_order'];
+const REQUIRED = ['base'];
+const OPTIONAL = ['summarize', 'block:order', 'block:category', 'block:image', 'block:image_order'];
 
 function info(key){
   if(INFO[key]) return INFO[key];
