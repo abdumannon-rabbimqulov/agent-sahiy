@@ -1,11 +1,12 @@
 package models
 
-import (
-	"time"
+import "time"
 
-	"gorm.io/gorm"
-)
-
+// Prompt — bazada saqlanadigan prompt matni. Dashboarddan tahrirlanadi va
+// o'zgarish darhol kuchga kiradi (agent qayta ishga tushirilmaydi).
+//
+// Kalitlar ro'yxati kodda emas, ai paketida (ai.PromptBase, ai.BlockOrder...)
+// — bu yerda faqat saqlash shakli.
 type Prompt struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Key       string    `gorm:"size:100;uniqueIndex;not null" json:"key"`

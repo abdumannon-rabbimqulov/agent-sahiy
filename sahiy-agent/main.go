@@ -80,14 +80,14 @@ type app struct {
 	track     *support.Tracker
 	hist      *store.Store
 	esc       *escalation.Store
-	ord       *orders.Lookup  // buyurtma holati (delivery API — O'zbekistondagi holat)
-	dg        *daigou.Client  // adminka daigou-orders (Xitoy tomoni: yo'lga chiqqan sana)
-	staff     staffChannel    // nil bo'lishi mumkin
-	db        *gorm.DB        // byudjet ogohlantirishi bir marta yuborilishi uchun
-	local     *ollama.Client  // lokal model (AI_PROVIDER=ollama bo'lsa), aks holda nil
-	set       *settings.Store // dashboarddan boshqariladigan sozlamalar
-	prompts   *prompts.Store  // promptlar (bazadan, xotirada keshlangan)
-	cachePath string          // token cache fayli (DataDir ostida)
+	ord       *orders.Lookup   // buyurtma holati (delivery API — O'zbekistondagi holat)
+	dg        *daigou.Client   // adminka daigou-orders (Xitoy tomoni: yo'lga chiqqan sana)
+	staff     staffChannel     // nil bo'lishi mumkin
+	db        *gorm.DB         // byudjet ogohlantirishi bir marta yuborilishi uchun
+	local     *ollama.Client   // lokal model (AI_PROVIDER=ollama bo'lsa), aks holda nil
+	set       *settings.Store  // dashboarddan boshqariladigan sozlamalar
+	prompts   *prompts.Service // promptlar (bazadan, xotirada keshlangan)
+	cachePath string           // token cache fayli (DataDir ostida)
 }
 
 func main() {
@@ -138,26 +138,23 @@ func main() {
 	}
 	// Promptlar: YAGONA manba — Postgres. Kodda ham, faylda ham zaxira
 	// matn yo'q; hammasi dashboarddan (/prompts) boshqariladi.
-	a.prompts = prompts.New(database)
+	a.prompts = prompts.NewService(prompts.NewRepository(database), ai.RequiredKeys)
 	if err := a.prompts.Reload(); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ promptlar bazadan o'qilmadi: %v\n", err)
 		os.Exit(1)
 	}
-	if missing := a.prompts.Missing(models.RequiredPrompts); len(missing) > 0 {
+	if missing := a.prompts.Missing(ai.RequiredKeys); len(missing) > 0 {
 		fmt.Fprintf(os.Stderr, "❌ bazada majburiy promptlar yo'q: %s\n"+
 			"   Dashboard → /prompts bo'limida ularni yozing.\n", strings.Join(missing, ", "))
 		os.Exit(1)
 	}
 	fmt.Printf("📝 %d ta prompt yuklandi (dashboard: /prompts)\n", a.prompts.Len())
-	if opt := a.prompts.Missing(models.OptionalPrompts); len(opt) > 0 {
+	if opt := a.prompts.Missing(ai.OptionalKeys); len(opt) > 0 {
 		fmt.Printf("ℹ️  Ixtiyoriy promptlar yo'q (blok qo'shilmaydi): %s\n", strings.Join(opt, ", "))
 	}
-	// Prompt dashboarddan saqlanganda kesh darhol yangilanadi.
-	models.PromptChanged = func() {
-		if err := a.prompts.Reload(); err != nil {
-			fmt.Fprintln(os.Stderr, "prompt keshi yangilanmadi:", err)
-		}
-	}
+	// Dashboarddan saqlanganda keshni prompts.Service o'zi yangilaydi;
+	// Watch esa boshqa nusxa yoki bazaga to'g'ridan-to'g'ri o'zgartirish
+	// uchun 60 soniyalik zaxira tekshiruv.
 	go a.prompts.Watch(ctx)
 
 	// Sozlamalar: .env dagi qiymat faqat birinchi marta yoziladi, keyin
@@ -632,7 +629,7 @@ func (a *app) clientHelpFlow(ctx context.Context, c *client.Client, senderID int
 	switch {
 	case orderInfo == "":
 		tr.add("⚠️", "Buyurtma ma'lumoti topilmadi — model faqat suhbat matniga tayanadi")
-	case a.prompts.Get(models.PromptBlockOrder) == "":
+	case a.prompts.Get(ai.BlockOrder) == "":
 		tr.add("📋", "Buyurtma ma'lumoti promptga qo'shildi (%d belgi) — block:order prompti yo'q, minimal sarlavha ishlatildi", len(orderInfo))
 	default:
 		tr.add("📋", "Buyurtma ma'lumoti promptga qo'shildi (%d belgi)", len(orderInfo))
@@ -983,10 +980,8 @@ func (a *app) sendToStaff(ch support.Conversation, question, summary, orderInfo 
 		TgMessageID:    msgID,
 		ConversationID: ch.ID,
 		ClientID:       clientID,
-		ClientName:     ch.ClientName,
 		Question:       question,
 		Summary:        summary,
-		Level:          string(daraja),
 		Status:         models.StatusPending,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "    eskalatsiya saqlanmadi:", err)
@@ -1048,7 +1043,6 @@ func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 		_ = a.hist.Append(&models.Interaction{
 			ConversationID: item.ConversationID,
 			ClientID:       item.ClientID,
-			ClientName:     item.ClientName,
 			ClientMessage:  item.Question,
 			AIReply:        text,
 			Sent:           true,
@@ -1105,7 +1099,7 @@ func (a *app) record(ch support.Conversation, in *models.Interaction) {
 	if ch.ClientID != nil {
 		in.ClientID = *ch.ClientID
 	}
-	in.ConversationID, in.ClientName, in.Title = ch.ID, ch.ClientName, ch.Title
+	in.ConversationID, in.Title = ch.ID, ch.Title
 	if in.Status == "" {
 		in.Status = models.StatusAISent
 	}

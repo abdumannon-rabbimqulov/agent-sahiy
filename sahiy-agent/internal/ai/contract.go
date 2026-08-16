@@ -1,3 +1,9 @@
+// Shartnoma: model qaytaradigan JSON'lar va ularni o'qish.
+//
+//	base       → Decision   (murojaat qaysi kategoriyaga tushadi + raqamlar)
+//	cat:order  → OrderReply (mijozga nima yozish, xodimlarga nima yetkazish)
+//
+// Bu yerda birorta prompt matni yo'q — faqat javobning SHAKLI.
 package ai
 
 import (
@@ -167,4 +173,16 @@ func ParseOrderReply(out string) (OrderReply, error) {
 	}
 	r.Client, r.Help = strings.TrimSpace(r.Client), strings.TrimSpace(r.Help)
 	return r, nil
+}
+
+// extractJSON matn ichidan birinchi `{` dan oxirgi `}` gacha bo'lgan bo'lakni
+// qaytaradi. Model JSON atrofiga izoh yoki ```json bloki qo'shsa ham ishlaydi.
+// Topilmasa bo'sh satr.
+func extractJSON(out string) string {
+	s := strings.TrimSpace(out)
+	i, j := strings.Index(s, "{"), strings.LastIndex(s, "}")
+	if i < 0 || j <= i {
+		return ""
+	}
+	return s[i : j+1]
 }

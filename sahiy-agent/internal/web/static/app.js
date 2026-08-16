@@ -181,7 +181,8 @@ function costRow(r){
   const tokens = (r.prompt_tokens||0) + (r.completion_tokens||0);
   const cached = r.cached_tokens ? ` <span class="msg">(${num(r.cached_tokens)})</span>` : '';
   if(costGroup === 'client'){
-    const who = `${esc(r.client_name)}${r.client_id ? ' ' + chip(r.client_id, 'ID ' + r.client_id) : ''}`;
+    // Mijoz nomi endi saqlanmaydi — faqat id ko'rsatiladi.
+    const who = r.client_id ? chip(r.client_id, 'ID ' + r.client_id) : '—';
     return `<tr><td class="w">${who}</td><td>${num(r.conversations)}</td><td>${num(r.replies)}</td>`
          + `<td>${num(r.prompt_tokens)}${cached}</td><td>${num(r.completion_tokens)}</td>`
          + `<td>${num(tokens)}</td><td>${usd(r.cost_usd)}</td><td class="msg">${when(r.last_at)}</td></tr>`;
@@ -190,7 +191,7 @@ function costRow(r){
     const stt = STATUS[r.status] || STATUS.ai_sent;
     const esc9 = r.escalated ? ' <span title="Xodimlar guruhiga chiqqan">🆘</span>' : '';
     return `<tr><td>${chip(r.conversation_id, '#' + r.conversation_id, 'inline')}</td>`
-         + `<td class="w">${esc(r.client_name)}</td>`
+         + `<td class="w">${r.client_id ? chip(r.client_id, 'ID ' + r.client_id) : '—'}</td>`
          + `<td><span class="tag ${stt.cls}">${stt.label}</span>${esc9}</td>`
          + `<td>${num(r.replies)}</td><td>${num(tokens)}</td><td>${usd(r.cost_usd)}</td>`
          + `<td class="msg">${when(r.last_at)}</td></tr>`;

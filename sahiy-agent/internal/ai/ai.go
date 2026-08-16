@@ -18,6 +18,14 @@ const (
 	catPrefix       = "cat:"
 )
 
+// RequiredKeys — bazada bo'lishi SHART bo'lgan promptlar. Bittasi yo'q bo'lsa
+// agent ishga tushmaydi: kodda zaxira matn yo'q, hammasi Postgres'da.
+var RequiredKeys = []string{PromptBase}
+
+// OptionalKeys — bo'lmasa tegishli blok system promptga qo'shilmaydi,
+// agent esa ishlayveradi.
+var OptionalKeys = []string{BlockCategory, BlockOrder, BlockImage, BlockImageOrder}
+
 // Placeholder'lar — bazadagi prompt matni ichida shu belgilar bo'lsa,
 // o'rniga tegishli ma'lumot qo'yiladi. Belgi bo'lmasa ma'lumot prompt
 // oxiriga qo'shiladi (prompt matnini yozgan odam joyini o'zi tanlaydi).
@@ -48,7 +56,7 @@ type Backend interface {
 	Generate(ctx context.Context, system, user string, opt GenOptions) (string, Usage, error)
 }
 
-// Prompts — promptlar manbai (prompts.Store shuni qondiradi). Promptlar
+// Prompts — promptlar manbai (prompts.Service shuni qondiradi). Promptlar
 // bazada yotadi va dashboarddan tahrirlanadi, shuning uchun ular HAR
 // CHAQIRUVDA yangidan o'qiladi — agentni qayta ishga tushirish shart emas.
 type Prompts interface {
@@ -310,16 +318,4 @@ func (d Daraja) Sarlavha() string {
 	default:
 		return "O'RTA"
 	}
-}
-
-// extractJSON matn ichidan birinchi `{` dan oxirgi `}` gacha bo'lgan bo'lakni
-// qaytaradi. Model JSON atrofiga izoh yoki ```json bloki qo'shsa ham ishlaydi.
-// Topilmasa bo'sh satr.
-func extractJSON(out string) string {
-	s := strings.TrimSpace(out)
-	i, j := strings.Index(s, "{"), strings.LastIndex(s, "}")
-	if i < 0 || j <= i {
-		return ""
-	}
-	return s[i : j+1]
 }

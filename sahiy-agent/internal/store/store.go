@@ -22,7 +22,7 @@ func New(db *gorm.DB) *Store {
 
 // Append bitta yozuvni qo'shadi.
 func (s *Store) Append(in *models.Interaction) error {
-	return s.db.Omit("Category").Create(in).Error
+	return s.db.Create(in).Error
 }
 
 // Get bitta yozuvni id bo'yicha qaytaradi.
@@ -64,7 +64,7 @@ func (s *Store) Recent(n int) ([]models.Interaction, error) {
 		n = 100
 	}
 	var out []models.Interaction
-	err := s.db.Preload("Category").Order("id desc").Limit(n).Find(&out).Error
+	err := s.db.Order("id desc").Limit(n).Find(&out).Error
 	return out, err
 }
 
@@ -181,7 +181,6 @@ func (s *Store) Daily(days int) ([]DailyCost, error) {
 // ClientCost — bitta mijozga ketgan AI xarajati (barcha suhbatlari bo'yicha).
 type ClientCost struct {
 	ClientID         int64     `json:"client_id"`
-	ClientName       string    `json:"client_name"`
 	Conversations    int       `json:"conversations"`
 	Replies          int       `json:"replies"`
 	AICalls          int       `json:"ai_calls"`
@@ -198,7 +197,6 @@ func (s *Store) ByClient(days, limit int, sort string) ([]ClientCost, error) {
 	var out []ClientCost
 	q := withPeriod(s.db.Model(&models.Interaction{}), days)
 	err := q.Select(`client_id,
-		        COALESCE(NULLIF((array_agg(client_name ORDER BY created DESC))[1], ''), '—') AS client_name,
 		        COUNT(DISTINCT conversation_id) AS conversations,
 		        COUNT(*) AS replies,
 		        COALESCE(SUM(ai_calls), 0) AS ai_calls,
@@ -217,7 +215,6 @@ func (s *Store) ByClient(days, limit int, sort string) ([]ClientCost, error) {
 type ConversationCost struct {
 	ConversationID   int64     `json:"conversation_id"`
 	ClientID         int64     `json:"client_id"`
-	ClientName       string    `json:"client_name"`
 	Title            string    `json:"title"`
 	Replies          int       `json:"replies"`
 	AICalls          int       `json:"ai_calls"`
@@ -237,7 +234,6 @@ func (s *Store) ByConversation(days, limit int, sort string) ([]ConversationCost
 	q := withPeriod(s.db.Model(&models.Interaction{}), days)
 	err := q.Select(`conversation_id,
 		        MAX(client_id) AS client_id,
-		        COALESCE(NULLIF((array_agg(client_name ORDER BY created DESC))[1], ''), '—') AS client_name,
 		        COALESCE((array_agg(title ORDER BY created DESC))[1], '') AS title,
 		        COUNT(*) AS replies,
 		        COALESCE(SUM(ai_calls), 0) AS ai_calls,

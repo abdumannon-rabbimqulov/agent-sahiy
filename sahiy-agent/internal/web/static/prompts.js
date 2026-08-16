@@ -48,7 +48,6 @@ function render(){
         <div>
           <b>${esc(title)}</b> <span class="cp inline">${esc(p.key)}</span>
           <span class="tag ${p.enabled ? 'sent' : 'nosent'}">${p.enabled ? 'yoqilgan' : "o'chiq"}</span>
-          <span class="tag cat">v${p.version}</span>
           <div class="msg" style="margin-top:4px">${esc(hint)}</div>
         </div>
         <div class="msg" data-tok>≈ ${num(tok(p.content))} token</div>
@@ -56,14 +55,12 @@ function render(){
       <textarea name="content" rows="10">${esc(p.content)}</textarea>
       <div class="row">
         <button type="submit">Saqlash</button>
-        <button type="button" class="ghost" data-hist>Tarix</button>
         <button type="button" class="ghost" data-rename>Kalitni o'zgartirish</button>
         ${required ? '' : '<button type="button" class="ghost" data-del>O\'chirish</button>'}
         <label class="row" style="gap:6px;margin-left:auto">
           <input type="checkbox" name="enabled" ${p.enabled ? 'checked' : ''}> yoqilgan
         </label>
       </div>
-      <div class="hist" hidden></div>
     </form>`;
   }).join('') || '<div class="msg">Prompt yo\'q — quyidagi shakl orqali qo\'shing.</div>';
 
@@ -121,53 +118,26 @@ document.addEventListener('submit', async e => {
   btn.disabled = false;
 });
 
-// Tarix · rollback · kalitni o'zgartirish · o'chirish.
+// Kalitni o'zgartirish · o'chirish.
 document.addEventListener('click', async e => {
   const form = e.target.closest('form[data-key]');
   if(!form) return;
   const key = form.dataset.key;
 
-  // Tarixni ochish/yopish.
-  if(e.target.closest('[data-hist]')){
-    const box = form.querySelector('.hist');
-    if(!box.hidden){ box.hidden = true; return; }
-    try{
-      const h = await (await fetch('/api/prompt-history/' + encodeURIComponent(key))).json() || [];
-      box.innerHTML = h.length ? h.map(x => `
-        <div class="row hist-row">
-          <span class="tag cat">v${x.version}</span>
-          <span class="msg">${new Date(x.changed_at).toLocaleString('uz')} · ≈${num(tok(x.content))} token</span>
-          <button type="button" class="ghost" data-roll="${x.version}">Qaytarish</button>
-          <pre class="content">${esc(x.content.slice(0, 400))}${x.content.length > 400 ? '…' : ''}</pre>
-        </div>`).join('') : '<div class="msg">Tarix bo\'sh — hali tahrirlanmagan.</div>';
-      box.hidden = false;
-    }catch(err){ $('err').textContent = 'Tarix olinmadi: ' + err.message; }
-    return;
-  }
-
-  // Eski versiyaga qaytarish.
-  const roll = e.target.closest('[data-roll]');
-  if(roll){
-    if(!confirm(`v${roll.dataset.roll} ga qaytarilsinmi? Hozirgi matn tarixda saqlanadi.`)) return;
-    await call(`/api/prompt-rollback/${encodeURIComponent(key)}?version=${roll.dataset.roll}`,
-      {method: 'POST'}, 'Qaytarilmadi');
-    return;
-  }
-
-  // Kalitni o'zgartirish — tarix yozuvlari ham ko'chadi.
+  // Kalitni o'zgartirish — yangi kalit PUT tanasida yuboriladi.
   if(e.target.closest('[data-rename]')){
     const next = prompt(`"${key}" kalitini nimaga o'zgartiramiz?`, key);
     if(next === null) return;
     const val = next.trim();
     if(!val || val === key) return;
-    await call('/api/prompt-rename/' + encodeURIComponent(key),
-      jsonBody('POST', {key: val}), "Kalit o'zgartirilmadi");
+    await call('/api/prompts/' + encodeURIComponent(key),
+      jsonBody('PUT', {key: val}), "Kalit o'zgartirilmadi");
     return;
   }
 
-  // O'chirish — prompt ham, uning butun tarixi ham.
+  // O'chirish.
   if(e.target.closest('[data-del]')){
-    if(!confirm(`"${key}" prompti va uning butun tarixi o'chiriladi. Davom etamizmi?`)) return;
+    if(!confirm(`"${key}" prompti o'chiriladi. Davom etamizmi?`)) return;
     await call('/api/prompts/' + encodeURIComponent(key), {method: 'DELETE'}, "O'chirilmadi");
   }
 });
@@ -178,7 +148,7 @@ $('add').addEventListener('submit', async e => {
   const key = $('newkey').value.trim();
   const content = $('newcontent').value;
   if(!key || !content.trim()){ $('err').textContent = "Kalit va matn bo'sh bo'lmasligi kerak."; return; }
-  if(await call('/api/prompts/' + encodeURIComponent(key), jsonBody('PUT', {content, enabled: true}), "Qo'shilmadi")){
+  if(await call('/api/prompts', jsonBody('POST', {key, content, enabled: true}), "Qo'shilmadi")){
     $('newkey').value = ''; $('newcontent').value = '';
   }
 });

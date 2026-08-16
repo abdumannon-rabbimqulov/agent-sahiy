@@ -48,13 +48,16 @@ func StatusLabel(status string) string {
 
 // Interaction — AI (yoki xodim) bir marta kim bilan qanday gaplashgani.
 type Interaction struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	CreatedAt     time.Time `gorm:"column:created;index" json:"time"`
-	ClientID      int64     `gorm:"index" json:"client_id"`
-	Title         string    `gorm:"size:500" json:"title"`
-	ClientMessage string    `gorm:"type:text" json:"client_message"`
-	AIReply       string    `gorm:"type:text" json:"ai_reply"`
-	Sent          bool      `gorm:"not null;default:false" json:"sent"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `gorm:"column:created;index" json:"time"`
+	// ConversationID — suhbat id'si. Dashboarddan tasdiqlangan javob aynan
+	// shu suhbatga yuboriladi, xarajat hisoboti ham shu bo'yicha guruhlanadi.
+	ConversationID int64  `gorm:"index" json:"conversation_id"`
+	ClientID       int64  `gorm:"index" json:"client_id"`
+	Title          string `gorm:"size:500" json:"title"`
+	ClientMessage  string `gorm:"type:text" json:"client_message"`
+	AIReply        string `gorm:"type:text" json:"ai_reply"`
+	Sent           bool   `gorm:"not null;default:false" json:"sent"`
 	// Steps — agent shu javobga qanday ketma-ketlikda kelgani
 	// (nechta xabar o'qidi, qaysi kategoriya, qaysi buyurtmani topdi...).
 	Steps string `gorm:"type:text" json:"steps"`
@@ -84,6 +87,8 @@ type Escalation struct {
 	TgMessageID    int64 `gorm:"primaryKey;autoIncrement:false" json:"tg_message_id"`
 	ConversationID int64 `gorm:"index" json:"conversation_id"`
 	ClientID       int64 `gorm:"index" json:"client_id"`
+	// Question — mijozning asl savoli (xodim javob berganda tarixga yoziladi).
+	Question string `gorm:"type:text" json:"question"`
 	// Summary — AI chiqargan xulosa (xodim guruhda shuni o'qiydi).
 	Summary string `gorm:"type:text" json:"summary"`
 
