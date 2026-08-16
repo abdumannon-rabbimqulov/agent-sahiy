@@ -226,30 +226,67 @@ func isOrder(m Order) bool {
 	return false
 }
 
-// row — Summary'da chiqadigan bitta qator.
+// row — Summary'da chiqadigan bitta qator. key/paths bo'yicha qiymat
+// olinadi; hisoblanadigan qatorlar uchun fn ishlatiladi.
 type row struct {
 	label string
 	key   string
 	paths []string
+	fn    func(Order) string
 }
 
-// rows — AI uchun kerakli maydonlar. Terminal chiqishi bilan bir xil manba:
-// bu yerda nima bo'lsa, `cmd/orders` ham shuni ko'rsatadi.
+// rows — javobga qo'shiladigan maydonlar, kelishilgan tartibda. Terminal
+// chiqishi bilan bir xil manba: bu yerda nima bo'lsa, `cmd/orders` ham,
+// AI ham shuni ko'radi. Yo'llar haqiqiy javobdan olingan (aniq yo'l topilmasa
+// Pick kalit bo'yicha chuqur qidiruvga o'tadi).
 var rows = []row{
-	{"Holat", "status", nil},
-	{"Trek raqami", "express_num", []string{"express.express_num"}},
-	{"Posilka", "package_name", []string{"express.package.package_name"}},
-	{"Soni", "quantity", []string{"express.package.qty"}},
-	{"Yetkazish yo'nalishi", "express_line", nil},
-	{"Qabul qiluvchi", "receiver_name", []string{"address.receiver_name"}},
-	{"Viloyat", "province", []string{"address.province"}},
-	{"Hudud", "area", []string{"address.area"}},
-	{"Shahar/tuman", "sub_area", []string{"address.sub_area"}},
-	{"Buyurtma yaratilgan", "created_at", nil},
-	{"To'lov vaqti", "paid_at", nil},
-	{"Yo'lga chiqqan", "shipped_at", []string{"express.package.order.shipped_at"}},
-	{"Qadoqlangan", "packed_at", []string{"express.package.order.packed_at"}},
-	{"Omborga kirgan", "in_storage_at", []string{"express.package.in_storage_at"}},
+	{label: "Profil ID", key: "user_id"},
+	{label: "Holat", key: "status", fn: statusText},
+	{label: "Summa", key: "amount", fn: amountText},
+	{label: "Qabul qiluvchi", key: "receiver_name", paths: []string{"address.receiver_name"}},
+	{label: "Viloyat", key: "province", paths: []string{"address.province"}},
+	{label: "Hudud", key: "area", paths: []string{"address.area"}},
+	{label: "Shahar/tuman", key: "sub_area", paths: []string{"address.sub_area"}},
+	{label: "Ko'cha va uy", key: "street", paths: []string{"address.street", "address.address"}},
+	{label: "Yetkazish yo'nalishi", key: "express_line"},
+	{label: "Trek raqami", key: "express_num", paths: []string{"express.express_num"}},
+	{label: "Posilka", key: "package_name", paths: []string{"express.package.package_name"}},
+	{label: "Soni", key: "quantity", paths: []string{"express.package.qty"}},
+	{label: "Buyurtma yaratilgan", key: "created_at"},
+	{label: "Yo'lga chiqqan", key: "shipped_at", paths: []string{"express.package.order.shipped_at"}},
+	{label: "Qadoqlangan", key: "packed_at", paths: []string{"express.package.order.packed_at"}},
+	{label: "Omborga kirgan", key: "in_storage_at", paths: []string{"express.package.in_storage_at"}},
+	{label: "Mijoz turi", fn: ClientType},
+}
+
+// statusNames — buyurtmaning raqamli holati. Javobdagi status_name xitoycha
+// ("交易完成"), shuning uchun o'zbekcha nom shu yerda saqlanadi. Ro'yxatda
+// yo'q kod raqam holida ko'rsatiladi — yangi kod uchrasa shu yerga qo'shing.
+var statusNames = map[string]string{
+	"6":  "Tranzaksiya yakunlangan", // 交易完成
+	"10": "Bekor qilingan",          // 已取消
+}
+
+// statusText — "6 (Tranzaksiya yakunlangan)" ko'rinishi. Raqamning o'zi
+// AI uchun ma'nosiz, shuning uchun nomi ham qo'shiladi.
+func statusText(o Order) string {
+	v := Pick(o, "status")
+	if v == "" {
+		return ""
+	}
+	if name, ok := statusNames[v]; ok {
+		return v + " (" + name + ")"
+	}
+	return v
+}
+
+// amountText — summa va valyuta birga ("27 CNY").
+func amountText(o Order) string {
+	amount := Pick(o, "amount")
+	if amount == "" {
+		return ""
+	}
+	return strings.TrimSpace(amount + " " + Pick(o, "currency"))
 }
 
 // Summary buyurtmalarni AI o'qiydigan qisqa matnga aylantiradi.
@@ -271,15 +308,15 @@ func Summary(list []Order) string {
 		}
 		fmt.Fprintf(&b, "\n• Buyurtma %s\n", sn)
 		for _, r := range rows {
-			if v := Pick(o, r.key, r.paths...); v != "" {
+			v := ""
+			if r.fn != nil {
+				v = r.fn(o)
+			} else {
+				v = Pick(o, r.key, r.paths...)
+			}
+			if v != "" {
 				fmt.Fprintf(&b, "  %s: %s\n", r.label, v)
 			}
-		}
-		if amount := Pick(o, "amount"); amount != "" {
-			fmt.Fprintf(&b, "  Summa: %s %s\n", amount, Pick(o, "currency"))
-		}
-		if ct := ClientType(o); ct != "" {
-			fmt.Fprintf(&b, "  Mijoz turi: %s\n", ct)
 		}
 	}
 	if len(list) > len(shown) {

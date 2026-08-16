@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// Prompt kalitlari (models paketidagilar bilan bir xil — ai paketi models'ga
-// bog'lanmasligi uchun shu yerda ham e'lon qilingan).
 const (
 	PromptBase      = "base"
 	BlockCategory   = "block:category"

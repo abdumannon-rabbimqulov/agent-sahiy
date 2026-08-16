@@ -1,11 +1,3 @@
-// Command orders — adminka daigou-orders ro'yxatini o'qib, terminalga chiqaradi.
-// Butun HTTP/parsing mantig'i internal/daigou paketida — agent ham aynan
-// shu koddan foydalanadi, shuning uchun terminal chiqishi va AI ko'radigan
-// ma'lumot bir manbadan keladi.
-//
-//	go run ./cmd/orders -user_id 7988331 -status 6
-//	go run ./cmd/orders -order_sn DG60605678
-//	go run ./cmd/orders -raw            // xom JSON javobni ko'rsatadi
 package main
 
 import (
