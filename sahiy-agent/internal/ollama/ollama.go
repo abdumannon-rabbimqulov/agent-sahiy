@@ -1,15 +1,3 @@
-// Package ollama — ai.Backend'ning lokal model uchun amalga oshirilishi
-// (Ollama, masalan llama3.1:8b). Promptlar bu yerda emas, internal/ai da.
-//
-// Lokal model bepul va ma'lumot tashqariga chiqmaydi, lekin ikki narsaga
-// e'tibor kerak:
-//
-//   - RAM: Ollama modelni so'rov kelganda yuklaydi va KeepAlive muddati
-//     tugagach bo'shatadi. KeepAlive="0" — har javobdan keyin darhol
-//     bo'shatadi (RAM eng kam, lekin keyingi so'rov sekin boshlanadi).
-//   - Kontekst: NumCtx dan oshgan promptni Ollama JIMGINA kesib tashlaydi.
-//     Shuning uchun Generate prompt hajmini tekshiradi va kontekst to'lgani
-//     haqida ErrContextFull qaytaradi (javob baribir beriladi).
 package ollama
 
 import (

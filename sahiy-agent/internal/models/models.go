@@ -48,24 +48,20 @@ func StatusLabel(status string) string {
 
 // Interaction — AI (yoki xodim) bir marta kim bilan qanday gaplashgani.
 type Interaction struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	CreatedAt      time.Time `gorm:"column:created;index" json:"time"`
-	ConversationID int64     `gorm:"index" json:"conversation_id"`
-	ClientID       int64     `gorm:"index" json:"client_id"`
-	ClientName     string    `gorm:"size:200" json:"client_name"`
-	Title          string    `gorm:"size:500" json:"title"`
-	ClientMessage  string    `gorm:"type:text" json:"client_message"`
-	AIReply        string    `gorm:"type:text" json:"ai_reply"`
-	Sent           bool      `gorm:"not null;default:false" json:"sent"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt     time.Time `gorm:"column:created;index" json:"time"`
+	ClientID      int64     `gorm:"index" json:"client_id"`
+	Title         string    `gorm:"size:500" json:"title"`
+	ClientMessage string    `gorm:"type:text" json:"client_message"`
+	AIReply       string    `gorm:"type:text" json:"ai_reply"`
+	Sent          bool      `gorm:"not null;default:false" json:"sent"`
 	// Steps — agent shu javobga qanday ketma-ketlikda kelgani
 	// (nechta xabar o'qidi, qaysi kategoriya, qaysi buyurtmani topdi...).
 	Steps string `gorm:"type:text" json:"steps"`
-	// Rasm tahlil qilinmaydi (token tejash) — faqat borligi belgilanadi va
-	// dashboardda "rasm bor" deb ko'rsatiladi.
-	ImageCount int    `gorm:"not null;default:0" json:"image_count"`
-	ImageURLs  string `gorm:"type:text" json:"image_urls"` // qator bilan ajratilgan asl havolalar
 
-	// --- AI xarajati: provayder qaytargan aniq token soni va uning narxi ---
+	ImageCount int    `gorm:"not null;default:0" json:"image_count"`
+	ImageURLs  string `gorm:"type:text" json:"image_urls"`
+
 	Model            string  `gorm:"size:60" json:"model"`
 	PromptTokens     int     `gorm:"not null;default:0" json:"prompt_tokens"`
 	CachedTokens     int     `gorm:"not null;default:0" json:"cached_tokens"`
@@ -85,15 +81,11 @@ type Interaction struct {
 
 // Escalation — xodimlar guruhiga yuborilgan bitta muammo va uning holati.
 type Escalation struct {
-	TgMessageID    int64  `gorm:"primaryKey;autoIncrement:false" json:"tg_message_id"`
-	ConversationID int64  `gorm:"index" json:"conversation_id"`
-	ClientID       int64  `gorm:"index" json:"client_id"`
-	ClientName     string `gorm:"size:200" json:"client_name"`
-	Question       string `gorm:"type:text" json:"question"`
+	TgMessageID    int64 `gorm:"primaryKey;autoIncrement:false" json:"tg_message_id"`
+	ConversationID int64 `gorm:"index" json:"conversation_id"`
+	ClientID       int64 `gorm:"index" json:"client_id"`
 	// Summary — AI chiqargan xulosa (xodim guruhda shuni o'qiydi).
 	Summary string `gorm:"type:text" json:"summary"`
-	// Level — shoshilinchlik darajasi: yuqori | o'rta | past.
-	Level string `gorm:"size:20" json:"level"`
 
 	Status     string     `gorm:"size:20;index;not null;default:'pending'" json:"status"`
 	Answer     string     `gorm:"type:text" json:"answer"`
