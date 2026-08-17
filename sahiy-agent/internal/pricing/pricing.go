@@ -48,6 +48,17 @@ func MarkFree(model string) {
 	}
 }
 
+// SetModel bitta model narxini o'rnatadi (.env dagi GROQ_PRICE_* kabi).
+// Global Set() dan farqi: faqat shu modelga tegishli, ya'ni lokal model
+// bepulligicha qoladi. Barcha qiymatlar nol bo'lsa hech narsa qilinmaydi.
+func SetModel(model string, in, out float64) {
+	name := strings.ToLower(strings.TrimSpace(model))
+	if name == "" || (in == 0 && out == 0) {
+		return
+	}
+	table[name] = Price{In: in, Out: out}
+}
+
 // Free — narxi nol, ya'ni lokal (bepul) modelmi.
 func (p Price) Free() bool { return p.In == 0 && p.CachedIn == 0 && p.Out == 0 }
 

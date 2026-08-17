@@ -23,6 +23,7 @@ import (
 	"sahiy-agent/internal/daigou"
 	"sahiy-agent/internal/db"
 	"sahiy-agent/internal/escalation"
+	"sahiy-agent/internal/groq"
 	"sahiy-agent/internal/models"
 	"sahiy-agent/internal/ollama"
 	"sahiy-agent/internal/orders"
@@ -33,6 +34,7 @@ import (
 	"sahiy-agent/internal/store"
 	"sahiy-agent/internal/support"
 	"sahiy-agent/internal/tgtext"
+	"sahiy-agent/internal/throttle"
 	"sahiy-agent/internal/userbot"
 	"sahiy-agent/internal/web"
 )
@@ -80,14 +82,17 @@ type app struct {
 	track     *support.Tracker
 	hist      *store.Store
 	esc       *escalation.Store
-	ord       *orders.Lookup   // buyurtma holati (delivery API — O'zbekistondagi holat)
-	dg        *daigou.Client   // adminka daigou-orders (Xitoy tomoni: yo'lga chiqqan sana)
-	staff     staffChannel     // nil bo'lishi mumkin
-	db        *gorm.DB         // byudjet ogohlantirishi bir marta yuborilishi uchun
-	local     *ollama.Client   // lokal model (AI_PROVIDER=ollama bo'lsa), aks holda nil
-	set       *settings.Store  // dashboarddan boshqariladigan sozlamalar
-	prompts   *prompts.Service // promptlar (bazadan, xotirada keshlangan)
-	cachePath string           // token cache fayli (DataDir ostida)
+	ord       *orders.Lookup    // buyurtma holati (delivery API — O'zbekistondagi holat)
+	dg        *daigou.Client    // adminka daigou-orders (Xitoy tomoni: yo'lga chiqqan sana)
+	staff     staffChannel      // nil bo'lishi mumkin
+	db        *gorm.DB          // byudjet ogohlantirishi bir marta yuborilishi uchun
+	send      sendFunc          // mijozga xabar yuborish (testda almashtiriladi)
+	limit     *throttle.Limiter // tezlik chegarasi (2 daqiqada N ta suhbat)
+	local     *ollama.Client    // lokal model (asosiy)
+	cloud     *groq.Client      // zaxira bulut modeli (GROQ_API_KEY bo'lsa), aks holda nil
+	set       *settings.Store   // dashboarddan boshqariladigan sozlamalar
+	prompts   *prompts.Service  // promptlar (bazadan, xotirada keshlangan)
+	cachePath string            // token cache fayli (DataDir ostida)
 }
 
 func main() {
@@ -139,6 +144,14 @@ func main() {
 	// Promptlar: YAGONA manba — Postgres. Kodda ham, faylda ham zaxira
 	// matn yo'q; hammasi dashboarddan (/prompts) boshqariladi.
 	a.prompts = prompts.NewService(prompts.NewRepository(database), ai.RequiredKeys)
+	// Kalitlar va placeholder'lar ro'yxati faqat shu yerda — dashboard uni
+	// API orqali oladi, ya'ni frontendda takrorlanmaydi.
+	a.prompts.SetMeta(prompts.Meta{
+		Required:     ai.RequiredKeys,
+		Optional:     ai.OptionalKeys,
+		Placeholders: ai.ExpectedPlaceholders,
+		Known:        ai.KnownPlaceholders,
+	})
 	if err := a.prompts.Reload(); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ promptlar bazadan o'qilmadi: %v\n", err)
 		os.Exit(1)
@@ -166,8 +179,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sozlama xatosi:", err)
 	}
 
+	a.send = support.SendMessage
+	a.limit = throttle.New(cfg.RateLimit, cfg.RateWindow)
 	a.local = newBackend(cfg)
-	a.ai = ai.New(a.local, a.prompts)
+	a.cloud = newCloudBackend(cfg)
+	// Lokal model javob bermasa (o'chiq, RAM yetmadi, timeout) — zaxiraga
+	// o'tiladi. Zaxira sozlanmagan bo'lsa NewFallback lokalning o'zini
+	// qaytaradi, ya'ni hech narsa o'zgarmaydi.
+	var backend ai.Backend = a.local
+	if a.cloud != nil {
+		backend = ai.NewFallback(a.local, a.cloud)
+	}
+	a.ai = ai.New(backend, a.prompts)
 
 	// Ikkinchi sayt (service API) — buyurtma holatini id/track bo'yicha ko'rish.
 	svc := service.New(cfg.ServiceBaseURL, service.LoginRequest{
@@ -206,6 +229,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "⚠️  %v\n", err)
 		}
 	}
+	if a.cloud != nil {
+		pricing.SetModel(a.cloud.Model, cfg.GroqPriceIn, cfg.GroqPriceOut)
+		fmt.Printf("☁️  Zaxira model: %s (lokal model ishlamaganda ishlaydi)\n", a.cloud.Model)
+		if err := a.cloud.Check(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Zaxira model tekshiruvi: %v\n", err)
+		}
+	} else {
+		fmt.Println("ℹ️  Zaxira model o'chiq — .env da GROQ_API_KEY yo'q")
+	}
 	if a.ai.Ready() {
 		fmt.Printf("🧠 AI: %s\n", a.ai.Name())
 		if _, ok := pricing.Lookup(a.modelName()); ok {
@@ -233,6 +265,7 @@ func main() {
 		AdminPass: cfg.AdminPass,
 		Dev:       cfg.WebDev,
 		SendReply: a.sendReply, // dashboarddan tasdiqlangan javob
+		TryPrompt: a.tryPrompt, // /prompts dagi "Sinab ko'rish"
 	})
 	if cfg.AdminUser == "" || cfg.AdminPass == "" {
 		fmt.Println("⚠️  Dashboard parolsiz ochiq — .env da ADMIN_USER/ADMIN_PASS o'rnating")
@@ -251,6 +284,11 @@ func main() {
 		fmt.Printf("📊 Tarix: %s\n", st)
 	}
 	fmt.Printf("🚀 Agent ishga tushdi. Har %s da tekshiradi.\n", pollInterval)
+	if a.limit.Off() {
+		fmt.Println("⚠️  Tezlik chegarasi o'chiq — suhbatlar imkon qadar tez qayta ishlanadi")
+	} else {
+		fmt.Printf("🐢 Tezlik chegarasi: %s suhbat (RATE_LIMIT_COUNT / RATE_LIMIT_WINDOW_SEC)\n", a.limit)
+	}
 
 	a.runCycle(ctx)
 	ticker := time.NewTicker(pollInterval)
@@ -278,6 +316,22 @@ func newBackend(cfg *config.Config) *ollama.Client {
 		MaxTokens:   cfg.OllamaMaxTokens,
 		Temperature: cfg.OllamaTemperature,
 		Timeout:     cfg.OllamaTimeout,
+	})
+}
+
+// newCloudBackend — zaxira (Groq). GROQ_API_KEY bo'lmasa nil qaytadi va
+// agent avvalgidek faqat lokal modelda ishlaydi.
+func newCloudBackend(cfg *config.Config) *groq.Client {
+	if strings.TrimSpace(cfg.GroqAPIKey) == "" {
+		return nil
+	}
+	return groq.New(cfg.GroqAPIKey, groq.Options{
+		BaseURL:         cfg.GroqBaseURL,
+		Model:           cfg.GroqModel,
+		MaxTokens:       cfg.GroqMaxTokens,
+		Temperature:     cfg.GroqTemperature,
+		Timeout:         cfg.GroqTimeout,
+		ReasoningEffort: cfg.GroqReasoning,
 	})
 }
 
@@ -364,9 +418,20 @@ func (a *app) runCycle(ctx context.Context) {
 	}
 
 	handled := 0
-	for _, ch := range fresh {
+	for i, ch := range fresh {
 		if ctx.Err() != nil {
 			return
+		}
+		// Tezlik chegarasi: oyna to'lgan bo'lsa qolgan suhbatlarga
+		// TEGILMAYDI. Bu xavfsiz — track.Commit faqat qayta ishlangan
+		// suhbat uchun yoziladi, shuning uchun ular keyingi tsiklda
+		// yana nomzod bo'lib qaytadi. Chegara handleChat dan oldin
+		// turibdi: sekinlashtirilgan suhbatga AI ham, "o'qildi" belgisi
+		// ham ketmaydi.
+		if !a.limit.Allow() {
+			fmt.Printf("[%s] 🐢 tezlik chegarasi (%s) — %d ta suhbat keyingi tsiklga qoldi, %s dan keyin davom etadi\n",
+				ts, a.limit, len(fresh)-i, a.limit.Until().Round(time.Second))
+			break
 		}
 		if a.handleChat(ctx, c, senderID, ch) {
 			handled++
@@ -497,8 +562,15 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	}
 
 	// Qaror tayyor — endi xabarlarni o'qilgan deb belgilaymiz.
-	if ids := support.ClientMessageIDs(msgs); len(ids) > 0 {
-		_ = support.MarkRead(c, ids)
+	//
+	// FAQAT avto-javob yoqilganda: "o'qildi" ham mijozga ketadigan belgi.
+	// Avto-javob o'chiq bo'lsa javob admin tasdig'ini kutadi, ya'ni mijoz
+	// uchun murojaat hali ko'rilmagan — "o'qildi" qo'yish uni chalg'itadi
+	// va javob kelmayotgani yanada g'alati ko'rinadi.
+	if a.autoReply() {
+		if ids := support.ClientMessageIDs(msgs); len(ids) > 0 {
+			_ = support.MarkRead(c, ids)
+		}
 	}
 
 	fmt.Printf("    🧠 %s | order_sn=%v express_num=%v\n", dec.Label(), dec.OrderSN, dec.ExpressNum)
@@ -559,19 +631,7 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 			HandledBy:  handledByAI(a.ai.Name()),
 			ImageCount: len(imgURLs), ImageURLs: strings.Join(imgURLs, "\n"),
 		}
-		switch {
-		case !a.autoReply():
-			tr.add("👁", "AI javob yozdi — dashboardda tasdiqlashingiz kutilmoqda")
-			in.Status = models.StatusAIDraft
-		default:
-			if _, err := support.SendMessage(c, senderID, ch.ID, "agent", reply); err != nil {
-				tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
-				in.Status = models.StatusFailed
-			} else {
-				tr.add("✅", "Javob mijozga yuborildi")
-				in.Sent, in.Status = true, models.StatusAISent
-			}
-		}
+		a.deliverToClient(c, senderID, ch.ID, reply, in, &tr)
 		a.finish(ch, in, meter, &tr, lastID)
 		return true
 
@@ -598,6 +658,35 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	a.record(ch, in)
 	_ = a.track.Commit(ch.ID, lastID)
 	return true
+}
+
+// sendFunc — mijozga xabar yuborish imzosi (support.SendMessage).
+// Alohida tur qilib olingan: testda almashtirib, avto-javob o'chiq
+// bo'lganda YUBORILMASLIGINI tekshirish uchun.
+type sendFunc func(c *client.Client, senderID, conversationID int64, role, text string) ([]byte, error)
+
+// deliverToClient — AI yozgan matnni mijozga yuboradi YOKI admin tasdig'ini
+// kutishga qoldiradi.
+//
+// Bu loyihadagi eng muhim qoida va u FAQAT shu yerda yozilgan: avto-javob
+// o'chiq bo'lsa mijozga hech narsa ketmaydi, javob dashboardda "ai_draft"
+// bo'lib turadi va admin "✓ Yuborish" tugmasini bosgandagina yuboriladi
+// (sendReply). Qoida ikkita joyda takrorlanib turgan edi — bittasini
+// o'zgartirib, ikkinchisini unutish xavfi bor edi.
+func (a *app) deliverToClient(c *client.Client, senderID, convID int64,
+	text string, in *models.Interaction, tr *trace) {
+	if !a.autoReply() {
+		tr.add("👁", "AI javob yozdi — dashboardda tasdiqlashingiz kutilmoqda")
+		in.Status = models.StatusAIDraft
+		return
+	}
+	if _, err := a.send(c, senderID, convID, "agent", text); err != nil {
+		tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
+		in.Status = models.StatusFailed
+		return
+	}
+	tr.add("✅", "Javob mijozga yuborildi")
+	in.Sent, in.Status = true, models.StatusAISent
 }
 
 // clientHelpFlow — 2-qadam promti {"client":…,"help":…} qaytaradigan
@@ -669,19 +758,7 @@ func (a *app) clientHelpFlow(ctx context.Context, c *client.Client, senderID int
 	// tasdiqlaganda aynan shu matn yuboriladi (internal/web/server.go).
 	if rep.Client != "" {
 		fmt.Printf("    🤖 %s\n", rep.Client)
-		switch {
-		case !a.autoReply():
-			tr.add("👁", "AI javob yozdi — dashboardda tasdiqlashingiz kutilmoqda")
-			in.Status = models.StatusAIDraft
-		default:
-			if _, err := support.SendMessage(c, senderID, ch.ID, "agent", rep.Client); err != nil {
-				tr.add("⚠️", "Javob yuborilmadi (xato: %v)", err)
-				in.Status = models.StatusFailed
-			} else {
-				tr.add("✅", "Javob mijozga yuborildi")
-				in.Sent, in.Status = true, models.StatusAISent
-			}
-		}
+		a.deliverToClient(c, senderID, ch.ID, rep.Client, in, tr)
 	}
 	// help — xodimlar guruhiga (mijozga emas), shuning uchun tasdiq
 	// so'ralmaydi. Mijozga javob tasdiq kutayotgan bo'lsa, o'sha holat
@@ -791,7 +868,7 @@ func (a *app) sendReply(conversationID int64, text string) error {
 	if err != nil {
 		return fmt.Errorf("token: %w", err)
 	}
-	if _, err := support.SendMessage(c, senderID, conversationID, "agent", text); err != nil {
+	if _, err := a.send(c, senderID, conversationID, "agent", text); err != nil {
 		return err
 	}
 	fmt.Printf("    ✅ Admin tasdiqlagan javob mijozga yuborildi (#%d)\n", conversationID)
@@ -1018,7 +1095,7 @@ func (a *app) onStaffReply(replyToMsgID int64, text, from string) {
 		fmt.Fprintln(os.Stderr, "javob token xatosi:", err)
 		return
 	}
-	if _, err := support.SendMessage(c, senderID, item.ConversationID, "agent", text); err != nil {
+	if _, err := a.send(c, senderID, item.ConversationID, "agent", text); err != nil {
 		fmt.Fprintln(os.Stderr, "javob yuborish xatosi:", err)
 		if a.staff != nil {
 			warn, code := tgtext.Build(fmt.Sprintf(
@@ -1194,3 +1271,88 @@ func noPrompt(what string) func(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("%s kerak, lekin fon rejimida so'ralmaydi — `agent login` bajaring", what)
 	}
 }
+
+// --- Dashboard: "Sinab ko'rish" ---
+
+// tryResult — /prompts sahifasidagi sinov natijasi.
+type tryResult struct {
+	// Yo'l — qaysi funksiya ishlatildi ("Decide", "OrderAnswer", "Answer").
+	Path string `json:"path"`
+	// Raw — model qaytargan xom matn.
+	Raw string `json:"raw"`
+	// Parsed — o'qilgan natija (Decision yoki OrderReply); matnli javobda nil.
+	Parsed any `json:"parsed,omitempty"`
+	// Kind — base uchun aniqlangan kategoriya nomi.
+	Kind string `json:"kind,omitempty"`
+	// ParseError — JSON o'qilmasa, xato matni (javob baribir ko'rsatiladi).
+	ParseError string `json:"parse_error,omitempty"`
+	// System — modelga ketgan to'liq system prompt (bloklar yig'ilgan).
+	System   string   `json:"system"`
+	Tokens   ai.Usage `json:"tokens"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// tryPrompt promptni SAQLAMASDAN haqiqiy model orqali o'tkazadi: kalitga
+// qarab agentning o'sha yo'li chaqiriladi, natija esa xom holida qaytadi.
+// Bazaga hech narsa yozilmaydi (ai.Client.With vaqtincha ustqurma yasaydi).
+func (a *app) tryPrompt(ctx context.Context, req prompts.TryRequest) (any, error) {
+	if a.ai == nil || !a.ai.Ready() {
+		return nil, fmt.Errorf("AI provayderi tayyor emas")
+	}
+	m := &ai.Meter{}
+	ctx = ai.WithMeter(ctx, m)
+
+	client := a.ai.With(req.Key, req.Content)
+	r := ai.Request{Transcript: req.Transcript, OrderInfo: req.OrderInfo}
+	res := tryResult{}
+
+	switch {
+	// "base" — tasniflash: JSON qaror qaytadi, mijozga hech narsa ketmaydi.
+	case req.Key == ai.PromptBase:
+		res.Path = "Decide"
+		d, err := client.Decide(ctx, r)
+		res.Raw = d.Raw
+		if err != nil && d.Raw == "" {
+			return nil, err
+		}
+		if err != nil {
+			res.ParseError = err.Error()
+		} else {
+			res.Parsed, res.Kind = d, d.Label()
+		}
+
+	// Yetkazib berish — oddiy matn (mijozga shundayligicha yuboriladi).
+	case categoryOf(req.Key) == deliverCategory:
+		res.Path = "Answer"
+		r.CategoryKey = deliverCategory
+		out, err := client.Answer(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		res.Raw = out
+
+	// Qolgan kategoriyalar — {client, help} JSON'i.
+	default:
+		res.Path = "OrderAnswer"
+		r.CategoryKey = categoryOf(req.Key)
+		rep, err := client.OrderAnswer(ctx, r)
+		res.Raw = rep.Raw
+		if err != nil && rep.Raw == "" {
+			return nil, err
+		}
+		if err != nil {
+			res.ParseError = err.Error()
+		} else {
+			res.Parsed = rep
+		}
+	}
+
+	if sys, err := client.SystemFor(r, req.Key == ai.PromptBase); err == nil {
+		res.System = sys
+	}
+	res.Tokens, res.Warnings = m.Usage(), m.Warnings()
+	return res, nil
+}
+
+// categoryOf — prompt kalitidan kategoriya slug'i ("cat:order" → "order").
+func categoryOf(key string) string { return strings.TrimPrefix(key, "cat:") }

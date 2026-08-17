@@ -35,7 +35,19 @@ type Repository interface {
 	DeleteByKey(key string) error
 	// Fingerprint — yoqilgan promptlar soni va oxirgi tahrir vaqti.
 	Fingerprint() (Fingerprint, error)
+
+	// SaveBackup — matnning tahrirdan oldingi nusxasini saqlaydi va shu
+	// kalitning eskilarini (keepBackups dan ortig'ini) o'chiradi.
+	SaveBackup(key, content string) error
+	// Backups — kalitning saqlangan nusxalari, yangisidan eskisiga.
+	Backups(key string) ([]models.PromptBackup, error)
+	// BackupByID — bitta nusxa (tiklash uchun); topilmasa ErrNotFound.
+	BackupByID(id uint) (models.PromptBackup, error)
 }
+
+// keepBackups — har kalit uchun saqlanadigan nusxalar soni. Maqsad —
+// noto'g'ri tahrirni qaytarish, arxiv yuritish emas.
+const keepBackups = 5
 
 // gormRepo — Postgres (GORM) ustidagi Repository.
 type gormRepo struct {
@@ -96,6 +108,8 @@ func (r *gormRepo) Update(p *models.Prompt) error {
 	return nil
 }
 
+// DeleteByKey promptni va uning nusxalarini o'chiradi. Nusxalar qolsa
+// shu nom bilan yangi prompt yaratilganda begona tarix ko'rinib qolardi.
 func (r *gormRepo) DeleteByKey(key string) error {
 	res := r.db.Where("key = ?", key).Delete(&models.Prompt{})
 	if res.Error != nil {
@@ -103,6 +117,9 @@ func (r *gormRepo) DeleteByKey(key string) error {
 	}
 	if res.RowsAffected == 0 {
 		return fmt.Errorf("%w: %s", ErrNotFound, key)
+	}
+	if err := r.db.Where("key = ?", key).Delete(&models.PromptBackup{}).Error; err != nil {
+		return fmt.Errorf("prompt nusxalarini o'chirish: %w", err)
 	}
 	return nil
 }
@@ -124,4 +141,43 @@ func (r *gormRepo) Fingerprint() (Fingerprint, error) {
 		fp.UpdatedAt = *row.UpdatedAt
 	}
 	return fp, nil
+}
+
+// SaveBackup nusxa qo'shadi va shu kalitning eng eski (keepBackups dan
+// ortiq) yozuvlarini o'chiradi.
+func (r *gormRepo) SaveBackup(key, content string) error {
+	if content == "" {
+		return nil // bo'sh matnni saqlashdan foyda yo'q
+	}
+	if err := r.db.Create(&models.PromptBackup{Key: key, Content: content}).Error; err != nil {
+		return fmt.Errorf("prompt nusxasini saqlash: %w", err)
+	}
+	// Ortiqchasini o'chirish: eng yangi keepBackups tadan tashqarisi ketadi.
+	sub := r.db.Model(&models.PromptBackup{}).Select("id").
+		Where("key = ?", key).Order("id desc").Limit(keepBackups)
+	if err := r.db.Where("key = ? AND id NOT IN (?)", key, sub).
+		Delete(&models.PromptBackup{}).Error; err != nil {
+		return fmt.Errorf("eski nusxalarni o'chirish: %w", err)
+	}
+	return nil
+}
+
+func (r *gormRepo) Backups(key string) ([]models.PromptBackup, error) {
+	var out []models.PromptBackup
+	if err := r.db.Where("key = ?", key).Order("id desc").
+		Limit(keepBackups).Find(&out).Error; err != nil {
+		return nil, fmt.Errorf("prompt nusxalari: %w", err)
+	}
+	return out, nil
+}
+
+func (r *gormRepo) BackupByID(id uint) (models.PromptBackup, error) {
+	var rows []models.PromptBackup
+	if err := r.db.Where("id = ?", id).Limit(1).Find(&rows).Error; err != nil {
+		return models.PromptBackup{}, fmt.Errorf("nusxani o'qish: %w", err)
+	}
+	if len(rows) == 0 {
+		return models.PromptBackup{}, fmt.Errorf("%w: nusxa #%d", ErrNotFound, id)
+	}
+	return rows[0], nil
 }

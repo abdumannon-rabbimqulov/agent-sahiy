@@ -108,8 +108,10 @@ type chatRequest struct {
 	Messages  []message `json:"messages"`
 	Stream    bool      `json:"stream"`
 	KeepAlive string    `json:"keep_alive"`
-	Format    string    `json:"format,omitempty"` // "json" — qat'iy JSON javob
-	Options   opts      `json:"options"`
+	// Format — "json" (ixtiyoriy JSON) yoki to'liq JSON Schema. Sxema
+	// berilganda model undan tashqariga chiqa olmaydi.
+	Format  json.RawMessage `json:"format,omitempty"`
+	Options opts            `json:"options"`
 }
 
 type message struct {
@@ -159,9 +161,13 @@ func (c *Client) Generate(ctx context.Context, system, user string, opt ai.GenOp
 	if t, ok := opt.Temp(); ok {
 		temp = t
 	}
-	format := ""
-	if opt.JSON {
-		format = "json"
+	// Sxema bo'lsa — o'sha (qat'iy shakl), bo'lmasa oddiy JSON rejimi.
+	var format json.RawMessage
+	switch {
+	case len(opt.Schema) > 0:
+		format = opt.Schema
+	case opt.JSON:
+		format = json.RawMessage(`"json"`)
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:     c.Model,

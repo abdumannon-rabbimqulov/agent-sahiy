@@ -37,6 +37,16 @@ func New(gdb *gorm.DB) *Store {
 	return &Store{db: gdb, cache: map[string]bool{}}
 }
 
+// NewMemory — bazasiz Store: qiymatlar faqat xotirada. Testlar uchun
+// (Set bazaga yozmoqchi bo'lsa xato qaytaradi, Bool esa keshdan o'qiydi).
+func NewMemory(vals map[string]bool) *Store {
+	cache := map[string]bool{}
+	for k, v := range vals {
+		cache[k] = v
+	}
+	return &Store{cache: cache}
+}
+
 // Init kalit bazada bo'lmasa .env dagi boshlang'ich qiymat bilan yozadi.
 // Bor bo'lsa tegmaydi — dashboarddagi tanlov saqlanib qoladi.
 func (s *Store) Init(key string, def bool) error {
@@ -64,6 +74,9 @@ func (s *Store) Bool(key string, def bool) bool {
 	if ok {
 		return v
 	}
+	if s.db == nil {
+		return def // bazasiz Store (NewMemory) — keshda yo'q, demak default
+	}
 	raw, err := db.GetSetting(s.db, key)
 	if err != nil || raw == "" {
 		return def
@@ -77,6 +90,12 @@ func (s *Store) Bool(key string, def bool) bool {
 
 // Set qiymatni bazaga yozadi va keshni yangilaydi.
 func (s *Store) Set(key string, v bool) error {
+	if s.db == nil {
+		s.mu.Lock()
+		s.cache[key] = v
+		s.mu.Unlock()
+		return nil
+	}
 	if err := db.SetSetting(s.db, key, strconv.FormatBool(v)); err != nil {
 		return err
 	}

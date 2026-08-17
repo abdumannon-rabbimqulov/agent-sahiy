@@ -34,6 +34,10 @@ type Options struct {
 	// main.go beradi (web paketi Sahiy API bilan bevosita ishlamaydi).
 	// nil bo'lsa tasdiqlash endpointlari 503 qaytaradi.
 	SendReply func(conversationID int64, text string) error
+
+	// TryPrompt — /prompts dagi "Sinab ko'rish": saqlanmagan matnni
+	// haqiqiy model orqali o'tkazadi. nil bo'lsa endpoint 503 qaytaradi.
+	TryPrompt prompts.TryFunc
 }
 
 // Server statistika, tarix va kategoriyalarni ko'rsatadigan dashboard.
@@ -59,8 +63,10 @@ func New(st *store.Store, esc *escalation.Store,
 		}
 		files = sub
 	}
+	h := prompts.NewHandler(prm)
+	h.SetTry(opt.TryPrompt)
 	return &Server{store: st, esc: esc, set: set,
-		prompts: prompts.NewHandler(prm), opt: opt, files: files}
+		prompts: h, opt: opt, files: files}
 }
 
 // Start HTTP serverni ishga tushiradi (blokirovka qiladi).

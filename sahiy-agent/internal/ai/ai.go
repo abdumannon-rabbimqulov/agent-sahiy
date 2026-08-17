@@ -35,6 +35,18 @@ const (
 	phOrders   = "{{ORDERS}}"
 )
 
+// ExpectedPlaceholders — qaysi promptda qaysi belgi BO'LISHI kutiladi.
+// Bo'lmasa ish to'xtamaydi (ma'lumot prompt oxiriga qo'shiladi), lekin
+// dashboard ogohlantiradi.
+var ExpectedPlaceholders = map[string][]string{
+	BlockOrder:    {phOrders},
+	BlockCategory: {phCategory},
+}
+
+// KnownPlaceholders — umuman tanilgan belgilar. Ro'yxatdan tashqarisi
+// almashtirilmaydi va modelga oddiy matn bo'lib ketadi.
+var KnownPlaceholders = []string{phDate, phCategory, phOrders}
+
 // orderHeader — "block:order" prompti bazada bo'lmaganda ishlatiladigan
 // minimal sarlavha. Tizimdan olingan ma'lumot promptga yetib bormasa model
 // uni o'zidan to'qiydi, shuning uchun promptsiz ham qo'shiladi. Prompt
@@ -79,6 +91,31 @@ func New(be Backend, p Prompts) *Client {
 
 // Name — joriy provayder nomi.
 func (c *Client) Name() string { return c.be.Name() }
+
+// With — bitta promptni VAQTINCHA boshqa matn bilan almashtirgan nusxa
+// qaytaradi. Bazaga hech narsa yozilmaydi: dashboarddagi "Sinab ko'rish"
+// saqlanmagan tahrirni haqiqiy yo'l bilan tekshirishi uchun.
+func (c *Client) With(key, content string) *Client {
+	return &Client{be: c.be, p: override{p: c.p, key: key, content: content}}
+}
+
+// override — bitta kalitni almashtiradigan Prompts ustqurmasi.
+type override struct {
+	p       Prompts
+	key     string
+	content string
+}
+
+func (o override) Get(key string) string {
+	if key == o.key {
+		return o.content
+	}
+	return o.p.Get(key)
+}
+
+// Keys o'zgarmaydi: almashtirilgan prompt allaqachon mavjud kalit uchun
+// beriladi, yangi kalit qo'shmaydi.
+func (o override) Keys(prefix string) []string { return o.p.Keys(prefix) }
 
 // generate — barcha so'rovlar shu yerdan o'tadi: javobni qaytaradi va
 // sarflangan tokenlarni ctx'dagi Meter'ga qo'shadi (xato bo'lsa qo'shmaydi —
@@ -142,7 +179,8 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 }
 
 // decideOptions — qaror qisqa va deterministik JSON bo'lishi kerak.
-var decideOptions = GenOptions{MaxTokens: 200, TempZero: true, JSON: true}
+// Sxema barcha 7 maydonni majburiy qilgani uchun 200 token tor keladi.
+var decideOptions = GenOptions{MaxTokens: 300, TempZero: true, JSON: true, Schema: DecisionSchema}
 
 // buildSystem — system promptni bloklardan yig'adi (tartib yuqorida
 // tushuntirilgan; o'zgartirilmaydi).
@@ -168,6 +206,17 @@ func (c *Client) buildSystem(req Request) string {
 	return b.String()
 }
 
+// SystemFor — modelga AYNAN qanday system prompt ketishini qaytaradi
+// (bloklar yig'ilgan holda). Faqat ko'rsatish uchun: dashboarddagi "Sinab
+// ko'rish" promptni tahrir qilayotgan odamga natijani emas, KIRISHNI ham
+// ko'rsatadi. base — "base" yo'li, aks holda kategoriya yo'li.
+func (c *Client) SystemFor(req Request, base bool) (string, error) {
+	if base {
+		return c.buildSystem(req), nil
+	}
+	return c.buildCategorySystem(req)
+}
+
 // Answer — mijozga yuboriladigan MATNLI javob yozadi.
 //
 // Decide'dan farqi: system prompt "base" emas (u endi JSON qaror qaytaradi),
@@ -187,7 +236,7 @@ func (c *Client) Answer(ctx context.Context, req Request) (string, error) {
 
 // orderOptions — "cat:order" javobi JSON bo'lishi kerak, lekin ichida
 // mijozga yoziladigan to'liq matn bor — shuning uchun Decide'dan uzunroq.
-var orderOptions = GenOptions{MaxTokens: 600, TempZero: true, JSON: true}
+var orderOptions = GenOptions{MaxTokens: 600, TempZero: true, JSON: true, Schema: OrderReplySchema}
 
 // OrderAnswer — buyurtmadagi muammo bo'yicha "cat:order" bilimi asosida
 // qaror: mijozga nima yozish va xodimlarga nima yetkazish (OrderReply).

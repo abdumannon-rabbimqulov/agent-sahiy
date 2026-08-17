@@ -49,6 +49,26 @@ type Config struct {
 	OllamaTemperature float64       // 0 — paketdagi default
 	OllamaTimeout     time.Duration // lokal model sekin — uzun timeout
 
+	// Groq (zaxira bulut modeli). Kalit bo'sh bo'lsa zaxira o'chiq va
+	// agent avvalgidek faqat lokal modelda ishlaydi.
+	GroqAPIKey      string
+	GroqModel       string        // JSON Schema'ni biladigan model bo'lishi shart
+	GroqBaseURL     string        // odatda bo'sh (paketdagi default)
+	GroqMaxTokens   int           //
+	GroqTemperature float64       //
+	GroqTimeout     time.Duration //
+	GroqReasoning   string        // "low" | "medium" | "high" (bo'sh — avtomatik)
+
+	// Tezlik chegarasi: RateWindow oynasida eng ko'pi RateLimit ta suhbat
+	// qayta ishlanadi. Ortiqchalari keyingi tsiklga qoladi (yo'qolmaydi).
+	// RateLimit yoki RateWindow nol bo'lsa chegara o'chiq.
+	RateLimit  int
+	RateWindow time.Duration
+	// GroqPriceIn/Out — 1 mln token uchun USD. Global AI_PRICE_* dan farqi:
+	// faqat Groq modeliga tegishli, lokal model bepulligicha qoladi.
+	GroqPriceIn  float64
+	GroqPriceOut float64
+
 	// Agent xatti-harakati
 	AgentSenderID int64 // 0 bo'lsa token'dagi "sub" ishlatiladi
 	AutoReply     bool  // true bo'lsa AI javobini mijozga darhol yuboradi
@@ -170,6 +190,32 @@ func Load(envPath string) (*Config, error) {
 	cfg.OllamaNumCtx = envInt("OLLAMA_NUM_CTX")
 	cfg.OllamaMaxTokens = envInt("OLLAMA_MAX_TOKENS")
 	cfg.OllamaTemperature = envFloat("OLLAMA_TEMPERATURE")
+	// Groq — zaxira. Bo'sh qiymatlar paket ichidagi default bilan to'ladi.
+	cfg.GroqAPIKey = os.Getenv("GROQ_API_KEY")
+	cfg.GroqModel = os.Getenv("GROQ_MODEL")
+	cfg.GroqBaseURL = os.Getenv("GROQ_BASE_URL")
+	cfg.GroqMaxTokens = envInt("GROQ_MAX_TOKENS")
+	cfg.GroqTemperature = envFloat("GROQ_TEMPERATURE")
+	if sec := envInt("GROQ_TIMEOUT_SEC"); sec > 0 {
+		cfg.GroqTimeout = time.Duration(sec) * time.Second
+	}
+	cfg.GroqReasoning = os.Getenv("GROQ_REASONING_EFFORT")
+
+	// Tezlik chegarasi. Ko'rsatilmagan bo'lsa default: 2 daqiqada 5 ta
+	// suhbat — AI qarorlarini qo'lda ko'rib chiqish uchun qulay sur'at.
+	// LookupEnv — ataylab yozilgan 0 ("chegarani o'chir") default bilan
+	// chalkashib ketmasin.
+	cfg.RateLimit = 5
+	if _, ok := os.LookupEnv("RATE_LIMIT_COUNT"); ok {
+		cfg.RateLimit = envInt("RATE_LIMIT_COUNT")
+	}
+	cfg.RateWindow = 2 * time.Minute
+	if sec := envInt("RATE_LIMIT_WINDOW_SEC"); sec > 0 {
+		cfg.RateWindow = time.Duration(sec) * time.Second
+	}
+	cfg.GroqPriceIn = envFloat("GROQ_PRICE_IN")
+	cfg.GroqPriceOut = envFloat("GROQ_PRICE_OUT")
+
 	if sec := envInt("OLLAMA_TIMEOUT_SEC"); sec > 0 {
 		cfg.OllamaTimeout = time.Duration(sec) * time.Second
 	}

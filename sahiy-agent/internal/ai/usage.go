@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 )
@@ -65,6 +66,11 @@ type GenOptions struct {
 	TempZero bool
 	// JSON — provayderdan qat'iy JSON javob so'raladi.
 	JSON bool
+	// Schema — javobning JSON Schema'si. Berilsa provayder modelni AYNAN
+	// shu shaklga majburlaydi (Ollama `format` maydoni sxemani qabul
+	// qiladi). Shunda "faqat JSON yoz" kabi ko'rsatmalar prompt matnida
+	// kerak emas — shakl kod tomonidan kafolatlanadi.
+	Schema json.RawMessage
 }
 
 // Temp — yuboriladigan temperature va uni umuman yuborish kerakligini

@@ -20,6 +20,22 @@ const pollInterval = 60 * time.Second
 // maxContentBytes — bitta prompt matnining chegarasi.
 const maxContentBytes = 1 << 20 // 1 MB
 
+// Meta — kod kutayotgan kalitlar va placeholder'lar. Dashboard shu
+// ro'yxatni API orqali oladi, ya'ni frontendda takrorlanmaydi va
+// ajralib ketmaydi. main.go uni ai paketidagi konstantalardan to'ldiradi.
+type Meta struct {
+	// Required — bo'lmasa agent ishga tushmaydigan kalitlar.
+	Required []string `json:"required"`
+	// Optional — bo'lmasa tegishli blok qo'shilmaydigan kalitlar.
+	Optional []string `json:"optional"`
+	// Placeholders — kalit → o'sha promptda BO'LISHI kutilgan belgilar
+	// ("block:order" → "{{ORDERS}}"). Yo'q bo'lsa ogohlantirish beriladi.
+	Placeholders map[string][]string `json:"placeholders"`
+	// Known — umuman tanilgan placeholder'lar; ro'yxatdan tashqarisi
+	// yozilsa u shunchaki matn bo'lib qoladi, shuning uchun ogohlantiramiz.
+	Known []string `json:"known"`
+}
+
 // Service — promptlarning biznes qatlami: tekshiruvlar, himoyalangan
 // kalitlar va keshni yangilab turish. Agent (ai.Prompts) shu turdan o'qiydi.
 type Service struct {
@@ -28,6 +44,8 @@ type Service struct {
 	// protected — o'chirib yoki o'chirib qo'yib bo'lmaydigan kalitlar
 	// (ai.RequiredKeys). Ularsiz agent umuman ishlamaydi.
 	protected []string
+	// meta — dashboard uchun ma'lumot (SetMeta bilan beriladi).
+	meta Meta
 
 	mu   sync.Mutex  // last'ni himoyalaydi (faqat Watch va Reload tegadi)
 	last Fingerprint // oxirgi ko'rilgan holat
@@ -36,6 +54,55 @@ type Service struct {
 // NewService yangi service. protected — majburiy promptlar ro'yxati.
 func NewService(repo Repository, protected []string) *Service {
 	return &Service{repo: repo, cache: NewCache(), protected: protected}
+}
+
+// SetMeta — kalitlar va placeholder'lar ro'yxatini o'rnatadi (main.go,
+// ishga tushishda bir marta).
+func (s *Service) SetMeta(m Meta) { s.meta = m }
+
+// Meta — o'rnatilgan ro'yxat (dashboard uchun).
+func (s *Service) Meta() Meta { return s.meta }
+
+// Warn — matnni saqlash MUMKIN, lekin e'tibor berish kerak bo'lgan
+// holatlar: kutilgan placeholder yo'q yoki noma'lum placeholder yozilgan.
+// Xato emas — dashboardda sariq ogohlantirish bo'lib ko'rinadi.
+func (s *Service) Warn(key, content string) []string {
+	var out []string
+	for _, ph := range s.meta.Placeholders[key] {
+		if !strings.Contains(content, ph) {
+			out = append(out, fmt.Sprintf(
+				"%s belgisi yo'q — ma'lumot prompt oxiriga qo'shiladi", ph))
+		}
+	}
+	for _, ph := range unknownPlaceholders(content, s.meta.Known) {
+		out = append(out, fmt.Sprintf(
+			"%s — noma'lum belgi, oddiy matn sifatida modelga ketadi", ph))
+	}
+	return out
+}
+
+// unknownPlaceholders — matndagi {{...}} lardan ro'yxatda yo'qlari.
+func unknownPlaceholders(content string, known []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	rest := content
+	for {
+		i := strings.Index(rest, "{{")
+		if i < 0 {
+			return out
+		}
+		rest = rest[i:]
+		j := strings.Index(rest, "}}")
+		if j < 0 {
+			return out
+		}
+		ph := rest[:j+2]
+		rest = rest[j+2:]
+		if !seen[ph] && !slices.Contains(known, ph) {
+			seen[ph] = true
+			out = append(out, ph)
+		}
+	}
 }
 
 // --- o'qish (agent uchun; ai.Prompts interfeysi) ---
@@ -178,6 +245,13 @@ func (s *Service) Update(key string, upd Update) (models.Prompt, error) {
 		if err := validate(p.Key, content); err != nil {
 			return models.Prompt{}, err
 		}
+		// Eski matnni saqlab qo'yamiz — aks holda "Saqlash" qaytarib
+		// bo'lmaydigan amal. Nusxa olinmasa ham tahrir davom etadi.
+		if content != p.Content {
+			if err := s.repo.SaveBackup(p.Key, p.Content); err != nil {
+				fmt.Fprintln(os.Stderr, "prompt nusxasini saqlash:", err)
+			}
+		}
 		p.Content = content
 	}
 	if upd.Enabled != nil {
@@ -206,6 +280,28 @@ func (s *Service) Delete(key string) error {
 		return err
 	}
 	return s.refresh()
+}
+
+// Backups — kalitning saqlangan nusxalari (yangisidan eskisiga).
+func (s *Service) Backups(key string) ([]models.PromptBackup, error) {
+	if _, err := s.ByKey(key); err != nil {
+		return nil, err
+	}
+	return s.repo.Backups(key)
+}
+
+// Restore — saqlangan nusxadagi matnni qaytaradi. Joriy matn ham nusxaga
+// tushadi, ya'ni tiklashning o'zi ham qaytarib olinadi.
+func (s *Service) Restore(key string, backupID uint) (models.Prompt, error) {
+	b, err := s.repo.BackupByID(backupID)
+	if err != nil {
+		return models.Prompt{}, err
+	}
+	if b.Key != strings.TrimSpace(key) {
+		return models.Prompt{}, fmt.Errorf(
+			"%w: nusxa #%d %s promptiga tegishli emas", ErrInvalid, backupID, key)
+	}
+	return s.Update(key, Update{Content: &b.Content})
 }
 
 // --- ichki yordamchilar ---

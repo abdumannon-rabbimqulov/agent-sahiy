@@ -21,10 +21,9 @@ const INFO = {
     "Mijoz rasm yuborgan va tizimda buyurtmasi topilgan holat."],
 };
 
-// Bazada bo'lishi SHART bo'lgan promptlar — bittasi yo'q bo'lsa agent
-// ishga tushmaydi (kodda zaxira matn yo'q).
-const REQUIRED = ['base'];
-const OPTIONAL = ['block:order', 'block:category', 'block:image', 'block:image_order'];
+// Kalitlar ro'yxati Go tomonidan beriladi (/api/prompts-meta) — aks holda
+// ai.RequiredKeys o'zgarganda bu fayl jimgina eskirib qolardi.
+let META = {required: [], optional: [], placeholders: {}, known: []};
 
 function info(key){
   if(INFO[key]) return INFO[key];
@@ -41,7 +40,7 @@ let items = [];
 function render(){
   $('list').innerHTML = items.map(p => {
     const [title, hint] = info(p.key);
-    const required = REQUIRED.includes(p.key);
+    const required = (META.required || []).includes(p.key);
     return `
     <form class="box" data-key="${esc(p.key)}">
       <div class="row" style="justify-content:space-between">
@@ -55,18 +54,21 @@ function render(){
       <textarea name="content" rows="10">${esc(p.content)}</textarea>
       <div class="row">
         <button type="submit">Saqlash</button>
+        <button type="button" class="ghost" data-try>Sinab ko'rish</button>
+        <button type="button" class="ghost" data-backups>Nusxalar</button>
         <button type="button" class="ghost" data-rename>Kalitni o'zgartirish</button>
         ${required ? '' : '<button type="button" class="ghost" data-del>O\'chirish</button>'}
         <label class="row" style="gap:6px;margin-left:auto">
           <input type="checkbox" name="enabled" ${p.enabled ? 'checked' : ''}> yoqilgan
         </label>
       </div>
+      <div data-panel></div>
     </form>`;
   }).join('') || '<div class="msg">Prompt yo\'q — quyidagi shakl orqali qo\'shing.</div>';
 
   const have = new Set(items.map(p => p.key));
-  const miss = REQUIRED.filter(k => !have.has(k));
-  const opt  = OPTIONAL.filter(k => !have.has(k));
+  const miss = (META.required || []).filter(k => !have.has(k));
+  const opt  = (META.optional || []).filter(k => !have.has(k));
   let warn = '';
   if(miss.length) warn += `<div class="err" style="display:block">❌ Majburiy promptlar yo'q: <b>${esc(miss.join(', '))}</b> — ularsiz agent ishga tushmaydi.</div>`;
   if(opt.length)  warn += `<div class="msg">ℹ️ Ixtiyoriy promptlar yo'q (blok qo'shilmaydi): ${esc(opt.join(', '))}</div>`;
@@ -75,7 +77,12 @@ function render(){
 
 async function load(){
   try{
-    items = await (await fetch('/api/prompts')).json() || [];
+    const [list, meta] = await Promise.all([
+      fetch('/api/prompts').then(r => r.json()),
+      fetch('/api/prompts-meta').then(r => r.json()).catch(() => META),
+    ]);
+    items = list || [];
+    META = meta || META;
     render();
   }catch(e){ $('err').textContent = 'Promptlar yuklanmadi: ' + e.message; }
 }
@@ -87,13 +94,28 @@ async function call(url, opt, failMsg){
   try{
     const res = await fetch(url, opt);
     if(!res.ok) throw new Error((await res.text()).trim());
+    const body = res.status === 204 ? {} : await res.json().catch(() => ({}));
     await load();
+    showWarnings(body.key, body.warnings);
     return true;
   }catch(err){
     $('err').textContent = failMsg + ': ' + err.message;
     return false;
   }
 }
+
+// Saqlash to'xtamagan, lekin e'tibor berish kerak bo'lgan holatlar
+// (masalan block:order da {{ORDERS}} yozilmagan).
+function showWarnings(key, warns){
+  if(!key || !warns || !warns.length) return;
+  const form = document.querySelector(`form[data-key="${CSS.escape(key)}"]`);
+  if(!form) return;
+  panel(form).innerHTML = `<div class="msg" style="margin-top:8px">⚠️ ${
+    warns.map(esc).join('<br>')}</div>`;
+}
+
+// panel — formadagi natija/ogohlantirish maydoni.
+const panel = form => form.querySelector('[data-panel]');
 
 const jsonBody = (method, body) => ({
   method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
@@ -135,10 +157,111 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  // Sinab ko'rish — saqlanmagan matnni haqiqiy model orqali o'tkazadi.
+  if(e.target.closest('[data-try]')){ openTry(form); return; }
+
+  // Nusxalar — oxirgi saqlangan matnlar va tiklash.
+  if(e.target.closest('[data-backups]')){ await openBackups(form, key); return; }
+
   // O'chirish.
   if(e.target.closest('[data-del]')){
     if(!confirm(`"${key}" prompti o'chiriladi. Davom etamizmi?`)) return;
     await call('/api/prompts/' + encodeURIComponent(key), {method: 'DELETE'}, "O'chirilmadi");
+  }
+});
+
+// --- Sinab ko'rish ---
+
+// openTry — sinov murojaati uchun maydon ochadi (yoki yopadi).
+function openTry(form){
+  const box = panel(form);
+  if(box.querySelector('[data-tryrun]')){ box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="msg" style="margin-top:8px">
+      Sinov murojaati — mijoz yozgan matn. Natija bazaga saqlanmaydi.
+    </div>
+    <textarea data-transcript rows="3" placeholder="Mijoz: buyurtmam qachon keladi? SN12345"></textarea>
+    <textarea data-orderinfo rows="2" placeholder="(ixtiyoriy) tizimdan olingan buyurtma ma'lumoti — JSON"></textarea>
+    <div class="row"><button type="button" data-tryrun>Yuborish</button></div>
+    <div data-tryout></div>`;
+}
+
+// runTry — /api/prompt-try ga so'rov.
+async function runTry(form, key){
+  const box = panel(form);
+  const out = box.querySelector('[data-tryout]');
+  const btn = box.querySelector('[data-tryrun]');
+  const transcript = box.querySelector('[data-transcript]').value.trim();
+  if(!transcript){ out.innerHTML = '<div class="msg">Sinov murojaatini yozing.</div>'; return; }
+
+  btn.disabled = true;
+  out.innerHTML = '<div class="msg">⏳ Model javob yozmoqda (lokal model sekin)...</div>';
+  try{
+    const res = await fetch('/api/prompt-try/' + encodeURIComponent(key),
+      jsonBody('POST', {
+        content: form.content.value,
+        transcript,
+        order_info: box.querySelector('[data-orderinfo]').value.trim(),
+      }));
+    if(!res.ok) throw new Error((await res.text()).trim());
+    out.innerHTML = tryResult(await res.json());
+  }catch(err){
+    out.innerHTML = `<div class="err" style="display:block">Sinov o'tmadi: ${esc(err.message)}</div>`;
+  }finally{ btn.disabled = false; }
+}
+
+// tryResult — natijani ko'rsatish: xom javob, o'qilgani va sarflangan token.
+function tryResult(r){
+  const t = r.tokens || {};
+  const parsed = r.parsed ? `<b>O'qilgani</b><pre>${esc(JSON.stringify(r.parsed, null, 2))}</pre>` : '';
+  const bad = r.parse_error ? `<div class="err" style="display:block">${esc(r.parse_error)}</div>` : '';
+  const warn = (r.warnings || []).length
+    ? `<div class="msg">⚠️ ${r.warnings.map(esc).join('<br>')}</div>` : '';
+  return `
+    <div class="msg" style="margin-top:8px">
+      Yo'l: <b>${esc(r.path || '')}</b>${r.kind ? ' · ' + esc(r.kind) : ''} ·
+      ${num(t.prompt_tokens)} + ${num(t.completion_tokens)} token · ${num(t.duration_ms)} ms
+    </div>
+    ${bad}${warn}
+    <b>Model javobi</b><pre>${esc(r.raw || '')}</pre>
+    ${parsed}
+    <details><summary class="msg">Modelga ketgan system prompt</summary><pre>${esc(r.system || '')}</pre></details>`;
+}
+
+// --- Nusxalar (tahrirni qaytarish) ---
+
+async function openBackups(form, key){
+  const box = panel(form);
+  if(box.querySelector('[data-backuplist]')){ box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="msg" data-backuplist>Yuklanmoqda...</div>';
+  try{
+    const list = await (await fetch('/api/prompt-backups/' + encodeURIComponent(key))).json();
+    box.innerHTML = list.length ? `
+      <div data-backuplist style="margin-top:8px">
+        <div class="msg">Tahrirdan oldingi matnlar (oxirgi ${list.length} ta):</div>
+        ${list.map(b => `
+          <div class="row" style="align-items:flex-start;gap:8px;margin-top:6px">
+            <button type="button" class="ghost" data-restore="${b.id}">Tiklash</button>
+            <div class="msg">${esc(new Date(b.saved_at).toLocaleString('uz'))} ·
+              ${num(tok(b.content))} token</div>
+          </div>
+          <pre>${esc(b.content.slice(0, 400))}${b.content.length > 400 ? '…' : ''}</pre>`).join('')}
+      </div>` : '<div class="msg" data-backuplist>Hali nusxa yo\'q — birinchi tahrirdan keyin paydo bo\'ladi.</div>';
+  }catch(err){
+    box.innerHTML = `<div class="err" style="display:block">Nusxalar olinmadi: ${esc(err.message)}</div>`;
+  }
+}
+
+// Panel ichidagi tugmalar (sinov yuborish · tiklash).
+document.addEventListener('click', async e => {
+  const form = e.target.closest('form[data-key]');
+  if(!form) return;
+  if(e.target.closest('[data-tryrun]')){ await runTry(form, form.dataset.key); return; }
+  const restore = e.target.closest('[data-restore]');
+  if(restore){
+    if(!confirm('Shu nusxa tiklanadi. Joriy matn ham nusxaga tushadi. Davom etamizmi?')) return;
+    await call('/api/prompt-restore/' + encodeURIComponent(form.dataset.key),
+      jsonBody('POST', {id: Number(restore.dataset.restore)}), 'Tiklanmadi');
   }
 });
 

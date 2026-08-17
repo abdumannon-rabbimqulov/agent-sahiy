@@ -186,3 +186,48 @@ func extractJSON(out string) string {
 	}
 	return s[i : j+1]
 }
+
+// --- JSON Schema'lar ---
+//
+// Ollama `format` maydoniga sxema berilsa, model undan tashqariga chiqa
+// olmaydi: maydon nomlari, turlari va to'plami kafolatlanadi. Shu sababli
+// prompt matnida "faqat JSON yoz", "markdown ishlatma", "izoh qo'shma"
+// kabi qatorlar KERAK EMAS — ular joyni egallaydi va modelni chalg'itadi.
+//
+// Sxema yuqoridagi struct'larga qat'iy mos bo'lishi shart: maydon nomi
+// o'zgarsa ikkala joyda ham o'zgaradi (schema_test.go buni tekshiradi).
+
+// DecisionSchema — "base" prompti qaytaradigan qaror shakli.
+//
+// Barcha bayroqlar `required`: model "bu kategoriya emas" degani uchun ham
+// aniq `false` yozadi, ya'ni maydonning yo'qligi noaniqlik tug'dirmaydi.
+//
+// maxItems SHART: chegarasiz massivda 8B model bir xil raqamni takrorlab
+// to'ldiraveradi va JSON token chegarasida kesilib, umuman o'qilmay
+// qoladi. Bitta murojaatda 5 tadan ortiq raqam bo'lishi amalda uchramaydi.
+var DecisionSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "dashboard":       {"type": "boolean"},
+    "adminka":         {"type": "boolean"},
+    "incorrect_order": {"type": "boolean"},
+    "deliver":         {"type": "boolean"},
+    "category":        {"type": "boolean"},
+    "order_sn":        {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+    "express_num":     {"type": "array", "items": {"type": "string"}, "maxItems": 5}
+  },
+  "required": ["dashboard","adminka","incorrect_order","deliver","category","order_sn","express_num"],
+  "additionalProperties": false
+}`)
+
+// OrderReplySchema — "order" va "cat:xato-mahsulot-kelganda" promptlari
+// qaytaradigan shakl: mijozga matn va xodimlarga izoh.
+var OrderReplySchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "client": {"type": "string"},
+    "help":   {"type": "string"}
+  },
+  "required": ["client","help"],
+  "additionalProperties": false
+}`)

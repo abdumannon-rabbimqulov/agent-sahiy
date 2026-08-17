@@ -1,11 +1,13 @@
 package prompts_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,6 +30,9 @@ func newService(t *testing.T) *prompts.Service {
 	}
 	if err := gdb.Where("1 = 1").Delete(&models.Prompt{}).Error; err != nil {
 		t.Fatalf("jadvalni tozalash: %v", err)
+	}
+	if err := gdb.Where("1 = 1").Delete(&models.PromptBackup{}).Error; err != nil {
+		t.Fatalf("nusxalar jadvalini tozalash: %v", err)
 	}
 	svc := prompts.NewService(prompts.NewRepository(gdb), []string{"base"})
 	if _, err := svc.Create("base", "asosiy prompt", true); err != nil {
@@ -144,5 +149,203 @@ func TestHandlerStatusCodes(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Key != "base" {
 		t.Fatalf("ro'yxat kutilmagan: %+v", list)
+	}
+}
+
+// TestBackupRestore — tahrir qaytarib olinadimi. Versiyalash olib
+// tashlangandan keyin "Saqlash" qaytarib bo'lmaydigan amal edi; shu
+// yo'l aynan o'sha holatni yopadi.
+func TestBackupRestore(t *testing.T) {
+	svc := newService(t)
+	if _, err := svc.Create("cat:test", "birinchi matn", true); err != nil {
+		t.Fatalf("yaratilmadi: %v", err)
+	}
+
+	second := "ikkinchi matn"
+	if _, err := svc.Update("cat:test", prompts.Update{Content: &second}); err != nil {
+		t.Fatalf("yangilanmadi: %v", err)
+	}
+
+	backups, err := svc.Backups("cat:test")
+	if err != nil {
+		t.Fatalf("nusxalar o'qilmadi: %v", err)
+	}
+	if len(backups) != 1 || backups[0].Content != "birinchi matn" {
+		t.Fatalf("kutilgan 1 ta nusxa (\"birinchi matn\"), olindi: %+v", backups)
+	}
+
+	p, err := svc.Restore("cat:test", backups[0].ID)
+	if err != nil {
+		t.Fatalf("tiklanmadi: %v", err)
+	}
+	if p.Content != "birinchi matn" {
+		t.Errorf("tiklangan matn: %q", p.Content)
+	}
+	// Tiklashning o'zi ham nusxaga tushadi — orqaga qaytish yo'li ochiq.
+	if backups, _ = svc.Backups("cat:test"); len(backups) != 2 {
+		t.Errorf("tiklashdan keyin 2 ta nusxa kutilgan, bor: %d", len(backups))
+	}
+	if svc.Get("cat:test") != "birinchi matn" {
+		t.Errorf("kesh yangilanmadi: %q", svc.Get("cat:test"))
+	}
+}
+
+// TestBackupLimit — nusxalar cheksiz to'planib ketmasligi kerak.
+func TestBackupLimit(t *testing.T) {
+	svc := newService(t)
+	if _, err := svc.Create("cat:limit", "0", true); err != nil {
+		t.Fatalf("yaratilmadi: %v", err)
+	}
+	for i := 1; i <= 8; i++ {
+		text := strings.Repeat("x", i)
+		if _, err := svc.Update("cat:limit", prompts.Update{Content: &text}); err != nil {
+			t.Fatalf("yangilanmadi: %v", err)
+		}
+	}
+	backups, err := svc.Backups("cat:limit")
+	if err != nil {
+		t.Fatalf("nusxalar: %v", err)
+	}
+	if len(backups) != 5 {
+		t.Errorf("5 ta nusxa kutilgan, bor: %d", len(backups))
+	}
+	// Eng yangisi birinchi turadi.
+	if backups[0].Content != strings.Repeat("x", 7) {
+		t.Errorf("tartib buzilgan, birinchi nusxa: %q", backups[0].Content)
+	}
+}
+
+// TestRestoreWrongKey — boshqa promptning nusxasini tiklab bo'lmaydi.
+func TestRestoreWrongKey(t *testing.T) {
+	svc := newService(t)
+	if _, err := svc.Create("cat:a", "a-matn", true); err != nil {
+		t.Fatalf("yaratilmadi: %v", err)
+	}
+	if _, err := svc.Create("cat:b", "b-matn", true); err != nil {
+		t.Fatalf("yaratilmadi: %v", err)
+	}
+	next := "a-matn-2"
+	if _, err := svc.Update("cat:a", prompts.Update{Content: &next}); err != nil {
+		t.Fatalf("yangilanmadi: %v", err)
+	}
+	backups, _ := svc.Backups("cat:a")
+	if len(backups) == 0 {
+		t.Fatal("nusxa yaratilmadi")
+	}
+	if _, err := svc.Restore("cat:b", backups[0].ID); !errors.Is(err, prompts.ErrInvalid) {
+		t.Errorf("ErrInvalid kutilgan, olindi: %v", err)
+	}
+}
+
+// TestWarn — placeholder ogohlantirishlari. Saqlashni to'xtatmaydi,
+// lekin "{{ORDERS}} yozilmagan" holatni sezdirib turadi.
+func TestWarn(t *testing.T) {
+	svc := prompts.NewService(nil, nil)
+	svc.SetMeta(prompts.Meta{
+		Placeholders: map[string][]string{"block:order": {"{{ORDERS}}"}},
+		Known:        []string{"{{DATE}}", "{{ORDERS}}", "{{CATEGORY}}"},
+	})
+
+	if w := svc.Warn("block:order", "Buyurtmalar: {{ORDERS}}"); len(w) != 0 {
+		t.Errorf("ogohlantirish kutilmagan: %v", w)
+	}
+	if w := svc.Warn("block:order", "Buyurtmalar ro'yxati"); len(w) != 1 {
+		t.Errorf("{{ORDERS}} yo'qligi aytilishi kerak, olindi: %v", w)
+	}
+	if w := svc.Warn("base", "Bugun {{SANA}}"); len(w) != 1 ||
+		!strings.Contains(w[0], "{{SANA}}") {
+		t.Errorf("noma'lum belgi aytilishi kerak, olindi: %v", w)
+	}
+	if w := svc.Warn("base", "Bugun {{DATE}}"); len(w) != 0 {
+		t.Errorf("tanish belgi ogohlantirmasligi kerak: %v", w)
+	}
+}
+
+// TestHandlerExtras — yangi endpointlar: meta, nusxalar, tiklash, sinov.
+func TestHandlerExtras(t *testing.T) {
+	svc := newService(t)
+	svc.SetMeta(prompts.Meta{
+		Required:     []string{"base"},
+		Optional:     []string{"block:order"},
+		Placeholders: map[string][]string{"block:order": {"{{ORDERS}}"}},
+		Known:        []string{"{{ORDERS}}"},
+	})
+
+	h := prompts.NewHandler(svc)
+	// Sinov funksiyasi o'rniga soxta: haqiqiy model kerak emas.
+	h.SetTry(func(_ context.Context, req prompts.TryRequest) (any, error) {
+		return map[string]string{"key": req.Key, "content": req.Content}, nil
+	})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// meta
+	rec := do("GET", "/api/prompts-meta", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "{{ORDERS}}") {
+		t.Fatalf("meta: %d — %s", rec.Code, rec.Body)
+	}
+
+	// Kutilgan placeholder yozilmasa — saqlanadi, lekin ogohlantiriladi.
+	rec = do("POST", "/api/prompts", `{"key":"block:order","content":"Buyurtmalar"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("yaratish: %d — %s", rec.Code, rec.Body)
+	}
+	var created struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("javob JSON emas: %v", err)
+	}
+	if len(created.Warnings) != 1 {
+		t.Errorf("{{ORDERS}} yo'qligi haqida ogohlantirish kutilgan: %+v", created.Warnings)
+	}
+
+	// Tahrir → nusxa paydo bo'ladi.
+	if rec = do("PUT", "/api/prompts/block:order",
+		`{"content":"Buyurtmalar: {{ORDERS}}"}`); rec.Code != http.StatusOK {
+		t.Fatalf("tahrir: %d — %s", rec.Code, rec.Body)
+	}
+	rec = do("GET", "/api/prompt-backups/block:order", "")
+	var backups []models.PromptBackup
+	if err := json.Unmarshal(rec.Body.Bytes(), &backups); err != nil {
+		t.Fatalf("nusxalar JSON emas: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("1 ta nusxa kutilgan: %+v", backups)
+	}
+
+	// Tiklash.
+	body := `{"id":` + strconv.FormatUint(uint64(backups[0].ID), 10) + `}`
+	if rec = do("POST", "/api/prompt-restore/block:order", body); rec.Code != http.StatusOK {
+		t.Fatalf("tiklash: %d — %s", rec.Code, rec.Body)
+	}
+	if got := svc.Get("block:order"); got != "Buyurtmalar" {
+		t.Errorf("tiklangandan keyin kesh: %q", got)
+	}
+
+	// Sinov: bo'sh murojaat — 400; to'ldirilgani — 200.
+	if rec = do("POST", "/api/prompt-try/base", `{"content":"a","transcript":""}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("bo'sh sinov: %d", rec.Code)
+	}
+	if rec = do("POST", "/api/prompt-try/base",
+		`{"content":"a","transcript":"salom"}`); rec.Code != http.StatusOK {
+		t.Errorf("sinov: %d — %s", rec.Code, rec.Body)
+	}
+
+	// Sinov ulanmagan bo'lsa — 503.
+	bare := http.NewServeMux()
+	prompts.NewHandler(svc).Register(bare)
+	req := httptest.NewRequest("POST", "/api/prompt-try/base", strings.NewReader(`{"content":"a","transcript":"b"}`))
+	rec = httptest.NewRecorder()
+	bare.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("ulanmagan sinov: %d", rec.Code)
 	}
 }
