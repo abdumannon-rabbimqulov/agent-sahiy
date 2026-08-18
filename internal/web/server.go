@@ -17,6 +17,7 @@ import (
 	"sahiy-agent/internal/models"
 	"sahiy-agent/internal/prompts"
 	"sahiy-agent/internal/settings"
+	"sahiy-agent/internal/sources"
 	"sahiy-agent/internal/store"
 )
 
@@ -38,6 +39,11 @@ type Options struct {
 	// TryPrompt — /prompts dagi "Sinab ko'rish": saqlanmagan matnni
 	// haqiqiy model orqali o'tkazadi. nil bo'lsa endpoint 503 qaytaradi.
 	TryPrompt prompts.TryFunc
+
+	// Lookup — tashqi manbalar (delivery / daigou / support) ustidagi
+	// /api/source/* endpointlari uchun. main.go beradi; nil bo'lsa
+	// o'sha endpointlar 503 qaytaradi.
+	Lookup *sources.Sources
 }
 
 // Server statistika, tarix va kategoriyalarni ko'rsatadigan dashboard.
@@ -90,6 +96,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings", s.handleSettingsSet)
 	mux.HandleFunc("POST /api/interactions/{id}/send", s.handleApprove)
 	mux.HandleFunc("POST /api/interactions/{id}/reject", s.handleReject)
+
+	// Tashqi manbalar ustidagi o'z GET endpointlarimiz (sources.go).
+	s.registerSources(mux)
 
 	// Promptlar CRUD'i alohida paketda (internal/prompts/http.go).
 	s.prompts.Register(mux)

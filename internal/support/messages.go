@@ -99,6 +99,20 @@ func Transcript(msgs []Message) string {
 	return text
 }
 
+// NewMarker — javob berilmagan xabarlar boshlanadigan joydagi ajratgich.
+// Modelga aynan qaysi qatorlarga javob berayotgani ko'rsatilishi kerak:
+// oynada javob berilgan eski xabarlar ham turadi (kontekst uchun) va
+// ularsiz model eski savolga qayta javob yozib yuborishi mumkin.
+const NewMarker = "--- yangi xabar ---"
+
+// TranscriptAfter — Transcript bilan bir xil, lekin afterID dan keyingi
+// (ya'ni hali javobsiz) xabarlar oldiga NewMarker qo'yadi. afterID = 0
+// bo'lsa (suhbat birinchi marta ko'rilyapti) ajratgich qo'yilmaydi.
+func TranscriptAfter(msgs []Message, afterID int64) string {
+	text, _ := transcript(msgs, 0, afterID)
+	return text
+}
+
 // TranscriptTail suhbatning oxirgi n ta xabaridan transkript yasaydi va
 // nechta xabar ishlatilganini qaytaradi. n < MinHistory bo'lsa MinHistory
 // ishlatiladi; n <= 0 bo'lsa cheklov qo'yilmaydi (hammasi).
@@ -106,6 +120,12 @@ func Transcript(msgs []Message) string {
 // Tail (oxirgi) olinishi muhim: server qanday tartibda qaytarishidan qat'i
 // nazar, id bo'yicha saralangandan keyin eng yangi xabarlar tanlanadi.
 func TranscriptTail(msgs []Message, n int) (string, int) {
+	return transcript(msgs, n, 0)
+}
+
+// transcript — umumiy amalga oshirish. afterID > 0 bo'lsa shu id'dan
+// keyingi birinchi xabar oldiga NewMarker qo'yiladi.
+func transcript(msgs []Message, n int, afterID int64) (string, int) {
 	sorted := make([]Message, len(msgs))
 	copy(sorted, msgs)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
@@ -120,7 +140,12 @@ func TranscriptTail(msgs []Message, n int) (string, int) {
 	}
 
 	var b strings.Builder
+	marked := afterID <= 0 // 0 bo'lsa ajratgich umuman qo'yilmaydi
 	for _, m := range sorted {
+		if !marked && m.ID > afterID {
+			marked = true
+			b.WriteString(NewMarker + "\n")
+		}
 		text := m.Message
 		// Rasm xabarida `message` — bu URL. Uni xom holda Gemini'ga
 		// bermaymiz: rasm alohida tahlil qilinib, natijasi qo'shiladi.

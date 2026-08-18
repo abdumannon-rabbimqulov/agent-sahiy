@@ -128,15 +128,30 @@ func digitOnly(s string) bool {
 	return true
 }
 
-// fetch bitta so'rov: berilgan filtr va delivered qiymati bilan.
-func (l *Lookup) fetch(param, value string, delivered bool) ([]Order, error) {
+// FilterPath — bitta so'rovning to'liq yo'li (so'rov satri bilan).
+//
+// Alohida chiqarilgan, chunki sahiy/dashboard dasturi "qanday so'rov
+// ketyapti" degan savolga javob beradi — u ham AYNAN shu funksiyani
+// chaqiradi, aks holda ikkita nusxa vaqt o'tib bir-biridan uzoqlashardi.
+//
+// TrackParam / UserParam — qidiruv maydonlari nomi.
+const (
+	TrackParam = "track_number"
+	UserParam  = "user_id"
+)
+
+func FilterPath(param, value string, delivered bool) string {
 	q := url.Values{}
 	q.Set("page", "1")
 	q.Set("size", fmt.Sprint(pageSize))
 	q.Set(param, value)
 	q.Set("delivered", fmt.Sprint(delivered))
+	return filterPath + "?" + q.Encode()
+}
 
-	body, status, err := l.svc.Get(filterPath + "?" + q.Encode())
+// fetch bitta so'rov: berilgan filtr va delivered qiymati bilan.
+func (l *Lookup) fetch(param, value string, delivered bool) ([]Order, error) {
+	body, status, err := l.svc.Get(FilterPath(param, value, delivered))
 	if err != nil {
 		return nil, err
 	}
@@ -178,13 +193,13 @@ func (l *Lookup) find(param, value string) ([]Order, error) {
 
 // ByTrack track raqami bo'yicha qidiradi.
 func (l *Lookup) ByTrack(track string) ([]Order, error) {
-	return l.find("track_number", track)
+	return l.find(TrackParam, track)
 }
 
 // ByUser mijoz id'si bo'yicha qidiradi (eng yangilari birinchi emas —
 // server tartibida keladi).
 func (l *Lookup) ByUser(userID int64) ([]Order, error) {
-	return l.find("user_id", fmt.Sprint(userID))
+	return l.find(UserParam, fmt.Sprint(userID))
 }
 
 // Summary buyurtmalarni odam (va AI) o'qiydigan qisqa matnga aylantiradi.

@@ -31,6 +31,7 @@ import (
 	"sahiy-agent/internal/prompts"
 	"sahiy-agent/internal/service"
 	"sahiy-agent/internal/settings"
+	"sahiy-agent/internal/sources"
 	"sahiy-agent/internal/store"
 	"sahiy-agent/internal/support"
 	"sahiy-agent/internal/tgtext"
@@ -92,6 +93,7 @@ type app struct {
 	cloud     *groq.Client      // zaxira bulut modeli (GROQ_API_KEY bo'lsa), aks holda nil
 	set       *settings.Store   // dashboarddan boshqariladigan sozlamalar
 	prompts   *prompts.Service  // promptlar (bazadan, xotirada keshlangan)
+	src       *sources.Sources  // tashqi manbalar (delivery/daigou/support) — /api/source/*
 	cachePath string            // token cache fayli (DataDir ostida)
 }
 
@@ -218,6 +220,17 @@ func main() {
 		fmt.Println("ℹ️  Adminka buyurtmalari o'chiq — .env da ADMINKA_TOKEN_BEARER yo'q")
 	}
 
+	// Manbalar bitta joyda — agent ham, /api/source/* endpointlari ham,
+	// sahiy/* dasturlari ham shu yerdan o'qiydi.
+	a.src = &sources.Sources{
+		Orders:  a.ord,
+		Adminka: a.dg,
+		Chat: func() (*client.Client, error) {
+			c, _, err := a.apiClient()
+			return c, err
+		},
+	}
+
 	// Narx: .env dagi qiymat kod jadvalidan ustun turadi.
 	pricing.Set(cfg.PriceIn, cfg.PriceCachedIn, cfg.PriceOut)
 	if a.local != nil {
@@ -266,6 +279,7 @@ func main() {
 		Dev:       cfg.WebDev,
 		SendReply: a.sendReply, // dashboarddan tasdiqlangan javob
 		TryPrompt: a.tryPrompt, // /prompts dagi "Sinab ko'rish"
+		Lookup:    a.src,       // /api/source/* — tashqi manbalar
 	})
 	if cfg.AdminUser == "" || cfg.AdminPass == "" {
 		fmt.Println("⚠️  Dashboard parolsiz ochiq — .env da ADMIN_USER/ADMIN_PASS o'rnating")
@@ -535,7 +549,10 @@ func (a *app) handleChat(ctx context.Context, c *client.Client, senderID int64,
 	// ulardan oldingi CONTEXT_BEFORE ta xabar olinadi (token tejash).
 	prevID := a.track.LastID(ch.ID)
 	window := support.Window(msgs, prevID, a.cfg.ContextBefore, a.cfg.HistoryLimit)
-	transcript := support.Transcript(window)
+	// prevID — oxirgi javob berilgan xabar. Undan keyingilari ajratgich
+	// bilan belgilanadi, aks holda model oynadagi eski savolga qayta
+	// javob yozib yuborishi mumkin.
+	transcript := support.TranscriptAfter(window, prevID)
 	tr.add("📚", "%d ta xabar o'qildi: yangilari + %d ta kontekst (jami tarix %d ta)",
 		len(window), a.cfg.ContextBefore, len(msgs))
 
@@ -908,25 +925,31 @@ func (a *app) lookupOrders(tr *trace, ch support.Conversation, nums []string,
 }
 
 // deliveryOrders — birinchi manba (service API).
+//
+// Qidiruv va saralashning o'zi internal/sources da: dashboard endpointi
+// (/api/source/delivery) ham, bu yer ham AYNAN bir xil natija beradi.
+// Bu yerda qolgani — trace uchun izoh yozish.
 func (a *app) deliveryOrders(tr *trace, ch support.Conversation, nums []string) string {
 	if !a.ord.Enabled() {
 		tr.add("📦", "Yetkazma qidiruvi o'chiq (SERVICE_PHONE/PASSWORD yo'q)")
 		return ""
 	}
 
-	// Avval xabardagi raqamlar — eng aniq qidiruv.
+	// Avval xabardagi raqamlar — eng aniq qidiruv. Natijalar bitta
+	// ro'yxatga yig'iladi: Summary chegarasi (5 ta) va "jami N ta"
+	// izohi butun ro'yxat bo'yicha hisoblanishi kerak.
 	var all []orders.Order
 	for _, t := range nums {
-		list, err := a.ord.ByTrack(t)
-		if err != nil {
-			tr.add("⚠️", "Track %s qidiruvida xato: %v", t, err)
+		b := a.src.Delivery(sources.Query{Track: t})
+		if b.Error != "" {
+			tr.add("⚠️", "Track %s qidiruvida xato: %s", t, b.Error)
 			continue
 		}
-		if len(list) == 0 {
+		if b.Count == 0 {
 			continue
 		}
-		tr.add("📦", "Yetkazma: %s bo'yicha %d ta buyurtma", t, len(list))
-		all = append(all, list...)
+		tr.add("📦", "Yetkazma: %s bo'yicha %d ta buyurtma", t, b.Count)
+		all = append(all, b.Items...)
 	}
 	if len(all) > 0 {
 		return orders.Summary(all)
@@ -940,22 +963,23 @@ func (a *app) deliveryOrders(tr *trace, ch support.Conversation, nums []string) 
 		tr.add("📦", "Yetkazma: raqam ham, mijoz id'si ham yo'q — ko'rilmadi")
 		return ""
 	}
-	list, err := a.ord.ByUser(*ch.ClientID)
-	if err != nil {
-		tr.add("⚠️", "Mijoz %d yetkazmalarini olishda xato: %v", *ch.ClientID, err)
+	b := a.src.Delivery(sources.Query{ClientID: *ch.ClientID})
+	if b.Error != "" {
+		tr.add("⚠️", "Mijoz %d yetkazmalarini olishda xato: %s", *ch.ClientID, b.Error)
 		return ""
 	}
-	if len(list) == 0 {
+	if b.Count == 0 {
 		tr.add("❌", "Yetkazma: mijoz %d bo'yicha buyurtma topilmadi", *ch.ClientID)
 		return ""
 	}
-	tr.add("📦", "Yetkazma: mijoz %d bo'yicha %d ta buyurtma", *ch.ClientID, len(list))
-	return orders.Summary(list)
+	tr.add("📦", "Yetkazma: mijoz %d bo'yicha %d ta buyurtma", *ch.ClientID, b.Count)
+	return b.Summary
 }
 
 // daigouOrders — ikkinchi manba (adminka daigou-orders). Buyurtma raqami
 // (DG...) berilgan bo'lsa order_sn bo'yicha, uzun raqam bo'lsa express_num
-// bo'yicha, ikkalasi ham bo'lmasa mijoz id'si bo'yicha qidiradi.
+// bo'yicha, ikkalasi ham bo'lmasa mijoz id'si bo'yicha qidiradi —
+// bu tanlov internal/sources.Daigou ichida.
 func (a *app) daigouOrders(tr *trace, ch support.Conversation, nums []string) string {
 	if !a.dg.Enabled() {
 		tr.add("🚚", "Adminka qidiruvi o'chiq (ADMINKA_TOKEN_BEARER yo'q)")
@@ -964,24 +988,16 @@ func (a *app) daigouOrders(tr *trace, ch support.Conversation, nums []string) st
 
 	var all []daigou.Order
 	for _, n := range nums {
-		var (
-			list []daigou.Order
-			err  error
-		)
-		if strings.HasPrefix(strings.ToUpper(n), "DG") {
-			list, err = a.dg.ByOrderSN(n)
-		} else {
-			list, err = a.dg.ByExpressNum(n)
-		}
-		if err != nil {
-			tr.add("⚠️", "Adminka %s qidiruvida xato: %v", n, err)
+		b := a.src.Daigou(sources.Query{Track: n})
+		if b.Error != "" {
+			tr.add("⚠️", "Adminka %s qidiruvida xato: %s", n, b.Error)
 			continue
 		}
-		if len(list) == 0 {
+		if b.Count == 0 {
 			continue
 		}
-		tr.add("🚚", "Adminka: %s bo'yicha %d ta buyurtma", n, len(list))
-		all = append(all, list...)
+		tr.add("🚚", "Adminka: %s bo'yicha %d ta buyurtma", n, b.Count)
+		all = append(all, b.Raw...)
 	}
 	if len(all) > 0 {
 		return daigou.Summary(all)
@@ -990,17 +1006,17 @@ func (a *app) daigouOrders(tr *trace, ch support.Conversation, nums []string) st
 	if ch.ClientID == nil || *ch.ClientID == 0 {
 		return ""
 	}
-	list, err := a.dg.ByUser(*ch.ClientID)
-	if err != nil {
-		tr.add("⚠️", "Mijoz %d adminka buyurtmalarida xato: %v", *ch.ClientID, err)
+	b := a.src.Daigou(sources.Query{ClientID: *ch.ClientID})
+	if b.Error != "" {
+		tr.add("⚠️", "Mijoz %d adminka buyurtmalarida xato: %s", *ch.ClientID, b.Error)
 		return ""
 	}
-	if len(list) == 0 {
+	if b.Count == 0 {
 		tr.add("❌", "Adminka: mijoz %d bo'yicha buyurtma topilmadi", *ch.ClientID)
 		return ""
 	}
-	tr.add("🚚", "Adminka: mijoz %d bo'yicha %d ta buyurtma", *ch.ClientID, len(list))
-	return daigou.Summary(list)
+	tr.add("🚚", "Adminka: mijoz %d bo'yicha %d ta buyurtma", *ch.ClientID, b.Count)
+	return b.Summary
 }
 
 // sendToStaff tayyor matnni xodimlar guruhiga yuboradi va Escalation yozuvini

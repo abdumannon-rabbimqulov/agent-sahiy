@@ -6,11 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 
 	"sahiy-agent/internal/daigou"
+	"sahiy-agent/internal/envfile"
 )
 
 func main() {
@@ -29,12 +28,12 @@ func main() {
 	envPath := flag.String("env", ".env", ".env fayl yo'li")
 	flag.Parse()
 
-	token := firstNonEmpty(os.Getenv("ADMINKA_TOKEN_BAARER"), os.Getenv("ADMINKA_TOKEN_BEARER"))
+	token := envfile.FirstNonEmpty(os.Getenv("ADMINKA_TOKEN_BEARER"))
 	baseURL := os.Getenv("USER_BASE_URL")
 	if token == "" || baseURL == "" {
-		env, path := loadEnvFile(*envPath)
+		env, path := envfile.Find(*envPath)
 		if token == "" {
-			token = firstNonEmpty(env["ADMINKA_TOKEN_BAARER"], env["ADMINKA_TOKEN_BEARER"])
+			token = envfile.FirstNonEmpty(env["ADMINKA_TOKEN_BEARER"])
 		}
 		if baseURL == "" {
 			baseURL = env["USER_BASE_URL"]
@@ -150,74 +149,4 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// loadEnvFile — .env ni topadi: berilgan yo'l, so'ng joriy papkadan yuqoriga
-// qarab har bir papkada ".env" va "sahiy-agent/.env" tekshiriladi.
-func loadEnvFile(explicit string) (map[string]string, string) {
-	var candidates []string
-	if explicit != "" && explicit != ".env" {
-		candidates = append(candidates, explicit)
-	}
-	// Manba fayl joylashgan papka (go run /path/.../main.go holati uchun).
-	if _, file, _, ok := runtime.Caller(0); ok {
-		dir := filepath.Dir(file)
-		for i := 0; i < 4; i++ {
-			candidates = append(candidates, filepath.Join(dir, ".env"))
-			dir = filepath.Dir(dir)
-		}
-	}
-	if dir, err := os.Getwd(); err == nil {
-		for {
-			candidates = append(candidates,
-				filepath.Join(dir, ".env"),
-				filepath.Join(dir, "sahiy-agent", ".env"))
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-	for _, c := range candidates {
-		if env := loadEnv(c); len(env) > 0 {
-			return env, c
-		}
-	}
-	return map[string]string{}, ""
-}
-
-func loadEnv(path string) map[string]string {
-	env := map[string]string{}
-	f, err := os.Open(path)
-	if err != nil {
-		return env
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		v = strings.TrimSpace(v)
-		v = strings.Trim(v, `"'`)
-		env[strings.TrimSpace(k)] = v
-	}
-	return env
 }

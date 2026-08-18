@@ -230,6 +230,10 @@ func isOrder(m Order) bool {
 // olinadi; hisoblanadigan qatorlar uchun fn ishlatiladi.
 type row struct {
 	label string
+	// field — JSON javobidagi maydon nomi (Fields). Label odam uchun,
+	// field mashina uchun: ikkalasi ham SHU jadvaldan olinadi, ya'ni
+	// yangi maydon qo'shilsa terminal ham, GET javobi ham birga o'sadi.
+	field string
 	key   string
 	paths []string
 	fn    func(Order) string
@@ -240,23 +244,60 @@ type row struct {
 // AI ham shuni ko'radi. Yo'llar haqiqiy javobdan olingan (aniq yo'l topilmasa
 // Pick kalit bo'yicha chuqur qidiruvga o'tadi).
 var rows = []row{
-	{label: "Profil ID", key: "user_id"},
-	{label: "Holat", key: "status", fn: statusText},
-	{label: "Summa", key: "amount", fn: amountText},
-	{label: "Qabul qiluvchi", key: "receiver_name", paths: []string{"address.receiver_name"}},
-	{label: "Viloyat", key: "province", paths: []string{"address.province"}},
-	{label: "Hudud", key: "area", paths: []string{"address.area"}},
-	{label: "Shahar/tuman", key: "sub_area", paths: []string{"address.sub_area"}},
-	{label: "Ko'cha va uy", key: "street", paths: []string{"address.street", "address.address"}},
-	{label: "Yetkazish yo'nalishi", key: "express_line"},
-	{label: "Trek raqami", key: "express_num", paths: []string{"express.express_num"}},
-	{label: "Posilka", key: "package_name", paths: []string{"express.package.package_name"}},
-	{label: "Soni", key: "quantity", paths: []string{"express.package.qty"}},
-	{label: "Buyurtma yaratilgan", key: "created_at"},
-	{label: "Yo'lga chiqqan", key: "shipped_at", paths: []string{"express.package.order.shipped_at"}},
-	{label: "Qadoqlangan", key: "packed_at", paths: []string{"express.package.order.packed_at"}},
-	{label: "Omborga kirgan", key: "in_storage_at", paths: []string{"express.package.in_storage_at"}},
-	{label: "Mijoz turi", fn: ClientType},
+	{label: "Profil ID", field: "user_id", key: "user_id"},
+	{label: "Holat", field: "status", key: "status", fn: statusText},
+	{label: "Summa", field: "amount", key: "amount", fn: amountText},
+	{label: "Qabul qiluvchi", field: "receiver_name", key: "receiver_name", paths: []string{"address.receiver_name"}},
+	{label: "Viloyat", field: "province", key: "province", paths: []string{"address.province"}},
+	{label: "Hudud", field: "area", key: "area", paths: []string{"address.area"}},
+	{label: "Shahar/tuman", field: "sub_area", key: "sub_area", paths: []string{"address.sub_area"}},
+	{label: "Ko'cha va uy", field: "street", key: "street", paths: []string{"address.street", "address.address"}},
+	{label: "Yetkazish yo'nalishi", field: "express_line", key: "express_line"},
+	{label: "Trek raqami", field: "express_num", key: "express_num", paths: []string{"express.express_num"}},
+	{label: "Posilka", field: "package_name", key: "package_name", paths: []string{"express.package.package_name"}},
+	{label: "Soni", field: "quantity", key: "quantity", paths: []string{"express.package.qty"}},
+	{label: "Buyurtma yaratilgan", field: "created_at", key: "created_at"},
+	{label: "Yo'lga chiqqan", field: "shipped_at", key: "shipped_at", paths: []string{"express.package.order.shipped_at"}},
+	{label: "Qadoqlangan", field: "packed_at", key: "packed_at", paths: []string{"express.package.order.packed_at"}},
+	{label: "Omborga kirgan", field: "in_storage_at", key: "in_storage_at", paths: []string{"express.package.in_storage_at"}},
+	{label: "Mijoz turi", field: "client_type", fn: ClientType},
+}
+
+// value — qatorning shu buyurtmadagi qiymati (bo'sh bo'lishi mumkin).
+func (r row) value(o Order) string {
+	if r.fn != nil {
+		return r.fn(o)
+	}
+	return Pick(o, r.key, r.paths...)
+}
+
+// Fields — bitta buyurtmaning saralangan maydonlari: xom javobdagi yuzlab
+// kalitdan faqat `rows` da kelishilganlari, JSON nomlari bilan. Bo'sh
+// qiymatlar tushirib qoldiriladi (yo'q maydon "" bo'lib chalkashtirmasin).
+//
+// Summary bilan bir manba: HTTP javobi ham, AI ko'radigan matn ham
+// bir xil maydonlar to'plamiga tayanadi.
+func Fields(o Order) map[string]string {
+	out := make(map[string]string, len(rows)+1)
+	if sn := Pick(o, "order_sn"); sn != "" {
+		out["order_sn"] = sn
+	}
+	for _, r := range rows {
+		if v := r.value(o); v != "" {
+			out[r.field] = v
+		}
+	}
+	return out
+}
+
+// Sorted — yangisidan eskisiga saralangan nusxa (Summary bilan bir tartib).
+func Sorted(list []Order) []Order {
+	out := make([]Order, len(list))
+	copy(out, list)
+	sort.SliceStable(out, func(i, j int) bool {
+		return orderTime(out[i]) > orderTime(out[j])
+	})
+	return out
 }
 
 // statusNames — buyurtmaning raqamli holati. Javobdagi status_name xitoycha
@@ -295,7 +336,13 @@ func Summary(list []Order) string {
 	if len(list) == 0 {
 		return ""
 	}
-	shown := list
+	// Yangisidan eskisiga. Saralashsiz API qaytargan tartib olinardi va
+	// 58 ta buyurtmasi bor mijozga tasodifiy 5 tasi ko'rsatilardi —
+	// "buyurtmam qachon keladi?" degan savolga eski buyurtma bo'yicha
+	// javob ketardi. Yetkazma tomonida saralash bor (orders.go).
+	sorted := Sorted(list)
+
+	shown := sorted
 	if len(shown) > maxShown {
 		shown = shown[:maxShown]
 	}
@@ -308,13 +355,7 @@ func Summary(list []Order) string {
 		}
 		fmt.Fprintf(&b, "\n• Buyurtma %s\n", sn)
 		for _, r := range rows {
-			v := ""
-			if r.fn != nil {
-				v = r.fn(o)
-			} else {
-				v = Pick(o, r.key, r.paths...)
-			}
-			if v != "" {
+			if v := r.value(o); v != "" {
 				fmt.Fprintf(&b, "  %s: %s\n", r.label, v)
 			}
 		}
@@ -492,3 +533,9 @@ func trim(b []byte, n int) []byte {
 	}
 	return append(b[:n:n], []byte("...")...)
 }
+
+// orderTime — saralash uchun buyurtma sanasi. Summary jadvalidagi
+// "Buyurtma yaratilgan" bilan bir xil maydon (rows, key: created_at);
+// Pick uni ichma-ich obyektlardan ham topadi. Topilmasa bo'sh satr —
+// bunday yozuvlar ro'yxat oxirida qoladi.
+func orderTime(o Order) string { return Pick(o, "created_at") }

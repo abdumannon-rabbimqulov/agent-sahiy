@@ -16,20 +16,28 @@ import (
 // matn yozmaydi: model murojaatni kategoriyaga ajratadi va matndan buyurtma
 // raqamlarini chiqarib beradi, harakatni esa kod tanlaydi.
 //
-// Kutilayotgan JSON shakllari:
+// Kutilayotgan JSON:
 //
-//	{"dashboard":true,"adminka":true,"order_sn":[],"express_num":[]}
-//	{"incorrect_order":true,"order_sn":[],"express_num":[]}
-//	{"deliver":true}
-//	{"category":false}
+//	{"kind":"order_status","order_sn":["SN123"],"express_num":[]}
+//
+// `kind` — enum, ya'ni bir vaqtda ikkita kategiya tanlanishi MUMKIN EMAS.
+// Bu shunchaki qulaylik emas: to'rtta alohida bayroq bo'lganda model
+// hammasini `true` qilib qo'yardi va har murojaat eng "og'ir" kategoriyaga
+// (incorrect_order) tushib ketardi — 17-avgustdagi 5 ta suhbatning 5 tasi
+// shunday buzilgan.
 type Decision struct {
-	Dashboard      bool `json:"dashboard"`
-	Adminka        bool `json:"adminka"`
-	IncorrectOrder bool `json:"incorrect_order"`
-	Deliver        bool `json:"deliver"`
-	// Category — model faqat `false` qaytaradi ("mos kategoriya yo'q").
-	// Ko'rsatkich, chunki maydonning umuman yo'qligi ham ma'noli.
-	Category   *bool    `json:"category"`
+	// Kind — asosiy maydon (yangi shakl).
+	KindField string `json:"kind"`
+
+	// Quyidagi bayroqlar — ESKI shakl. Bazadagi prompt hali yangilanmagan
+	// bo'lsa model shularni qaytaradi; Kind() ular bilan ham ishlaydi.
+	// Prompt yangilangach bu maydonlar bo'sh keladi.
+	Dashboard      bool `json:"dashboard,omitempty"`
+	Adminka        bool `json:"adminka,omitempty"`
+	IncorrectOrder bool `json:"incorrect_order,omitempty"`
+	Deliver        bool `json:"deliver,omitempty"`
+	// Category — eski shaklda model `false` qaytaradi ("mos kategoriya yo'q").
+	Category   *bool    `json:"category,omitempty"`
 	OrderSN    []string `json:"order_sn"`
 	ExpressNum []string `json:"express_num"`
 
@@ -52,10 +60,25 @@ const (
 	KindNone Kind = "none"
 )
 
-// Kind qaror turini aniqlaydi. Model bir vaqtda bir nechta bayroq qaytarsa
-// eng "og'ir" holat ustun keladi: muammo (incorrect_order) → buyurtma holati
+// Kind qaror turini aniqlaydi.
+//
+// Avval yangi `kind` maydoni o'qiladi. U bo'sh bo'lsa (bazadagi prompt
+// hali eski shaklda yozilgan) eski bayroqlarga qaytiladi: bir nechtasi
+// true bo'lsa eng "og'ir" holat ustun keladi — muammo → buyurtma holati
 // → umumiy savol.
 func (d Decision) Kind() Kind {
+	switch Kind(strings.TrimSpace(d.KindField)) {
+	case KindOrderStatus:
+		return KindOrderStatus
+	case KindIncorrectOrder:
+		return KindIncorrectOrder
+	case KindDeliver:
+		return KindDeliver
+	case KindNone:
+		return KindNone
+	}
+
+	// Eski shakl.
 	switch {
 	case d.IncorrectOrder:
 		return KindIncorrectOrder
@@ -68,10 +91,16 @@ func (d Decision) Kind() Kind {
 }
 
 // Sources — buyurtma ma'lumoti qaysi manbalardan olinishi kerak:
-// delivery — Dashboard (O'zbekistondagi holat), daigou — Adminka (Xitoy
-// tomoni). Model ikkala bayroqni ham qo'ymasa ikkalasi ham so'raladi —
-// modelning xatosi tufayli javob ma'lumotsiz qolmasligi kerak.
+// delivery (O'zbekistondagi holat) va daigou (Xitoy tomoni).
+//
+// Yangi shaklda model manbani tanlamaydi — buni model emas, kod hal
+// qiladi: buyurtma haqidagi savolga to'liq javob berish uchun ikkala
+// tomon ham kerak. Eski shaklda bayroqlar hurmat qilinadi, lekin
+// ikkalasi ham qo'yilmagan bo'lsa baribir ikkalasi so'raladi.
 func (d Decision) Sources() (delivery, daigou bool) {
+	if d.KindField != "" {
+		return true, true
+	}
 	if !d.Dashboard && !d.Adminka {
 		return true, true
 	}
@@ -84,11 +113,11 @@ func (d Decision) Label() string {
 	case KindIncorrectOrder:
 		return "Buyurtmada muammo (incorrect_order)"
 	case KindOrderStatus:
-		return "Buyurtma holati (dashboard/adminka)"
+		return "Buyurtma holati (order_status)"
 	case KindDeliver:
 		return "Yetkazib berish shartlari (deliver)"
 	}
-	return "Kategoriyasiz (category:false)"
+	return "Kategoriyasiz (none)"
 }
 
 // Numbers — modeldan kelgan buyurtma va ekspress raqamlar bir ro'yxatda
@@ -199,8 +228,10 @@ func extractJSON(out string) string {
 
 // DecisionSchema — "base" prompti qaytaradigan qaror shakli.
 //
-// Barcha bayroqlar `required`: model "bu kategoriya emas" degani uchun ham
-// aniq `false` yozadi, ya'ni maydonning yo'qligi noaniqlik tug'dirmaydi.
+// `kind` — enum: model faqat SHU to'rttadan bittasini yoza oladi.
+// Ilgari to'rtta alohida bayroq bor edi va sxema hammasini majburiy
+// qilgach model hammasini `true` qilib qo'ydi — natijada har murojaat
+// "buyurtmada muammo" bo'lib chiqdi. Enum bu xatoni imkonsiz qiladi.
 //
 // maxItems SHART: chegarasiz massivda 8B model bir xil raqamni takrorlab
 // to'ldiraveradi va JSON token chegarasida kesilib, umuman o'qilmay
@@ -208,15 +239,11 @@ func extractJSON(out string) string {
 var DecisionSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "dashboard":       {"type": "boolean"},
-    "adminka":         {"type": "boolean"},
-    "incorrect_order": {"type": "boolean"},
-    "deliver":         {"type": "boolean"},
-    "category":        {"type": "boolean"},
-    "order_sn":        {"type": "array", "items": {"type": "string"}, "maxItems": 5},
-    "express_num":     {"type": "array", "items": {"type": "string"}, "maxItems": 5}
+    "kind": {"type": "string", "enum": ["order_status","incorrect_order","deliver","none"]},
+    "order_sn":    {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+    "express_num": {"type": "array", "items": {"type": "string"}, "maxItems": 5}
   },
-  "required": ["dashboard","adminka","incorrect_order","deliver","category","order_sn","express_num"],
+  "required": ["kind","order_sn","express_num"],
   "additionalProperties": false
 }`)
 
