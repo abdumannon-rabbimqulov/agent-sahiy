@@ -17,9 +17,9 @@ Pastdagi jadvallarda URL'lar shu base'ga nisbatan yozilgan.
 
 ## 1. Ma'lumot olinadigan GET so'rovlar
 
-Bularning uchalasi ham `internal/sources` orqali o'tadi va
-`/api/source/*` endpointlarimiz aynan shularni chaqiradi
-(qarang: `docs/get-endpointlar.md`).
+Bularning uchalasi ham `internal/sources` orqali o'tadi (har biri alohida
+faylda) va `/api/dashboard`, `/api/adminka`, `/api/support` endpointlarimiz
+aynan shularni chaqiradi (qarang: `docs/get-endpointlar.md`).
 
 ### 1.1. Yetkazma buyurtmalari — **D**
 
@@ -37,12 +37,13 @@ GET /api/v2/admin/delivery/orders/filter
   `user_id` (= support'dagi `client_id`).
 - Javob: `{"ret":..,"msg":..,"data":{"orders":[...],"total_items":N}}`.
   Buyurtma topilmasa `data` obyekt emas, **bo'sh massiv** `[]` bo'lib keladi.
-- Olinadigan maydonlar (`orders.Order`): `id`, `order_id`, `user_id`,
-  `full_name`, `phone`, `city`, `express_num`, `status`, `delivered`,
-  `payment_status`, `payment_fee`, `weight`, `created_at`, `paid_at`,
-  `delivered_at`, `comment`, `station.{name,address}`,
-  `delivery_address.{branch_name,branch_address}`. Qolgani tashlanadi.
-- Modelga: `orders.Summary()` — eng yangi **5 tasi**.
+- Olinadigan maydonlar (`orders.Order`) — **faqat shu sakkiztasi**:
+  `full_name`, `phone`, `address`, `location_number`, `express_num`,
+  `branch_name`, `created_at`, `user_id`. Qolgani tashlanadi.
+  `branch_name` javobda ba'zan yuqori darajada, ba'zan `delivery_address`
+  ichida keladi — ikkalasi ham o'qiladi (`Order.Branch()`).
+- Modelga: `orders.Summary()` — eng yangi **5 tasi**. Zanjirda prompt
+  `{"dashboard": true}` qaytarganda shu matn keyingi promptga qo'shiladi.
 
 ### 1.2. Adminka (daigou) buyurtmalari — **A**
 
@@ -80,14 +81,16 @@ GET /api/v1/support.chat.message/conversation/{conversation_id}?page=1&limit={N}
 
 - Kod: `internal/support/messages.go` — `FetchMessages()`
 - Auth: `Authorization: Bearer` (admin login, 1.4-band)
-- `limit` — `HISTORY_LIMIT` dan kam bo'lmaydi (aks holda oxirgi N ta xabar
-  to'liq yig'ilmaydi).
+- `limit` — standart **10**: modelga eng oxirgi 10 ta xabar ketadi
+  (`sources.maxMessages`, agent yo'lida `maxWindow`). Suhbatda 200 ta xabar
+  bo'lsa ham promptga 10 tasi kiradi — eskilari savolga javob bermaydi,
+  lekin har murojaatda token yeydi.
 - Javob: `{"data":[ ... ]}`.
 - Olinadigan maydonlar (`support.Message`): `id`, `sender_id`, `sender_type`
   (`client`/`agent`), `conversation_id`, `message`, `content`, `status`,
   `support_field`, `seen_at`, `created_at`, `updated_at`.
 - Rasm: server `content` da `"image"` deb yozadi, URL esa `message` da keladi.
-- Modelga: `Window()` bilan kesilgan oyna → `TranscriptAfter()`.
+- Modelga: id bo'yicha saralanib, oxirgi 10 tasi → `TranscriptAfter()`.
 
 ### 1.4. Loginlar (token olish)
 
@@ -122,7 +125,7 @@ body: {"type":"client","state":[1,2,3],"client_id":N}
 ## 2. Yozadigan so'rovlar (agentning javob qaytarish yo'li)
 
 Bular ma'lumot olmaydi — ro'yxat to'liq bo'lishi uchun keltirilgan.
-**`internal/sources` va `/api/source/*` bularning birortasini chaqirmaydi.**
+**`internal/sources` va `/api/dashboard|adminka|support` bularning birortasini chaqirmaydi.**
 
 | Metod | URL | Server | Kod | Nima qiladi |
 |---|---|---|---|---|
@@ -153,10 +156,8 @@ Telegram MTProto orqali ishlaydi (`gotd`, `internal/userbot`) — HTTP so'rov em
 ```
 so'rov                                     →  bizning endpoint
 ────────────────────────────────────────────────────────────────
-D  GET  delivery/orders/filter (×2)        →  GET /api/source/delivery
-A  GET  admin/daigou-orders (≤5 sahifa)    →  GET /api/source/daigou
-S  GET  support.chat.message/conversation  →  GET /api/source/support
+D  GET  delivery/orders/filter (×2)        →  GET /api/dashboard
+A  GET  admin/daigou-orders (≤5 sahifa)    →  GET /api/adminka
+S  GET  support.chat.message/conversation  →  GET /api/support
 S  POST support.chat.conversation/filter   ┘  (client_id bo'yicha suhbat topish)
-
-hammasi birga                              →  GET /api/source/all
 ```
