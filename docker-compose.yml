@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    container_name: sahiy-api
+    ports:
+      # Auth yo'q — shuning uchun faqat shu mashinaga ochiladi.
+      # Tashqaridan kerak bo'lsa: "8080:8080"
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Konteyner ichida har doim :8080 tinglaydi; tashqi portni
+      # yuqoridagi `ports` o'zgartiradi.
+      WEB_ADDR: ":8080"
+    volumes:
+      # token.json / service-token.json ish katalogiga yoziladi —
+      # named volume ularni restart oralig'ida saqlab qoladi.
+      - sahiy-tokens:/app
+      # .env faqat o'qish uchun; volume ustiga ichma-ich mount qilinadi.
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+
+volumes:
+  sahiy-tokens:

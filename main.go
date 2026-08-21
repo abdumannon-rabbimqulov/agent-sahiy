@@ -210,8 +210,16 @@ func main() {
 	http.HandleFunc("/api/messages", messagesHandler)
 	http.HandleFunc("/api/orders", ordersHandler)
 	http.HandleFunc("/api/dashboard", dashboardHandler)
+
+	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
+	http.HandleFunc("/openapi.json", openapiHandler)
+	http.HandleFunc("/redoc", redocHandler)
+	http.HandleFunc("/docs", docsHandler)
+	http.HandleFunc("/", docsHandler) // "/" → hujjat, qolgani → 404
+
 	log.Println("tinglanmoqda:", addr,
-		"— POST /api/chats, GET /api/messages?conversation_id=..,",
+		"— hujjat: http://localhost"+addr+"/docs |",
+		"POST /api/chats, GET /api/messages?conversation_id=..,",
 		"GET /api/orders?user_id=.., GET /api/dashboard?user_id=..")
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

@@ -1,0 +1,9 @@
+.git
+.idea
+.env
+token.json
+service-token.json
+docs
+*.md
+Dockerfile
+docker-compose.yml
