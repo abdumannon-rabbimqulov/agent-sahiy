@@ -11,7 +11,8 @@
   "tags": [
     { "name": "support", "description": "api.market.sahiy.uz — admin login (token.json)" },
     { "name": "adminka", "description": "api.sahiy.uz/api/admin — ADMINKA_TOKEN_BEARER" },
-    { "name": "delivery", "description": "api.sahiy.uz/api/v2/admin — service login (service-token.json)" }
+    { "name": "delivery", "description": "api.sahiy.uz/api/v2/admin — service login (service-token.json)" },
+    { "name": "solishtirish", "description": "adminka + delivery — ikki manbani trek raqami orqali taqqoslash" }
   ],
   "paths": {
     "/api/chats": {
@@ -153,6 +154,75 @@
           "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
+    },
+    "/api/problem": {
+      "get": {
+        "tags": ["solishtirish"],
+        "summary": "To'langan, lekin kelmagan buyurtmalar",
+        "description": "Adminkadagi **to'langan** buyurtmalar bilan dashboarddagi **kelgan** yetkazmalarni `express_num` (trek raqami) orqali solishtiradi va dashboardda uchramaganlarini qaytaradi.\n\n`user_id`, `order_sn` yoki `express_num` dan kamida bittasi shart, aks holda 400.\n\n`reason`: `trek_yoq` — to'langan, lekin Xitoyda hali trek berilmagan; `dashboardda_yoq` — trek bor, lekin yetkazmaga tushmagan (asosiy muammo).",
+        "parameters": [
+          { "name": "user_id", "in": "query", "description": "Ilova Profil ID = support'dagi `client_id`", "schema": { "type": "integer", "format": "int64" }, "example": 7903808 },
+          { "name": "order_sn", "in": "query", "description": "Buyurtma raqami (DG...)", "schema": { "type": "string" }, "example": "DG60597226" },
+          { "name": "express_num", "in": "query", "description": "Trek raqami — `track` va `track_number` ham qabul qilinadi", "schema": { "type": "string" }, "example": "79021428785596" },
+          { "name": "track", "in": "query", "description": "`express_num` ning muqobil nomi", "schema": { "type": "string" } },
+          { "name": "track_number", "in": "query", "description": "`express_num` ning muqobil nomi", "schema": { "type": "string" } },
+          { "name": "size", "in": "query", "description": "Bir sahifadagi soni", "schema": { "type": "integer", "default": 50 } },
+          { "name": "max_pages", "in": "query", "description": "Ko'pi bilan shuncha sahifa o'qiladi", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Solishtirish natijasi",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProblemResponse" },
+                "example": {
+                  "user_id": 7903808,
+                  "adminka_count": 3,
+                  "dashboard_count": 1,
+                  "missing_count": 1,
+                  "missing": [
+                    { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "", "package_name": "", "quantity": 1, "created_at": "2026-06-18 16:20:12", "shipped_at": "", "packed_at": "", "in_storage_at": "", "reason": "trek_yoq" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      },
+      "post": {
+        "tags": ["solishtirish"],
+        "summary": "To'langan, lekin kelmagan buyurtmalar (JSON body)",
+        "description": "GET bilan bir xil — shartlar body'da beriladi.",
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProblemFilter" }, "example": { "user_id": 7903808, "size": 50 } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Solishtirish natijasi",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProblemResponse" },
+                "example": {
+                  "user_id": 7903808,
+                  "adminka_count": 3,
+                  "dashboard_count": 1,
+                  "missing_count": 1,
+                  "missing": [
+                    { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "", "package_name": "", "quantity": 1, "created_at": "2026-06-18 16:20:12", "shipped_at": "", "packed_at": "", "in_storage_at": "", "reason": "trek_yoq" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
     }
   },
   "components": {
@@ -213,6 +283,38 @@
           "conversation_id": { "type": "integer", "format": "int64" },
           "count": { "type": "integer" },
           "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } }
+        }
+      },
+      "ProblemFilter": {
+        "type": "object",
+        "description": "Qidiruv sharti — uchtasidan kamida bittasi to'ldiriladi.",
+        "properties": {
+          "user_id": { "type": "integer", "format": "int64", "description": "Ilova Profil ID" },
+          "order_sn": { "type": "string", "description": "Buyurtma raqami (DG...)" },
+          "express_num": { "type": "string", "description": "Trek raqami" },
+          "size": { "type": "integer", "default": 50 },
+          "max_pages": { "type": "integer", "default": 20 }
+        }
+      },
+      "ProblemOrder": {
+        "allOf": [
+          { "$ref": "#/components/schemas/AdminkaOrder" },
+          {
+            "type": "object",
+            "properties": {
+              "reason": { "type": "string", "enum": ["trek_yoq", "dashboardda_yoq"], "description": "trek_yoq — trek hali berilmagan; dashboardda_yoq — trek bor, lekin yetkazmada yo'q" }
+            }
+          }
+        ]
+      },
+      "ProblemResponse": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "integer", "format": "int64" },
+          "adminka_count": { "type": "integer", "description": "adminkadagi to'langan buyurtmalar soni" },
+          "dashboard_count": { "type": "integer", "description": "dashboardda topilgan trek raqamlari soni" },
+          "missing_count": { "type": "integer" },
+          "missing": { "type": "array", "items": { "$ref": "#/components/schemas/ProblemOrder" } }
         }
       },
       "AdminkaOrder": {

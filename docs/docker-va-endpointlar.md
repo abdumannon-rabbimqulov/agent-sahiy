@@ -10,7 +10,7 @@ turgan konteynerdan olingan (ism/telefon kabi shaxsiy ma'lumot yashirilgan).
 
 ## 1. Umumiy chizma
 
-Bitta Go jarayoni 4 ta lokal endpoint ochadi (`main.go:209-212`) va ularni
+Bitta Go jarayoni 5 ta lokal endpoint ochadi (`main.go` dagi `main()`) va ularni
 **uchta boshqa-boshqa tashqi serverga** ulaydi. Har server o'z autentifikatsiyasi
 bilan ishlaydi:
 
@@ -27,8 +27,10 @@ bilan ishlaydi:
         ├─ GET  /api/orders ─── ordersHandler ────► A: api.sahiy.uz     │
         │           │                    .env dagi ADMINKA_TOKEN_BEARER│
         │           │                                                  │
-        └─ GET  /api/dashboard ─ dashboardHandler ► D: api.sahiy.uz     │
-                    │                    service-token.json            │
+        ├─ GET  /api/dashboard ─ dashboardHandler ► D: api.sahiy.uz     │
+        │           │                    service-token.json            │
+        │           │                                                  │
+        └─ GET|POST /api/problem ─ problemHandler ► A + D (solishtirish)│
                     └──────────────────────────────────────────────────┘
 ```
 
@@ -366,6 +368,104 @@ orqali bog'lanadi (adminkadagi `express_num` = delivery'dagi `express_num`).
 
 ---
 
+## 5a. `GET|POST /api/problem` — to'langan, lekin kelmagan buyurtmalar
+
+4- va 5-bo'limdagi ikki manbani **avtomatik solishtiradi**: adminkada mijozning
+hamma to'langan buyurtmalari bor, dashboardda esa faqat yetkazmaga tushganlari.
+Farqi — "pul to'langan, lekin posilka kelmagan" ro'yxati.
+
+Bog'lovchi kalit — **trek raqami**: adminkadagi `express_num` = dashboarddagi
+`express_num`.
+
+### So'rov
+
+GET ham, POST ham ishlaydi (`main.go` dagi `problemHandler`):
+
+```
+GET  /api/problem?user_id=7903808
+GET  /api/problem?order_sn=DG60597226
+GET  /api/problem?express_num=79021428785596     # track / track_number ham bo'ladi
+POST /api/problem   {"user_id":7903808,"size":50}
+```
+
+| Parametr | Ma'nosi |
+|---|---|
+| `user_id` | Ilova Profil ID = support'dagi `client_id` |
+| `order_sn` | buyurtma raqami (`DG...`) |
+| `express_num` / `track` / `track_number` | trek raqami |
+| `size` | bir sahifadagi soni, standart 50 |
+| `max_pages` | ko'pi bilan shuncha sahifa o'qiladi, standart 20 |
+
+Uchala qidiruv maydonidan hech biri bo'lmasa — 400.
+
+### Zanjir (`support/problem.go`)
+
+1. `FindProblemOrders` avval adminkadan **hamma sahifani** yig'adi
+   (`fetchAllOrders` → `FetchOrders`, to'liq sahifa kelsa keyingisi so'raladi).
+   `/api/orders` dagi `size=10` solishtirish uchun yetarli emas.
+2. Dashboard tomoni (`fetchArrivedTracks`):
+   - `user_id` berilgan bo'lsa — butun yetkazma ro'yxati bir marta olinadi;
+   - berilmagan bo'lsa (`order_sn`/trek bo'yicha qidiruv) — 1-qadamda topilgan
+     buyurtmaning `user_id` si ishlatiladi, u ham bo'lmasa har bir trek alohida
+     so'raladi.
+   - To'xtash sharti — **bo'sh sahifa**: `FetchDelivery` bitta chaqiruvda
+     `delivered=false` va `true` ni birlashtirgani uchun "kam qatorli sahifa"
+     ishonchsiz.
+3. Kelgan treklar `map` ga yig'iladi, kalit `strings.ToUpper(TrimSpace(...))` —
+   treklar ba'zan harfli (`YT75...`).
+4. Har bir adminka buyurtmasi tekshiriladi:
+
+| Holat | Natija |
+|---|---|
+| `express_num` bo'sh | `missing`, `reason: "trek_yoq"` — to'langan, lekin Xitoyda hali trek berilmagan |
+| trek bor, dashboardda yo'q | `missing`, `reason: "dashboardda_yoq"` — **asosiy muammo** |
+| trek dashboardda bor | kelgan, javobga qo'shilmaydi |
+
+5. `missing` `created_at` bo'yicha yangidan eskiga tartiblanadi.
+
+Adminkadan kelgan har bir buyurtma **to'langan** hisoblanadi — `created_at` =
+to'lov qilingan vaqt (`support/adminka.go` dagi izoh). `status` javobda
+ko'rsatiladi, lekin filtr sifatida ishlatilmaydi.
+
+### Haqiqiy javob
+
+```sh
+curl -sS 'localhost:8080/api/problem?user_id=7903808'
+```
+```json
+{
+  "user_id": 7903808,
+  "adminka_count": 3,
+  "dashboard_count": 1,
+  "missing_count": 2,
+  "missing": [
+    { "order_sn": "DG60555680", "user_id": 7903808, "status": 10,
+      "amount": "104.38", "receiver_name": "К***", "express_line": "Auto cargo-Pickup",
+      "express_num": "", "quantity": 1, "created_at": "2026-06-18 16:20:12",
+      "shipped_at": "", "reason": "trek_yoq" }
+  ]
+}
+```
+
+`adminka_count` — to'langan buyurtmalar soni, `dashboard_count` — dashboardda
+topilgan noyob treklar soni. Har bir `missing` elementi `/api/orders` dagi
+17 ta maydonning hammasini saqlaydi, ustiga `reason` qo'shiladi.
+
+Tekshirish oson: `missing` dagi trekni `/api/dashboard?track=...` ga bersangiz
+`count: 0` chiqishi kerak.
+
+### Xatolar
+
+| Holat | Status |
+|---|---|
+| `PUT`/`DELETE` | 405 `{"error":"faqat GET yoki POST"}` |
+| hech qanday qidiruv maydoni yo'q | 400 |
+| POST body JSON emas | 400 |
+| `ADMINKA_TOKEN_BEARER` bo'sh yoki eskirgan | 502 — `.env` ni qo'lda yangilash kerak |
+| delivery 401/403 | token yangilanadi, bir marta qayta uriniladi |
+
+---
+
 ## 6. Uchta endpoint bir-biriga qanday ulanadi
 
 Bitta mijozning muammosini oxirigacha ko'rish tartibi:
@@ -380,13 +480,19 @@ GET /api/messages    GET /api/orders?user_id=...   → order.express_num
                              │ express_num
                              ▼
                      GET /api/dashboard?track=...  → qaysi filial/postamat
+
+Ikkovini qo'lda solishtirmaslik uchun:
+
+GET /api/problem?user_id=...   → to'langan, lekin kelmagan buyurtmalar
 ```
 
 - `chats.id` → `messages.conversation_id` (mijoz nima deb yozgan);
 - `chats.client_id` → `orders.user_id` **va** `dashboard.user_id` (bir xil
   raqam, ikki serverda ikki xil nomda);
 - `orders.express_num` → `dashboard.track` (Xitoydagi posilka ↔ O'zbekistondagi
-  yetkazma).
+  yetkazma);
+- `/api/problem` shu oxirgi bog'lanishni avtomatlashtiradi — ikki ro'yxatni
+  trek bo'yicha taqqoslab, faqat farqini qaytaradi.
 
 ---
 
