@@ -248,8 +248,9 @@ func problemHandler(w http.ResponseWriter, r *http.Request) {
 	adm := support.AdminkaFromEnv()
 	out, err := support.ProblemJSON(adm, svc, token, f)
 	if errors.Is(err, support.ErrUnauthorized) {
-		// Yetkazma tokeni eskirgan — yangilab bir marta qayta urinamiz.
-		// (Adminka tokeni avtomatik yangilanmaydi — .env dan olinadi.)
+		// Faqat yetkazma tokeni eskirganda shu yerga tushamiz — yangilab bir
+		// marta qayta urinamiz. Adminka 401 i support.ErrAdminkaUnauthorized
+		// bo'lib keladi (.env qo'lda yangilanadi), ya'ni behuda takrorlanmaydi.
 		if token, err = support.ServiceRefresh(svc, support.ServiceTokenFile); err == nil {
 			out, err = support.ProblemJSON(adm, svc, token, f)
 		}

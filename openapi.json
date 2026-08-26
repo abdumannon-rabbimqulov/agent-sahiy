@@ -180,6 +180,7 @@
                   "adminka_count": 3,
                   "dashboard_count": 1,
                   "missing_count": 1,
+                  "truncated": false,
                   "missing": [
                     { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "", "package_name": "", "quantity": 1, "created_at": "2026-06-18 16:20:12", "shipped_at": "", "packed_at": "", "in_storage_at": "", "reason": "trek_yoq" }
                   ]
@@ -211,6 +212,7 @@
                   "adminka_count": 3,
                   "dashboard_count": 1,
                   "missing_count": 1,
+                  "truncated": false,
                   "missing": [
                     { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "", "package_name": "", "quantity": 1, "created_at": "2026-06-18 16:20:12", "shipped_at": "", "packed_at": "", "in_storage_at": "", "reason": "trek_yoq" }
                   ]
@@ -314,6 +316,8 @@
           "adminka_count": { "type": "integer", "description": "adminkadagi to'langan buyurtmalar soni" },
           "dashboard_count": { "type": "integer", "description": "dashboardda topilgan trek raqamlari soni" },
           "missing_count": { "type": "integer" },
+          "truncated": { "type": "boolean", "description": "ro'yxat max_pages chegarasiga tirab qoldi — solishtirish to'liq emas, `missing` ichida soxta `dashboardda_yoq` bo'lishi mumkin" },
+          "warning": { "type": "string", "description": "faqat truncated=true bo'lganda chiqadi" },
           "missing": { "type": "array", "items": { "$ref": "#/components/schemas/ProblemOrder" } }
         }
       },

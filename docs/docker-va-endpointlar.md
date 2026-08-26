@@ -422,6 +422,10 @@ Uchala qidiruv maydonidan hech biri bo'lmasa — 400.
 | trek dashboardda bor | kelgan, javobga qo'shilmaydi |
 
 5. `missing` `created_at` bo'yicha yangidan eskiga tartiblanadi.
+6. Biror sikl `max_pages` chegarasiga tirab qolsa — `truncated: true` va
+   `warning` qaytadi. Bu muhim: dashboard ro'yxati qirqilgan bo'lsa, aslida
+   kelgan buyurtma ham `dashboardda_yoq` bo'lib ko'rinishi mumkin. Shunday
+   holatda `max_pages` yoki `size` ni oshirib qayta so'rang.
 
 Adminkadan kelgan har bir buyurtma **to'langan** hisoblanadi — `created_at` =
 to'lov qilingan vaqt (`support/adminka.go` dagi izoh). `status` javobda
@@ -438,6 +442,7 @@ curl -sS 'localhost:8080/api/problem?user_id=7903808'
   "adminka_count": 3,
   "dashboard_count": 1,
   "missing_count": 2,
+  "truncated": false,
   "missing": [
     { "order_sn": "DG60555680", "user_id": 7903808, "status": 10,
       "amount": "104.38", "receiver_name": "К***", "express_line": "Auto cargo-Pickup",
@@ -447,6 +452,8 @@ curl -sS 'localhost:8080/api/problem?user_id=7903808'
 }
 ```
 
+`truncated` — ro'yxat `max_pages` ga tirab qolgani (natija to'liq emas);
+`false` bo'lsa `warning` maydoni umuman chiqmaydi.
 `adminka_count` — to'langan buyurtmalar soni, `dashboard_count` — dashboardda
 topilgan noyob treklar soni. Har bir `missing` elementi `/api/orders` dagi
 17 ta maydonning hammasini saqlaydi, ustiga `reason` qo'shiladi.
@@ -461,7 +468,7 @@ Tekshirish oson: `missing` dagi trekni `/api/dashboard?track=...` ga bersangiz
 | `PUT`/`DELETE` | 405 `{"error":"faqat GET yoki POST"}` |
 | hech qanday qidiruv maydoni yo'q | 400 |
 | POST body JSON emas | 400 |
-| `ADMINKA_TOKEN_BEARER` bo'sh yoki eskirgan | 502 — `.env` ni qo'lda yangilash kerak |
+| `ADMINKA_TOKEN_BEARER` bo'sh yoki eskirgan | 502 `{"error":"adminka tokeni rad etildi (401) — ..."}` — `.env` ni qo'lda yangilash kerak, qayta urinilmaydi |
 | delivery 401/403 | token yangilanadi, bir marta qayta uriniladi |
 
 ---

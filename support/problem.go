@@ -2,6 +2,7 @@ package support
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,6 +21,11 @@ const (
 	DefaultProblemMaxPages = 20
 )
 
+// ErrAdminkaUnauthorized — adminka tokeni rad etildi. ErrUnauthorized dan
+// alohida: adminka tokeni avtomatik yangilanmaydi (.env dan olinadi), shuning
+// uchun chaqiruvchi qayta urinmasligi kerak.
+var ErrAdminkaUnauthorized = errors.New("adminka tokeni rad etildi (401) — .env dagi ADMINKA_TOKEN_BEARER ni yangilang")
+
 // ProblemFilter — qidiruv sharti: uchtasidan kamida bittasi to'ldiriladi.
 type ProblemFilter struct {
 	UserID     int64  `json:"user_id"`
@@ -37,11 +43,15 @@ type ProblemOrder struct {
 
 // ProblemResult — solishtirish natijasi.
 type ProblemResult struct {
-	UserID         int64          `json:"user_id"`
-	AdminkaCount   int            `json:"adminka_count"`   // to'langan buyurtmalar
-	DashboardCount int            `json:"dashboard_count"` // yetkazmaga tushganlari
-	MissingCount   int            `json:"missing_count"`
-	Missing        []ProblemOrder `json:"missing"`
+	UserID         int64 `json:"user_id"`
+	AdminkaCount   int   `json:"adminka_count"`   // to'langan buyurtmalar
+	DashboardCount int   `json:"dashboard_count"` // yetkazmaga tushganlari
+	MissingCount   int   `json:"missing_count"`
+	// Truncated — ro'yxat max_pages ga tirab qolgan: solishtirish to'liq emas,
+	// `missing` ichida soxta "dashboardda_yoq" bo'lishi mumkin.
+	Truncated bool           `json:"truncated"`
+	Warning   string         `json:"warning,omitempty"`
+	Missing   []ProblemOrder `json:"missing"`
 }
 
 // FindProblemOrders adminkadagi (to'langan) buyurtmalarni dashboarddagi
@@ -58,12 +68,12 @@ func FindProblemOrders(a Adminka, s Service, token string, f ProblemFilter) (Pro
 		f.MaxPages = DefaultProblemMaxPages
 	}
 
-	orders, err := fetchAllOrders(a, f)
+	orders, ordersCut, err := fetchAllOrders(a, f)
 	if err != nil {
 		return ProblemResult{}, err
 	}
 
-	arrived, err := fetchArrivedTracks(s, token, f, orders)
+	arrived, tracksCut, err := fetchArrivedTracks(s, token, f, orders)
 	if err != nil {
 		return ProblemResult{}, err
 	}
@@ -90,13 +100,33 @@ func FindProblemOrders(a Adminka, s Service, token string, f ProblemFilter) (Pro
 		return res.Missing[i].CreatedAt > res.Missing[j].CreatedAt
 	})
 	res.MissingCount = len(res.Missing)
+	res.Truncated = ordersCut || tracksCut
+	if res.Truncated {
+		res.Warning = fmt.Sprintf(
+			"ro'yxat max_pages=%d chegarasiga tirab qoldi (%s) — natija to'liq emas, max_pages yoki size ni oshiring",
+			f.MaxPages, cutSource(ordersCut, tracksCut))
+	}
 	return res, nil
 }
 
+// cutSource qaysi tomon qirqilganini matn qilib beradi.
+func cutSource(orders, tracks bool) string {
+	switch {
+	case orders && tracks:
+		return "adminka va dashboard"
+	case orders:
+		return "adminka"
+	default:
+		return "dashboard"
+	}
+}
+
 // fetchAllOrders adminkadan hamma sahifani yig'adi: to'liq sahifa kelsa
-// keyingisi so'raladi, kam qator kelsa oxiri.
-func fetchAllOrders(a Adminka, f ProblemFilter) ([]AdminkaOrder, error) {
+// keyingisi so'raladi, kam qator kelsa oxiri. Ikkinchi qiymat — ro'yxat
+// max_pages ga tirab qolgani (ya'ni yana sahifa bo'lishi mumkin).
+func fetchAllOrders(a Adminka, f ProblemFilter) ([]AdminkaOrder, bool, error) {
 	var all []AdminkaOrder
+	truncated := false
 	for page := 1; page <= f.MaxPages; page++ {
 		part, err := FetchOrders(a, OrderFilter{
 			UserID:     f.UserID,
@@ -106,20 +136,26 @@ func fetchAllOrders(a Adminka, f ProblemFilter) ([]AdminkaOrder, error) {
 			Size:       f.Size,
 		})
 		if err != nil {
-			return nil, err
+			// Adminka tokeni yetkazma tokeni emas — qayta urinishdan foyda yo'q.
+			if errors.Is(err, ErrUnauthorized) {
+				return nil, false, ErrAdminkaUnauthorized
+			}
+			return nil, false, err
 		}
 		all = append(all, part...)
 		if len(part) < f.Size {
 			break
 		}
+		truncated = page == f.MaxPages
 	}
-	return all, nil
+	return all, truncated, nil
 }
 
 // fetchArrivedTracks dashboarddagi (kelgan) buyurtmalarning trek raqamlarini
 // to'plam qilib qaytaradi.
-func fetchArrivedTracks(s Service, token string, f ProblemFilter, orders []AdminkaOrder) (map[string]bool, error) {
+func fetchArrivedTracks(s Service, token string, f ProblemFilter, orders []AdminkaOrder) (map[string]bool, bool, error) {
 	arrived := map[string]bool{}
+	truncated := false
 
 	// Mijoz bo'yicha qidirilsa — butun yetkazma ro'yxati bir marta olinadi.
 	userID := f.UserID
@@ -132,10 +168,11 @@ func fetchArrivedTracks(s Service, token string, f ProblemFilter, orders []Admin
 		}
 	}
 	if userID > 0 {
-		if err := collectTracks(s, token, f, DeliveryFilter{UserID: userID}, arrived); err != nil {
-			return nil, err
+		cut, err := collectTracks(s, token, f, DeliveryFilter{UserID: userID}, arrived)
+		if err != nil {
+			return nil, false, err
 		}
-		return arrived, nil
+		return arrived, cut, nil
 	}
 
 	// user_id topilmadi (order_sn/trek bo'yicha qidiruv) — har bir trek alohida.
@@ -146,23 +183,27 @@ func fetchArrivedTracks(s Service, token string, f ProblemFilter, orders []Admin
 			continue
 		}
 		seen[key] = true
-		if err := collectTracks(s, token, f, DeliveryFilter{TrackNumber: o.ExpressNum}, arrived); err != nil {
-			return nil, err
+		cut, err := collectTracks(s, token, f, DeliveryFilter{TrackNumber: o.ExpressNum}, arrived)
+		if err != nil {
+			return nil, false, err
 		}
+		truncated = truncated || cut
 	}
-	return arrived, nil
+	return arrived, truncated, nil
 }
 
 // collectTracks bitta filtr bo'yicha hamma sahifani aylanib, trek raqamlarini
 // to'plamga qo'shadi. FetchDelivery bitta chaqiruvda delivered=false va true
 // natijalarini birlashtiradi — shuning uchun to'xtash sharti "bo'sh sahifa".
-func collectTracks(s Service, token string, f ProblemFilter, df DeliveryFilter, arrived map[string]bool) error {
+// Qaytaruvchi qiymat — sikl max_pages ga tirab qolgani.
+func collectTracks(s Service, token string, f ProblemFilter, df DeliveryFilter, arrived map[string]bool) (bool, error) {
 	df.Size = f.Size
+	truncated := false
 	for page := 1; page <= f.MaxPages; page++ {
 		df.Page = page
 		part, err := FetchDelivery(s, token, df)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if len(part) == 0 {
 			break
@@ -172,8 +213,9 @@ func collectTracks(s Service, token string, f ProblemFilter, df DeliveryFilter, 
 				arrived[key] = true
 			}
 		}
+		truncated = page == f.MaxPages
 	}
-	return nil
+	return truncated, nil
 }
 
 // trackKey trek raqamini solishtirishga tayyorlaydi — trek ba'zan harfli
