@@ -473,6 +473,86 @@ Tekshirish oson: `missing` dagi trekni `/api/dashboard?track=...` ga bersangiz
 
 ---
 
+## 5b. `GET|POST /api/order` — bitta buyurtma: adminka + dashboard birga
+
+`/api/problem` butun ro'yxatni solishtiradi; bu endpoint esa **bitta**
+buyurtmani ikkala tomondan yig'ib beradi.
+
+### So'rov
+
+```
+GET  /api/order?q=DG60597226
+GET  /api/order?q=79021428785596
+POST /api/order   {"q":"DG60597226"}
+```
+
+| Maydon | Izoh |
+|---|---|
+| `q` | DG raqami yoki trek raqami — bittasi shart |
+| `order_sn`, `express_num`, `track`, `track_number` | `q` ning muqobil nomlari; birinchi bo'sh bo'lmagani olinadi |
+
+### Zanjir (`support/order.go`)
+
+Yangi HTTP kodi yozilmagan — `FetchOrders` (`support/adminka.go`) va
+`FetchDelivery` (`support/dashboard.go`) ustiga birlashtirish mantig'i qo'yilgan.
+
+1. `queryKind` qidiruv turini aniqlaydi: matn `DG` bilan boshlansa `order_sn`,
+   aks holda `express_num`.
+2. Adminka: `FetchOrders` shu bitta filtr bilan chaqiriladi, birinchi qator
+   olinadi. Bir nechta qator kelsa `note` da soni yoziladi.
+3. Trek raqami: adminkadagi `express_num`, u bo'sh bo'lsa — qidiruvning o'zi
+   (trek bo'yicha qidirilgan bo'lsa).
+4. Trek umuman yo'q → `dashboard: false`, `note: "trek raqami yo'q — yetkazma
+   tomoni tekshirilmadi"`, dashboard so'rovi **umuman yuborilmaydi**.
+5. Trek bor → `FetchDelivery` shu trek bilan chaqiriladi. Bo'sh kelsa
+   `dashboard: false`, aks holda birinchi qator obyekt sifatida qaytadi
+   (`dashboard_count` da umumiy soni).
+
+Adminkada topilmay, yetkazmada topilsa ham javob qaytadi:
+`found: false`, `adminka: null`, `dashboard: {...}`.
+
+### Haqiqiy javob
+
+```sh
+curl -sS 'localhost:8080/api/order?q=DG60597226'
+```
+```json
+{
+  "query": "DG60597226",
+  "query_kind": "order_sn",
+  "found": true,
+  "order_sn": "DG60597226",
+  "express_num": "79021428785596",
+  "adminka": { "order_sn": "DG60597226", "user_id": 7903808, "status": 6, "express_num": "79021428785596", "created_at": "2026-06-18 16:20:12" },
+  "dashboard": { "full_name": "K***", "express_num": "79021428785596", "branch_name": "Yunusobod", "user_id": 7903808 },
+  "dashboard_count": 1
+}
+```
+
+Trek berilmagan buyurtmada:
+
+```json
+{
+  "query": "DG60555680", "query_kind": "order_sn", "found": true,
+  "order_sn": "DG60555680", "express_num": "",
+  "adminka": { "...": "..." },
+  "dashboard": false, "dashboard_count": 0,
+  "note": "trek raqami yo'q — yetkazma tomoni tekshirilmadi"
+}
+```
+
+### Xatolar
+
+| Holat | Status |
+|---|---|
+| `PUT`/`DELETE` | 405 `{"error":"faqat GET yoki POST"}` |
+| qidiruv matni yo'q | 400 `{"error":"order_sn yoki express_num berilmagan"}` |
+| POST body JSON emas | 400 |
+| `ADMINKA_TOKEN_BEARER` eskirgan | 502 — `.env` ni qo'lda yangilash kerak, qayta urinilmaydi |
+| delivery 401/403 | token yangilanadi, bir marta qayta uriniladi |
+
+---
+
 ## 6. Uchta endpoint bir-biriga qanday ulanadi
 
 Bitta mijozning muammosini oxirigacha ko'rish tartibi:

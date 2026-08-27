@@ -225,6 +225,74 @@
           "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
+    },
+    "/api/order": {
+      "get": {
+        "tags": ["solishtirish"],
+        "summary": "Bitta buyurtma: adminka + dashboard birga",
+        "description": "Bitta buyurtmani **DG raqami** yoki **trek raqami** bo'yicha topadi.\n\nDG yuborilsa: adminkadan buyurtma olinadi, undagi `express_num` bilan dashboard so'raladi. Trek bo'lmasa yoki yetkazmada uchramasa — `dashboard: false`. Trek yuborilsa ikkala tomon ham shu trek bo'yicha qidiriladi.",
+        "parameters": [
+          { "name": "q", "in": "query", "description": "DG raqami yoki trek — `order_sn`, `express_num`, `track`, `track_number` ham qabul qilinadi", "schema": { "type": "string" }, "example": "DG60597226" },
+          { "name": "order_sn", "in": "query", "description": "`q` ning muqobil nomi", "schema": { "type": "string" } },
+          { "name": "express_num", "in": "query", "description": "`q` ning muqobil nomi", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Buyurtma kartasi",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OrderCard" },
+                "example": {
+                  "query": "DG60597226",
+                  "query_kind": "order_sn",
+                  "found": true,
+                  "order_sn": "DG60597226",
+                  "express_num": "79021428785596",
+                  "adminka": { "order_sn": "DG60597226", "user_id": 7903808, "status": 6, "amount": "104.38", "express_num": "79021428785596", "quantity": 1, "created_at": "2026-06-18 16:20:12" },
+                  "dashboard": { "full_name": "K***", "phone": "+9989*******", "express_num": "79021428785596", "branch_name": "Yunusobod", "created_at": "2026-06-25 09:11:03", "user_id": 7903808 },
+                  "dashboard_count": 1
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      },
+      "post": {
+        "tags": ["solishtirish"],
+        "summary": "Bitta buyurtma (JSON body)",
+        "description": "GET bilan bir xil — qidiruv matni body'da beriladi.",
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "q": { "type": "string" }, "order_sn": { "type": "string" }, "express_num": { "type": "string" } } }, "example": { "q": "79021428785596" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Buyurtma kartasi",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OrderCard" },
+                "example": {
+                  "query": "DG60555680",
+                  "query_kind": "order_sn",
+                  "found": true,
+                  "order_sn": "DG60555680",
+                  "express_num": "",
+                  "adminka": { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "express_num": "", "quantity": 1, "created_at": "2026-06-18 16:20:12" },
+                  "dashboard": false,
+                  "dashboard_count": 0,
+                  "note": "trek raqami yo'q — yetkazma tomoni tekshirilmadi"
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
     }
   },
   "components": {
@@ -319,6 +387,21 @@
           "truncated": { "type": "boolean", "description": "ro'yxat max_pages chegarasiga tirab qoldi — solishtirish to'liq emas, `missing` ichida soxta `dashboardda_yoq` bo'lishi mumkin" },
           "warning": { "type": "string", "description": "faqat truncated=true bo'lganda chiqadi" },
           "missing": { "type": "array", "items": { "$ref": "#/components/schemas/ProblemOrder" } }
+        }
+      },
+      "OrderCard": {
+        "type": "object",
+        "description": "Bitta buyurtmaning ikkala tomondagi ma'lumoti.",
+        "properties": {
+          "query": { "type": "string", "description": "qidirilgan matn" },
+          "query_kind": { "type": "string", "enum": ["order_sn", "express_num"], "description": "DG bilan boshlansa order_sn, aks holda express_num" },
+          "found": { "type": "boolean", "description": "adminkada topildimi" },
+          "order_sn": { "type": "string" },
+          "express_num": { "type": "string", "description": "bo'sh bo'lishi mumkin — Xitoyda hali trek berilmagan" },
+          "adminka": { "oneOf": [{ "$ref": "#/components/schemas/AdminkaOrder" }, { "type": "null" }], "description": "adminkada topilmasa null" },
+          "dashboard": { "oneOf": [{ "$ref": "#/components/schemas/DeliveryOrder" }, { "type": "boolean" }], "description": "yetkazmada topilmasa `false`, topilsa obyekt" },
+          "dashboard_count": { "type": "integer", "description": "shu trek bo'yicha yetkazma qatorlari soni" },
+          "note": { "type": "string", "description": "faqat izohli holatlarda chiqadi" }
         }
       },
       "AdminkaOrder": {

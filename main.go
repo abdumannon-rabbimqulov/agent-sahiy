@@ -264,6 +264,79 @@ func problemHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+// orderHandler: GET yoki POST /api/order
+// Bitta buyurtmani DG raqami yoki trek raqami bo'yicha topadi va adminka +
+// dashboard ma'lumotini birga qaytaradi. Trek bo'lmasa `dashboard: false`.
+// GET  /api/order?q=DG60597226  |  ?order_sn=DG..  |  ?express_num=..
+// POST /api/order  {"q":"DG60597226"}
+func orderHandler(w http.ResponseWriter, r *http.Request) {
+	var query string
+
+	switch r.Method {
+	case http.MethodGet:
+		q := r.URL.Query()
+		// dashboard endpointidagi kabi track/track_number ham qabul qilinadi.
+		for _, k := range []string{"q", "order_sn", "express_num", "track", "track_number"} {
+			if v := q.Get(k); v != "" {
+				query = v
+				break
+			}
+		}
+	case http.MethodPost:
+		var body struct {
+			Query       string `json:"q"`
+			OrderSN     string `json:"order_sn"`
+			ExpressNum  string `json:"express_num"`
+			Track       string `json:"track"`
+			TrackNumber string `json:"track_number"`
+		}
+		if r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"body JSON emas: %v"}`, err), http.StatusBadRequest)
+				return
+			}
+		}
+		for _, v := range []string{body.Query, body.OrderSN, body.ExpressNum, body.Track, body.TrackNumber} {
+			if v != "" {
+				query = v
+				break
+			}
+		}
+	default:
+		http.Error(w, `{"error":"faqat GET yoki POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	if query == "" {
+		http.Error(w, `{"error":"order_sn yoki express_num berilmagan"}`, http.StatusBadRequest)
+		return
+	}
+
+	svc := support.ServiceFromEnv()
+	token, err := support.ServiceToken(svc, support.ServiceTokenFile)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"service login: %v"}`, err), http.StatusBadGateway)
+		return
+	}
+
+	adm := support.AdminkaFromEnv()
+	out, err := support.OrderCardJSON(adm, svc, token, query)
+	if errors.Is(err, support.ErrUnauthorized) {
+		// Faqat yetkazma tokeni eskirganda shu yerga tushamiz (adminka 401 i
+		// support.ErrAdminkaUnauthorized bo'lib keladi).
+		if token, err = support.ServiceRefresh(svc, support.ServiceTokenFile); err == nil {
+			out, err = support.OrderCardJSON(adm, svc, token, query)
+		}
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
 func main() {
 	loadEnv(".env")
 
@@ -277,6 +350,7 @@ func main() {
 	http.HandleFunc("/api/orders", ordersHandler)
 	http.HandleFunc("/api/dashboard", dashboardHandler)
 	http.HandleFunc("/api/problem", problemHandler)
+	http.HandleFunc("/api/order", orderHandler)
 
 	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
 	http.HandleFunc("/openapi.json", openapiHandler)
@@ -288,6 +362,7 @@ func main() {
 		"— hujjat: http://localhost"+addr+"/docs |",
 		"POST /api/chats, GET /api/messages?conversation_id=..,",
 		"GET /api/orders?user_id=.., GET /api/dashboard?user_id=..,",
-		"GET|POST /api/problem?user_id=..")
+		"GET|POST /api/problem?user_id=..,",
+		"GET|POST /api/order?q=DG..")
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
