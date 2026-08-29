@@ -352,6 +352,22 @@ func main() {
 	http.HandleFunc("/api/problem", problemHandler)
 	http.HandleFunc("/api/order", orderHandler)
 
+	// Baza + admin user (login: 991134543 / parol: 991134543).
+	if _, err := support.InitDB(); err != nil {
+		log.Fatal("baza: ", err)
+	}
+
+	// Autentifikatsiya
+	http.HandleFunc("POST /api/auth/login", loginHandler)
+	http.HandleFunc("GET /api/auth/me", meHandler)
+
+	// Promt CRUD — hammasi token bilan himoyalangan.
+	http.HandleFunc("GET /api/promts", support.RequireAuth(promtListHandler))
+	http.HandleFunc("POST /api/promts", support.RequireAuth(promtCreateHandler))
+	http.HandleFunc("GET /api/promts/{id}", support.RequireAuth(promtGetHandler))
+	http.HandleFunc("PUT /api/promts/{id}", support.RequireAuth(promtUpdateHandler))
+	http.HandleFunc("DELETE /api/promts/{id}", support.RequireAuth(promtDeleteHandler))
+
 	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
 	http.HandleFunc("/openapi.json", openapiHandler)
 	http.HandleFunc("/redoc", redocHandler)
@@ -363,6 +379,7 @@ func main() {
 		"POST /api/chats, GET /api/messages?conversation_id=..,",
 		"GET /api/orders?user_id=.., GET /api/dashboard?user_id=..,",
 		"GET|POST /api/problem?user_id=..,",
-		"GET|POST /api/order?q=DG..")
+		"GET|POST /api/order?q=DG..,",
+		"POST /api/auth/login, CRUD /api/promts")
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

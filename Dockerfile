@@ -1,10 +1,9 @@
 # --- 1-bosqich: build ---
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-# Tashqi bog'liqlik yo'q (go.mod'da faqat modul nomi) — shuning uchun
-# `go mod download` qadami ham kerak emas.
-COPY go.mod ./
-COPY main.go docs_api.go ./
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
 # openapi.json binar ichiga embed qilinadi (docs_api.go).
 COPY openapi.json ./
 COPY support ./support

@@ -1,7 +1,29 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: sahiy-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-sahiy}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sahiy}
+      POSTGRES_DB: ${DB_NAME:-sahiy}
+    volumes:
+      - sahiy-pgdata:/var/lib/postgresql/data
+    # Faqat shu mashinaga ochiladi (psql bilan tekshirish uchun).
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-sahiy} -d ${DB_NAME:-sahiy}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build: .
     container_name: sahiy-api
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       # Auth yo'q — shuning uchun faqat shu mashinaga ochiladi.
       # Tashqaridan kerak bo'lsa: "8080:8080"
@@ -10,6 +32,14 @@ services:
       # Konteyner ichida har doim :8080 tinglaydi; tashqi portni
       # yuqoridagi `ports` o'zgartiradi.
       WEB_ADDR: ":8080"
+      # Baza konteyner tarmog'ida "db" nomi bilan ko'rinadi —
+      # .env dagi DB_HOST (localhost) shu yerda ustidan yoziladi.
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-sahiy}
+      DB_PASSWORD: ${DB_PASSWORD:-sahiy}
+      DB_NAME: ${DB_NAME:-sahiy}
+      DB_SSLMODE: disable
     volumes:
       # token.json / service-token.json ish katalogiga yoziladi —
       # named volume ularni restart oralig'ida saqlab qoladi.
@@ -20,3 +50,4 @@ services:
 
 volumes:
   sahiy-tokens:
+  sahiy-pgdata:
