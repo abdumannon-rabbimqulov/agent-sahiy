@@ -48,6 +48,20 @@ services:
       - ./.env:/app/.env:ro
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./frontend
+      # Bo'sh VITE_API_URL — frontend /api ni o'z nginx'i orqali
+      # backendga proksilaydi (frontend/nginx.conf).
+      args:
+        VITE_API_URL: ""
+    container_name: sahiy-web
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:3000:80"
+    restart: unless-stopped
+
 volumes:
   sahiy-tokens:
   sahiy-pgdata:

@@ -2,22 +2,59 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Sahiy lokal API",
-    "version": "1.0.0",
-    "description": "Support, adminka (daigou) va delivery API'laridan saralangan ma'lumot beruvchi lokal endpointlar. Batafsil: docs/docker-va-endpointlar.md.\n\n**Diqqat:** auth yo'q — port faqat 127.0.0.1 ga ochilgan."
+    "version": "2.0.0",
+    "description": "Support, adminka (daigou) va delivery API'laridan saralangan ma'lumot beruvchi lokal endpointlar + Groq AI agenti va admin panel API'si.\n\n**Auth:** `/api/auth/login` dan olingan JWT `Authorization: Bearer <token>` sarlavhasida yuboriladi. Promt, statistika, interaksiya va sozlama endpointlari token talab qiladi; eski proksi endpointlari (`/api/chats` va h.k.) ochiq."
   },
   "servers": [
-    { "url": "http://localhost:8080", "description": "Lokal (Docker yoki `go run .`)" }
+    {
+      "url": "http://localhost:8080",
+      "description": "Lokal (Docker yoki `go run .`)"
+    }
   ],
   "tags": [
-    { "name": "support", "description": "api.market.sahiy.uz — admin login (token.json)" },
-    { "name": "adminka", "description": "api.sahiy.uz/api/admin — ADMINKA_TOKEN_BEARER" },
-    { "name": "delivery", "description": "api.sahiy.uz/api/v2/admin — service login (service-token.json)" },
-    { "name": "solishtirish", "description": "adminka + delivery — ikki manbani trek raqami orqali taqqoslash" }
+    {
+      "name": "support",
+      "description": "api.market.sahiy.uz — admin login (token.json)"
+    },
+    {
+      "name": "adminka",
+      "description": "api.sahiy.uz/api/admin — ADMINKA_TOKEN_BEARER"
+    },
+    {
+      "name": "delivery",
+      "description": "api.sahiy.uz/api/v2/admin — service login (service-token.json)"
+    },
+    {
+      "name": "solishtirish",
+      "description": "adminka + delivery — ikki manbani trek raqami orqali taqqoslash"
+    },
+    {
+      "name": "auth",
+      "description": "Kirish va token"
+    },
+    {
+      "name": "promts",
+      "description": "Promt CRUD — AI zanjiri shu promtlar bo'yicha yuradi"
+    },
+    {
+      "name": "agent",
+      "description": "AI agent: zanjir, javoblar navbati, tasdiqlash"
+    },
+    {
+      "name": "stats",
+      "description": "Statistika: murojaatlar, tokenlar, xarajat"
+    },
+    {
+      "name": "settings",
+      "description": "Global sozlamalar"
+    }
   ],
   "paths": {
     "/api/chats": {
       "post": {
-        "tags": ["support"],
+        "tags": [
+          "support"
+        ],
         "summary": "Suhbatlar ro'yxati",
         "description": "Support serveri bu yo'lni GET bilan bermaydi (405), shuning uchun filtr body'da POST bilan ketadi. Ma'lumot o'zgarmaydi — faqat o'qiladi.\n\nJavobdagi `id` → `/api/messages?conversation_id=`, `client_id` → `/api/orders?user_id=` va `/api/dashboard?user_id=`.",
         "requestBody": {
@@ -25,10 +62,25 @@
           "description": "Bo'sh qoldirilsa hammasi standart qiymatda ketadi.",
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/ChatFilter" },
+              "schema": {
+                "$ref": "#/components/schemas/ChatFilter"
+              },
               "examples": {
-                "hammasi": { "summary": "Oxirgi 10 ta suhbat", "value": { "page": 1, "limit": 10 } },
-                "bitta-mijoz": { "summary": "Faqat bitta mijoz", "value": { "client_id": 7903808, "page": 1, "limit": 10 } }
+                "hammasi": {
+                  "summary": "Oxirgi 10 ta suhbat",
+                  "value": {
+                    "page": 1,
+                    "limit": 10
+                  }
+                },
+                "bitta-mijoz": {
+                  "summary": "Faqat bitta mijoz",
+                  "value": {
+                    "client_id": 7903808,
+                    "page": 1,
+                    "limit": 10
+                  }
+                }
               }
             }
           }
@@ -38,143 +90,396 @@
             "description": "Suhbatlar",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ChatsResponse" },
+                "schema": {
+                  "$ref": "#/components/schemas/ChatsResponse"
+                },
                 "example": {
                   "count": 2,
                   "chats": [
-                    { "id": 58064, "client_id": 7903808, "created_at": "2026-08-18T19:31:20.841266Z", "ms_created_at": "2026-08-19T11:25:56.756768Z" },
-                    { "id": 57295, "client_id": 8396106, "created_at": "2026-08-12T23:28:57.289438Z", "ms_created_at": "2026-08-18T18:00:41.812867Z" }
+                    {
+                      "id": 58064,
+                      "client_id": 7903808,
+                      "created_at": "2026-08-18T19:31:20.841266Z",
+                      "ms_created_at": "2026-08-19T11:25:56.756768Z"
+                    },
+                    {
+                      "id": 57295,
+                      "client_id": 8396106,
+                      "created_at": "2026-08-12T23:28:57.289438Z",
+                      "ms_created_at": "2026-08-18T18:00:41.812867Z"
+                    }
                   ]
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       }
     },
     "/api/messages": {
       "get": {
-        "tags": ["support"],
+        "tags": [
+          "support"
+        ],
         "summary": "Suhbat ichidagi xabarlar",
         "description": "Oxirgi `limit` ta xabar eskisidan yangisiga saralab qaytariladi (server yangisini birinchi beradi — kod qayta saralaydi). Agent ham, mijoz ham bir xil shaklda: farq `sender_type` da.",
         "parameters": [
-          { "name": "conversation_id", "in": "query", "required": true, "description": "/api/chats dagi `id`", "schema": { "type": "integer", "format": "int64", "minimum": 1 }, "example": 58064 },
-          { "name": "limit", "in": "query", "required": false, "description": "Nechta oxirgi xabar", "schema": { "type": "integer", "default": 10, "minimum": 1 } }
+          {
+            "name": "conversation_id",
+            "in": "query",
+            "required": true,
+            "description": "/api/chats dagi `id`",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            },
+            "example": 58064
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Nechta oxirgi xabar",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 1
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Xabarlar",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MessagesResponse" },
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesResponse"
+                },
                 "example": {
                   "conversation_id": 58064,
                   "count": 2,
                   "messages": [
-                    { "message": "здравствуйте как забрать товар из постамата", "sender_type": "client", "created_at": "2026-08-19T11:11:27.373149Z" },
-                    { "message": "Assalomu alaykum, kod ilovada ko'rinadi.", "sender_type": "admin", "created_at": "2026-08-19T11:20:00.000000Z" }
+                    {
+                      "message": "здравствуйте как забрать товар из постамата",
+                      "sender_type": "client",
+                      "created_at": "2026-08-19T11:11:27.373149Z"
+                    },
+                    {
+                      "message": "Assalomu alaykum, kod ilovada ko'rinadi.",
+                      "sender_type": "admin",
+                      "created_at": "2026-08-19T11:20:00.000000Z"
+                    }
                   ]
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       }
     },
     "/api/orders": {
       "get": {
-        "tags": ["adminka"],
+        "tags": [
+          "adminka"
+        ],
         "summary": "Adminka (daigou) buyurtmalari — Xitoy tomoni",
         "description": "`user_id`, `order_sn`, `express_num` yoki `keyword` dan **kamida bittasi** bo'lishi shart, aks holda 400.\n\nXom javob bir buyurtma uchun ~10 KB — undan 17 ta maydon qoladi. Bo'sh maydon (`express_num`, `shipped_at`) xato emas: buyurtma hali o'sha bosqichga yetmagan.",
         "parameters": [
-          { "name": "user_id", "in": "query", "description": "Ilova Profil ID = support'dagi `client_id`", "schema": { "type": "integer", "format": "int64" }, "example": 7903808 },
-          { "name": "order_sn", "in": "query", "description": "Buyurtma raqami (DG...)", "schema": { "type": "string" }, "example": "DG60597226" },
-          { "name": "express_num", "in": "query", "description": "Xitoydagi trek/posilka raqami", "schema": { "type": "string" } },
-          { "name": "status", "in": "query", "description": "Raqamli holat (6 — yakunlangan)", "schema": { "type": "string" } },
-          { "name": "keyword", "in": "query", "description": "Erkin qidiruv", "schema": { "type": "string" } },
-          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
-          { "name": "size", "in": "query", "schema": { "type": "integer", "default": 10 } }
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "Ilova Profil ID = support'dagi `client_id`",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 7903808
+          },
+          {
+            "name": "order_sn",
+            "in": "query",
+            "description": "Buyurtma raqami (DG...)",
+            "schema": {
+              "type": "string"
+            },
+            "example": "DG60597226"
+          },
+          {
+            "name": "express_num",
+            "in": "query",
+            "description": "Xitoydagi trek/posilka raqami",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Raqamli holat (6 — yakunlangan)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "Erkin qidiruv",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Buyurtmalar",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/OrdersResponse" },
+                "schema": {
+                  "$ref": "#/components/schemas/OrdersResponse"
+                },
                 "example": {
                   "count": 1,
                   "orders": [
-                    { "order_sn": "DG60597226", "user_id": 7903808, "status": 6, "amount": "174.05", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "79021428785596", "package_name": "F08-5606010 Chery Jet", "quantity": 1, "created_at": "2026-07-25 21:24:31", "shipped_at": "2026-07-30 12:21:29", "packed_at": "2026-07-28 15:32:53", "in_storage_at": "2026-07-28 15:32:53" }
+                    {
+                      "order_sn": "DG60597226",
+                      "user_id": 7903808,
+                      "status": 6,
+                      "amount": "174.05",
+                      "receiver_name": "K***",
+                      "province": "Toshkent shahri",
+                      "area": "Toshkent shahri",
+                      "sub_area": "Yunusobod tumani",
+                      "street": "***",
+                      "express_line": "Auto cargo-Pickup",
+                      "express_num": "79021428785596",
+                      "package_name": "F08-5606010 Chery Jet",
+                      "quantity": 1,
+                      "created_at": "2026-07-25 21:24:31",
+                      "shipped_at": "2026-07-30 12:21:29",
+                      "packed_at": "2026-07-28 15:32:53",
+                      "in_storage_at": "2026-07-28 15:32:53"
+                    }
                   ]
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       }
     },
     "/api/dashboard": {
       "get": {
-        "tags": ["delivery"],
+        "tags": [
+          "delivery"
+        ],
         "summary": "Yetkazma buyurtmalari — O'zbekiston tomoni",
         "description": "`user_id` yoki `track` (`track_number` ham bo'ladi) berilishi shart.\n\nBitta qidiruv tashqariga **ikkita** so'rov yuboradi: `delivered=false` va `delivered=true` — bu filtr majburiy, usiz server doim bo'sh qaytaradi. Natijalar birlashtiriladi.",
         "parameters": [
-          { "name": "user_id", "in": "query", "description": "= support'dagi `client_id`", "schema": { "type": "integer", "format": "int64" }, "example": 7903808 },
-          { "name": "track", "in": "query", "description": "Trek raqami (adminkadagi `express_num` bilan bir xil)", "schema": { "type": "string" }, "example": "79021428785596" },
-          { "name": "track_number", "in": "query", "description": "`track` ning muqobil nomi", "schema": { "type": "string" } },
-          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
-          { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20 } }
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "= support'dagi `client_id`",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 7903808
+          },
+          {
+            "name": "track",
+            "in": "query",
+            "description": "Trek raqami (adminkadagi `express_num` bilan bir xil)",
+            "schema": {
+              "type": "string"
+            },
+            "example": "79021428785596"
+          },
+          {
+            "name": "track_number",
+            "in": "query",
+            "description": "`track` ning muqobil nomi",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Yetkazmalar",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/DeliveryResponse" },
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryResponse"
+                },
                 "example": {
                   "count": 1,
                   "orders": [
-                    { "full_name": "K***", "phone": "998*******28", "address": "Yunusobod tumani", "location_number": "Pastamat shota", "express_num": "79021428785596", "branch_name": "SHOTA", "created_at": "2026-08-14T09:26:51.000000Z", "user_id": 7903808 }
+                    {
+                      "full_name": "K***",
+                      "phone": "998*******28",
+                      "address": "Yunusobod tumani",
+                      "location_number": "Pastamat shota",
+                      "express_num": "79021428785596",
+                      "branch_name": "SHOTA",
+                      "created_at": "2026-08-14T09:26:51.000000Z",
+                      "user_id": 7903808
+                    }
                   ]
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       }
     },
     "/api/problem": {
       "get": {
-        "tags": ["solishtirish"],
+        "tags": [
+          "solishtirish"
+        ],
         "summary": "To'langan, lekin kelmagan buyurtmalar",
         "description": "Adminkadagi **to'langan** buyurtmalar bilan dashboarddagi **kelgan** yetkazmalarni `express_num` (trek raqami) orqali solishtiradi va dashboardda uchramaganlarini qaytaradi.\n\n`user_id`, `order_sn` yoki `express_num` dan kamida bittasi shart, aks holda 400.\n\n`reason`: `trek_yoq` — to'langan, lekin Xitoyda hali trek berilmagan; `dashboardda_yoq` — trek bor, lekin yetkazmaga tushmagan (asosiy muammo).",
         "parameters": [
-          { "name": "user_id", "in": "query", "description": "Ilova Profil ID = support'dagi `client_id`", "schema": { "type": "integer", "format": "int64" }, "example": 7903808 },
-          { "name": "order_sn", "in": "query", "description": "Buyurtma raqami (DG...)", "schema": { "type": "string" }, "example": "DG60597226" },
-          { "name": "express_num", "in": "query", "description": "Trek raqami — `track` va `track_number` ham qabul qilinadi", "schema": { "type": "string" }, "example": "79021428785596" },
-          { "name": "track", "in": "query", "description": "`express_num` ning muqobil nomi", "schema": { "type": "string" } },
-          { "name": "track_number", "in": "query", "description": "`express_num` ning muqobil nomi", "schema": { "type": "string" } },
-          { "name": "size", "in": "query", "description": "Bir sahifadagi soni", "schema": { "type": "integer", "default": 50 } },
-          { "name": "max_pages", "in": "query", "description": "Ko'pi bilan shuncha sahifa o'qiladi", "schema": { "type": "integer", "default": 20 } }
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "Ilova Profil ID = support'dagi `client_id`",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 7903808
+          },
+          {
+            "name": "order_sn",
+            "in": "query",
+            "description": "Buyurtma raqami (DG...)",
+            "schema": {
+              "type": "string"
+            },
+            "example": "DG60597226"
+          },
+          {
+            "name": "express_num",
+            "in": "query",
+            "description": "Trek raqami — `track` va `track_number` ham qabul qilinadi",
+            "schema": {
+              "type": "string"
+            },
+            "example": "79021428785596"
+          },
+          {
+            "name": "track",
+            "in": "query",
+            "description": "`express_num` ning muqobil nomi",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_number",
+            "in": "query",
+            "description": "`express_num` ning muqobil nomi",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Bir sahifadagi soni",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "max_pages",
+            "in": "query",
+            "description": "Ko'pi bilan shuncha sahifa o'qiladi",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Solishtirish natijasi",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ProblemResponse" },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                },
                 "example": {
                   "user_id": 7903808,
                   "adminka_count": 3,
@@ -182,31 +487,70 @@
                   "missing_count": 1,
                   "truncated": false,
                   "missing": [
-                    { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "", "package_name": "", "quantity": 1, "created_at": "2026-06-18 16:20:12", "shipped_at": "", "packed_at": "", "in_storage_at": "", "reason": "trek_yoq" }
+                    {
+                      "order_sn": "DG60555680",
+                      "user_id": 7903808,
+                      "status": 10,
+                      "amount": "104.38",
+                      "receiver_name": "K***",
+                      "province": "Toshkent shahri",
+                      "area": "Toshkent shahri",
+                      "sub_area": "Yunusobod tumani",
+                      "street": "***",
+                      "express_line": "Auto cargo-Pickup",
+                      "express_num": "",
+                      "package_name": "",
+                      "quantity": 1,
+                      "created_at": "2026-06-18 16:20:12",
+                      "shipped_at": "",
+                      "packed_at": "",
+                      "in_storage_at": "",
+                      "reason": "trek_yoq"
+                    }
                   ]
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       },
       "post": {
-        "tags": ["solishtirish"],
+        "tags": [
+          "solishtirish"
+        ],
         "summary": "To'langan, lekin kelmagan buyurtmalar (JSON body)",
         "description": "GET bilan bir xil — shartlar body'da beriladi.",
         "requestBody": {
           "required": false,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProblemFilter" }, "example": { "user_id": 7903808, "size": 50 } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemFilter"
+              },
+              "example": {
+                "user_id": 7903808,
+                "size": 50
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "Solishtirish natijasi",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ProblemResponse" },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                },
                 "example": {
                   "user_id": 7903808,
                   "adminka_count": 3,
@@ -214,73 +558,177 @@
                   "missing_count": 1,
                   "truncated": false,
                   "missing": [
-                    { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "receiver_name": "K***", "province": "Toshkent shahri", "area": "Toshkent shahri", "sub_area": "Yunusobod tumani", "street": "***", "express_line": "Auto cargo-Pickup", "express_num": "", "package_name": "", "quantity": 1, "created_at": "2026-06-18 16:20:12", "shipped_at": "", "packed_at": "", "in_storage_at": "", "reason": "trek_yoq" }
+                    {
+                      "order_sn": "DG60555680",
+                      "user_id": 7903808,
+                      "status": 10,
+                      "amount": "104.38",
+                      "receiver_name": "K***",
+                      "province": "Toshkent shahri",
+                      "area": "Toshkent shahri",
+                      "sub_area": "Yunusobod tumani",
+                      "street": "***",
+                      "express_line": "Auto cargo-Pickup",
+                      "express_num": "",
+                      "package_name": "",
+                      "quantity": 1,
+                      "created_at": "2026-06-18 16:20:12",
+                      "shipped_at": "",
+                      "packed_at": "",
+                      "in_storage_at": "",
+                      "reason": "trek_yoq"
+                    }
                   ]
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       }
     },
     "/api/order": {
       "get": {
-        "tags": ["solishtirish"],
+        "tags": [
+          "solishtirish"
+        ],
         "summary": "Bitta buyurtma: adminka + dashboard birga",
         "description": "Bitta buyurtmani **DG raqami** yoki **trek raqami** bo'yicha topadi.\n\nDG yuborilsa: adminkadan buyurtma olinadi, undagi `express_num` bilan dashboard so'raladi. Trek bo'lmasa yoki yetkazmada uchramasa — `dashboard: false`. Trek yuborilsa ikkala tomon ham shu trek bo'yicha qidiriladi.",
         "parameters": [
-          { "name": "q", "in": "query", "description": "DG raqami yoki trek — `order_sn`, `express_num`, `track`, `track_number` ham qabul qilinadi", "schema": { "type": "string" }, "example": "DG60597226" },
-          { "name": "order_sn", "in": "query", "description": "`q` ning muqobil nomi", "schema": { "type": "string" } },
-          { "name": "express_num", "in": "query", "description": "`q` ning muqobil nomi", "schema": { "type": "string" } }
+          {
+            "name": "q",
+            "in": "query",
+            "description": "DG raqami yoki trek — `order_sn`, `express_num`, `track`, `track_number` ham qabul qilinadi",
+            "schema": {
+              "type": "string"
+            },
+            "example": "DG60597226"
+          },
+          {
+            "name": "order_sn",
+            "in": "query",
+            "description": "`q` ning muqobil nomi",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "express_num",
+            "in": "query",
+            "description": "`q` ning muqobil nomi",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Buyurtma kartasi",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/OrderCard" },
+                "schema": {
+                  "$ref": "#/components/schemas/OrderCard"
+                },
                 "example": {
                   "query": "DG60597226",
                   "query_kind": "order_sn",
                   "found": true,
                   "order_sn": "DG60597226",
                   "express_num": "79021428785596",
-                  "adminka": { "order_sn": "DG60597226", "user_id": 7903808, "status": 6, "amount": "104.38", "express_num": "79021428785596", "quantity": 1, "created_at": "2026-06-18 16:20:12" },
-                  "dashboard": { "full_name": "K***", "phone": "+9989*******", "express_num": "79021428785596", "branch_name": "Yunusobod", "created_at": "2026-06-25 09:11:03", "user_id": 7903808 },
+                  "adminka": {
+                    "order_sn": "DG60597226",
+                    "user_id": 7903808,
+                    "status": 6,
+                    "amount": "104.38",
+                    "express_num": "79021428785596",
+                    "quantity": 1,
+                    "created_at": "2026-06-18 16:20:12"
+                  },
+                  "dashboard": {
+                    "full_name": "K***",
+                    "phone": "+9989*******",
+                    "express_num": "79021428785596",
+                    "branch_name": "Yunusobod",
+                    "created_at": "2026-06-25 09:11:03",
+                    "user_id": 7903808
+                  },
                   "dashboard_count": 1
                 }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
         }
       },
       "post": {
-        "tags": ["solishtirish"],
+        "tags": [
+          "solishtirish"
+        ],
         "summary": "Bitta buyurtma (JSON body)",
         "description": "GET bilan bir xil — qidiruv matni body'da beriladi.",
         "requestBody": {
           "required": false,
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "q": { "type": "string" }, "order_sn": { "type": "string" }, "express_num": { "type": "string" } } }, "example": { "q": "79021428785596" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  },
+                  "order_sn": {
+                    "type": "string"
+                  },
+                  "express_num": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "q": "79021428785596"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "Buyurtma kartasi",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/OrderCard" },
+                "schema": {
+                  "$ref": "#/components/schemas/OrderCard"
+                },
                 "example": {
                   "query": "DG60555680",
                   "query_kind": "order_sn",
                   "found": true,
                   "order_sn": "DG60555680",
                   "express_num": "",
-                  "adminka": { "order_sn": "DG60555680", "user_id": 7903808, "status": 10, "amount": "104.38", "express_num": "", "quantity": 1, "created_at": "2026-06-18 16:20:12" },
+                  "adminka": {
+                    "order_sn": "DG60555680",
+                    "user_id": 7903808,
+                    "status": 10,
+                    "amount": "104.38",
+                    "express_num": "",
+                    "quantity": 1,
+                    "created_at": "2026-06-18 16:20:12"
+                  },
                   "dashboard": false,
                   "dashboard_count": 0,
                   "note": "trek raqami yo'q — yetkazma tomoni tekshirilmadi"
@@ -288,9 +736,970 @@
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
-          "502": { "$ref": "#/components/responses/UpstreamError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamError"
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Kirish",
+        "description": "Login va parol bo'yicha 24 soatlik JWT beradi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "login",
+                  "password"
+                ],
+                "properties": {
+                  "login": {
+                    "type": "string",
+                    "example": "991134543"
+                  },
+                  "password": {
+                    "type": "string",
+                    "example": "991134543"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token va foydalanuvchi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "user": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Token egasi",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Foydalanuvchi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/promts": {
+      "get": {
+        "tags": [
+          "promts"
+        ],
+        "summary": "Promtlar ro'yxati",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ro'yxat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Promt"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "promts"
+        ],
+        "summary": "Yangi promt",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Yaratilgan `id` zanjirda ishlatiladi: model javobidagi `promt` shu id'ni ko'rsatadi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromtInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Yaratildi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Promt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/promts/{id}": {
+      "get": {
+        "tags": [
+          "promts"
+        ],
+        "summary": "Bitta promt",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Promt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Promt"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "promts"
+        ],
+        "summary": "Promtni yangilash",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "description": "Bo'sh maydonlar tegilmaydi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromtInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Yangilandi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Promt"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "promts"
+        ],
+        "summary": "Promtni o'chirish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "O'chirildi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Umumiy hisob",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Murojaatlar, AI hal qilgani, tokenlar va xarajat.",
+        "responses": {
+          "200": {
+            "description": "Statistika",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats/daily": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Kunlik kesim",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "maximum": 365
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kunlar (yangisidan eskisiga)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DailyStat"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats/clients": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Mijozlar kesimi",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mijozlar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClientStat"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interactions": {
+      "get": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "AI javoblari ro'yxati",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Tasdiqlash navbati uchun `status=pending`.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "pending | sent | approved | rejected | failed",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "",
+                "pending",
+                "sent",
+                "approved",
+                "rejected",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ro'yxat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Interaction"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interactions/{id}": {
+      "get": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Bitta javob (zanjir bosqichlari bilan)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Interaksiya",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Interaction"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Matnni tahrirlash",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "description": "Faqat `pending` yoki `failed` holatida. Tasdiqlashdan oldin javobni to'g'rilash uchun.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chat_reply": {
+                    "type": "string"
+                  },
+                  "help_text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Yangilandi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Interaction"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interactions/{id}/approve": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Tasdiqlash va yuborish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "description": "`chat_reply` mijozga (`POST /api/v2/chat/send`), `help_text` Telegram guruhga ketadi. Yuborishda xato bo'lsa status `failed` bo'ladi va matn saqlanib qoladi.",
+        "responses": {
+          "200": {
+            "description": "Yuborildi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/interactions/{id}/reject": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Rad etish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "description": "Hech narsa yuborilmaydi, status `rejected` bo'ladi.",
+        "responses": {
+          "200": {
+            "description": "Rad etildi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Sozlamalar",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sozlamalar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Sozlamani o'zgartirish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Darhol kuchga kiradi. `auto_reply=true` — AI javobi tasdiqsiz ketadi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Yangi holat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/run": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Zanjirni qo'lda ishga tushirish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Suhbat tarixini o'qiydi, promt #1 dan boshlab zanjirni yuritadi va natijani bazaga yozadi. Fon sikli (poller) ham xuddi shu ishni bajaradi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "conversation_id"
+                ],
+                "properties": {
+                  "conversation_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "example": 60307
+                  },
+                  "client_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "example": 8169002
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Natija",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Interaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -299,80 +1708,183 @@
     "responses": {
       "BadRequest": {
         "description": "Parametr yetmayapti yoki body JSON emas",
-        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "conversation_id berilmagan" } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": "conversation_id berilmagan"
+            }
+          }
+        }
       },
       "MethodNotAllowed": {
         "description": "Metod noto'g'ri",
-        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "faqat GET" } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": "faqat GET"
+            }
+          }
+        }
       },
       "UpstreamError": {
         "description": "Login yoki tashqi API xatosi (401 kelsa token yangilanib bir marta qayta uriniladi)",
-        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "login: login muvaffaqiyatsiz (status 401)" } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": "login: login muvaffaqiyatsiz (status 401)"
+            }
+          }
+        }
       }
     },
     "schemas": {
       "Error": {
         "type": "object",
-        "properties": { "error": { "type": "string" } }
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
       },
       "ChatFilter": {
         "type": "object",
         "properties": {
-          "client_id": { "type": "integer", "format": "int64", "default": 0, "description": "0 — hamma suhbatlar, >0 — faqat o'sha mijozniki" },
-          "page": { "type": "integer", "default": 1 },
-          "limit": { "type": "integer", "default": 10 }
+          "client_id": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "description": "0 — hamma suhbatlar, >0 — faqat o'sha mijozniki"
+          },
+          "page": {
+            "type": "integer",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "default": 10
+          }
         }
       },
       "Chat": {
         "type": "object",
         "properties": {
-          "id": { "type": "integer", "format": "int64", "description": "conversation_id" },
-          "client_id": { "type": "integer", "format": "int64" },
-          "created_at": { "type": "string" },
-          "ms_created_at": { "type": "string", "description": "oxirgi xabar vaqti" }
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "conversation_id"
+          },
+          "client_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "ms_created_at": {
+            "type": "string",
+            "description": "oxirgi xabar vaqti"
+          }
         }
       },
       "ChatsResponse": {
         "type": "object",
         "properties": {
-          "count": { "type": "integer" },
-          "chats": { "type": "array", "items": { "$ref": "#/components/schemas/Chat" } }
+          "count": {
+            "type": "integer"
+          },
+          "chats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Chat"
+            }
+          }
         }
       },
       "Message": {
         "type": "object",
         "properties": {
-          "message": { "type": "string" },
-          "sender_type": { "type": "string", "description": "client — mijoz, aks holda operator" },
-          "created_at": { "type": "string" }
+          "message": {
+            "type": "string"
+          },
+          "sender_type": {
+            "type": "string",
+            "description": "client — mijoz, aks holda operator"
+          },
+          "created_at": {
+            "type": "string"
+          }
         }
       },
       "MessagesResponse": {
         "type": "object",
         "properties": {
-          "conversation_id": { "type": "integer", "format": "int64" },
-          "count": { "type": "integer" },
-          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } }
+          "conversation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          }
         }
       },
       "ProblemFilter": {
         "type": "object",
         "description": "Qidiruv sharti — uchtasidan kamida bittasi to'ldiriladi.",
         "properties": {
-          "user_id": { "type": "integer", "format": "int64", "description": "Ilova Profil ID" },
-          "order_sn": { "type": "string", "description": "Buyurtma raqami (DG...)" },
-          "express_num": { "type": "string", "description": "Trek raqami" },
-          "size": { "type": "integer", "default": 50 },
-          "max_pages": { "type": "integer", "default": 20 }
+          "user_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ilova Profil ID"
+          },
+          "order_sn": {
+            "type": "string",
+            "description": "Buyurtma raqami (DG...)"
+          },
+          "express_num": {
+            "type": "string",
+            "description": "Trek raqami"
+          },
+          "size": {
+            "type": "integer",
+            "default": 50
+          },
+          "max_pages": {
+            "type": "integer",
+            "default": 20
+          }
         }
       },
       "ProblemOrder": {
         "allOf": [
-          { "$ref": "#/components/schemas/AdminkaOrder" },
+          {
+            "$ref": "#/components/schemas/AdminkaOrder"
+          },
           {
             "type": "object",
             "properties": {
-              "reason": { "type": "string", "enum": ["trek_yoq", "dashboardda_yoq"], "description": "trek_yoq — trek hali berilmagan; dashboardda_yoq — trek bor, lekin yetkazmada yo'q" }
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "trek_yoq",
+                  "dashboardda_yoq"
+                ],
+                "description": "trek_yoq — trek hali berilmagan; dashboardda_yoq — trek bor, lekin yetkazmada yo'q"
+              }
             }
           }
         ]
@@ -380,78 +1892,603 @@
       "ProblemResponse": {
         "type": "object",
         "properties": {
-          "user_id": { "type": "integer", "format": "int64" },
-          "adminka_count": { "type": "integer", "description": "adminkadagi to'langan buyurtmalar soni" },
-          "dashboard_count": { "type": "integer", "description": "dashboardda topilgan trek raqamlari soni" },
-          "missing_count": { "type": "integer" },
-          "truncated": { "type": "boolean", "description": "ro'yxat max_pages chegarasiga tirab qoldi — solishtirish to'liq emas, `missing` ichida soxta `dashboardda_yoq` bo'lishi mumkin" },
-          "warning": { "type": "string", "description": "faqat truncated=true bo'lganda chiqadi" },
-          "missing": { "type": "array", "items": { "$ref": "#/components/schemas/ProblemOrder" } }
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "adminka_count": {
+            "type": "integer",
+            "description": "adminkadagi to'langan buyurtmalar soni"
+          },
+          "dashboard_count": {
+            "type": "integer",
+            "description": "dashboardda topilgan trek raqamlari soni"
+          },
+          "missing_count": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "ro'yxat max_pages chegarasiga tirab qoldi — solishtirish to'liq emas, `missing` ichida soxta `dashboardda_yoq` bo'lishi mumkin"
+          },
+          "warning": {
+            "type": "string",
+            "description": "faqat truncated=true bo'lganda chiqadi"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProblemOrder"
+            }
+          }
         }
       },
       "OrderCard": {
         "type": "object",
         "description": "Bitta buyurtmaning ikkala tomondagi ma'lumoti.",
         "properties": {
-          "query": { "type": "string", "description": "qidirilgan matn" },
-          "query_kind": { "type": "string", "enum": ["order_sn", "express_num"], "description": "DG bilan boshlansa order_sn, aks holda express_num" },
-          "found": { "type": "boolean", "description": "adminkada topildimi" },
-          "order_sn": { "type": "string" },
-          "express_num": { "type": "string", "description": "bo'sh bo'lishi mumkin — Xitoyda hali trek berilmagan" },
-          "adminka": { "oneOf": [{ "$ref": "#/components/schemas/AdminkaOrder" }, { "type": "null" }], "description": "adminkada topilmasa null" },
-          "dashboard": { "oneOf": [{ "$ref": "#/components/schemas/DeliveryOrder" }, { "type": "boolean" }], "description": "yetkazmada topilmasa `false`, topilsa obyekt" },
-          "dashboard_count": { "type": "integer", "description": "shu trek bo'yicha yetkazma qatorlari soni" },
-          "note": { "type": "string", "description": "faqat izohli holatlarda chiqadi" }
+          "query": {
+            "type": "string",
+            "description": "qidirilgan matn"
+          },
+          "query_kind": {
+            "type": "string",
+            "enum": [
+              "order_sn",
+              "express_num"
+            ],
+            "description": "DG bilan boshlansa order_sn, aks holda express_num"
+          },
+          "found": {
+            "type": "boolean",
+            "description": "adminkada topildimi"
+          },
+          "order_sn": {
+            "type": "string"
+          },
+          "express_num": {
+            "type": "string",
+            "description": "bo'sh bo'lishi mumkin — Xitoyda hali trek berilmagan"
+          },
+          "adminka": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminkaOrder"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "adminkada topilmasa null"
+          },
+          "dashboard": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeliveryOrder"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "description": "yetkazmada topilmasa `false`, topilsa obyekt"
+          },
+          "dashboard_count": {
+            "type": "integer",
+            "description": "shu trek bo'yicha yetkazma qatorlari soni"
+          },
+          "note": {
+            "type": "string",
+            "description": "faqat izohli holatlarda chiqadi"
+          }
         }
       },
       "AdminkaOrder": {
         "type": "object",
         "properties": {
-          "order_sn": { "type": "string", "description": "asosiy buyurtma raqami (DG...)" },
-          "user_id": { "type": "integer", "format": "int64" },
-          "status": { "type": "integer", "description": "raqamli holat (6 — yakunlangan)" },
-          "amount": { "type": "string" },
-          "receiver_name": { "type": "string" },
-          "province": { "type": "string" },
-          "area": { "type": "string" },
-          "sub_area": { "type": "string" },
-          "street": { "type": "string" },
-          "express_line": { "type": "string" },
-          "express_num": { "type": "string", "description": "delivery'dagi track bilan bir xil qiymat" },
-          "package_name": { "type": "string" },
-          "quantity": { "type": "integer" },
-          "created_at": { "type": "string", "description": "to'lov qilingan vaqt" },
-          "shipped_at": { "type": "string" },
-          "packed_at": { "type": "string" },
-          "in_storage_at": { "type": "string" }
+          "order_sn": {
+            "type": "string",
+            "description": "asosiy buyurtma raqami (DG...)"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "integer",
+            "description": "raqamli holat (6 — yakunlangan)"
+          },
+          "amount": {
+            "type": "string"
+          },
+          "receiver_name": {
+            "type": "string"
+          },
+          "province": {
+            "type": "string"
+          },
+          "area": {
+            "type": "string"
+          },
+          "sub_area": {
+            "type": "string"
+          },
+          "street": {
+            "type": "string"
+          },
+          "express_line": {
+            "type": "string"
+          },
+          "express_num": {
+            "type": "string",
+            "description": "delivery'dagi track bilan bir xil qiymat"
+          },
+          "package_name": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "to'lov qilingan vaqt"
+          },
+          "shipped_at": {
+            "type": "string"
+          },
+          "packed_at": {
+            "type": "string"
+          },
+          "in_storage_at": {
+            "type": "string"
+          }
         }
       },
       "OrdersResponse": {
         "type": "object",
         "properties": {
-          "count": { "type": "integer" },
-          "orders": { "type": "array", "items": { "$ref": "#/components/schemas/AdminkaOrder" } }
+          "count": {
+            "type": "integer"
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminkaOrder"
+            }
+          }
         }
       },
       "DeliveryOrder": {
         "type": "object",
         "properties": {
-          "full_name": { "type": "string" },
-          "phone": { "type": "string" },
-          "address": { "type": "string" },
-          "location_number": { "type": "string", "description": "postamat/punkt nomi" },
-          "express_num": { "type": "string" },
-          "branch_name": { "type": "string" },
-          "created_at": { "type": "string" },
-          "user_id": { "type": "integer", "format": "int64" }
+          "full_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "location_number": {
+            "type": "string",
+            "description": "postamat/punkt nomi"
+          },
+          "express_num": {
+            "type": "string"
+          },
+          "branch_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          }
         }
       },
       "DeliveryResponse": {
         "type": "object",
         "properties": {
-          "count": { "type": "integer" },
-          "orders": { "type": "array", "items": { "$ref": "#/components/schemas/DeliveryOrder" } }
+          "count": {
+            "type": "integer"
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveryOrder"
+            }
+          }
         }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "login": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "example": "admin"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "last_login": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PromtInput": {
+        "type": "object",
+        "required": [
+          "title",
+          "promt"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "example": "1. Kategoriya va ma'lumot so'rash"
+          },
+          "promt": {
+            "type": "string",
+            "description": "Model uchun system matn. Modeldan JSON qaytarishni talab qiling: dashboard, adminka, order_sn, express_num, chat, help, promt."
+          }
+        }
+      },
+      "Promt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Zanjirda shu id ishlatiladi (boshi — 1)"
+          },
+          "title": {
+            "type": "string"
+          },
+          "promt": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentStep": {
+        "type": "object",
+        "description": "Zanjirning bitta bosqichi.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "interaction_id": {
+            "type": "integer"
+          },
+          "step_no": {
+            "type": "integer"
+          },
+          "promt_id": {
+            "type": "integer"
+          },
+          "promt_title": {
+            "type": "string"
+          },
+          "request_context": {
+            "type": "string",
+            "description": "Modelga ketgan matn (suhbat + tizim ma'lumoti)"
+          },
+          "raw_response": {
+            "type": "string",
+            "description": "Model qaytargan asl JSON"
+          },
+          "prompt_tokens": {
+            "type": "integer"
+          },
+          "cached_tokens": {
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "type": "integer"
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Interaction": {
+        "type": "object",
+        "description": "Bitta mijoz murojaati va unga AI tayyorlagan javob.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "conversation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "client_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "client_message": {
+            "type": "string"
+          },
+          "chat_reply": {
+            "type": "string",
+            "description": "Mijozga ketadigan javob (AI javobidagi `chat`)"
+          },
+          "help_text": {
+            "type": "string",
+            "description": "Telegram guruhga ketadigan matn (AI javobidagi `help`)"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "approved",
+              "rejected",
+              "failed"
+            ]
+          },
+          "handled_by": {
+            "type": "string",
+            "description": "Tasdiqlagan admin logini yoki \"avto\""
+          },
+          "steps_count": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "type": "integer"
+          },
+          "cached_tokens": {
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "type": "integer"
+          },
+          "calls": {
+            "type": "integer"
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "sent_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentStep"
+            }
+          }
+        }
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "sent": {
+            "type": "integer"
+          },
+          "approved": {
+            "type": "integer"
+          },
+          "pending": {
+            "type": "integer"
+          },
+          "rejected": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "ai_resolved": {
+            "type": "integer",
+            "description": "help'siz yuborilgan — AI o'zi hal qilgan"
+          },
+          "needed_staff": {
+            "type": "integer",
+            "description": "help matni bo'lgan (xodim kerak)"
+          },
+          "unique_clients": {
+            "type": "integer"
+          },
+          "unique_chats": {
+            "type": "integer"
+          },
+          "prompt_tokens": {
+            "type": "integer"
+          },
+          "cached_tokens": {
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "type": "integer"
+          },
+          "total_tokens": {
+            "type": "integer"
+          },
+          "calls": {
+            "type": "integer"
+          },
+          "cost_total": {
+            "type": "number"
+          },
+          "cost_today": {
+            "type": "number"
+          },
+          "cost_month": {
+            "type": "number"
+          },
+          "tokens_today": {
+            "type": "integer"
+          }
+        }
+      },
+      "DailyStat": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "sent": {
+            "type": "integer"
+          },
+          "pending": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "ai_resolved": {
+            "type": "integer"
+          },
+          "tokens": {
+            "type": "integer"
+          },
+          "cost": {
+            "type": "number"
+          }
+        }
+      },
+      "ClientStat": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "ai_resolved": {
+            "type": "integer"
+          },
+          "needed_help": {
+            "type": "integer"
+          },
+          "pending": {
+            "type": "integer"
+          },
+          "tokens": {
+            "type": "integer"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "last_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "auto_reply": {
+            "type": "boolean",
+            "description": "AI javobi tasdiqsiz yuboriladimi"
+          },
+          "poll_enabled": {
+            "type": "boolean",
+            "description": "Fon sikli ishlaydimi"
+          }
+        }
+      },
+      "AgentJSON": {
+        "type": "object",
+        "description": "AI agent QAYTARADIGAN JSON (promt matnida shu shakl talab qilinadi). Kod shu kalitlar bo'yicha yo'naltiradi.",
+        "properties": {
+          "dashboard": {
+            "type": "boolean",
+            "description": "true — yetkazma (delivery) ma'lumoti so'raladi"
+          },
+          "adminka": {
+            "type": "boolean",
+            "description": "true — daigou (Xitoy) buyurtmalari so'raladi"
+          },
+          "order_sn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "DG60607041"
+            ]
+          },
+          "express_num": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "chat": {
+            "type": "string",
+            "description": "Mijozga yuboriladigan javob"
+          },
+          "help": {
+            "type": "string",
+            "description": "Telegram guruhga yuboriladigan matn"
+          },
+          "promt": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Keyingi promt id; null — zanjir tugadi"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "POST /api/auth/login dan olingan token"
       }
     }
   }

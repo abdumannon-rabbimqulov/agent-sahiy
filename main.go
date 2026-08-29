@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"sahiy/support"
 )
@@ -345,41 +349,77 @@ func main() {
 		addr = ":8080"
 	}
 
-	http.HandleFunc("/api/chats", chatsHandler)
-	http.HandleFunc("/api/messages", messagesHandler)
-	http.HandleFunc("/api/orders", ordersHandler)
-	http.HandleFunc("/api/dashboard", dashboardHandler)
-	http.HandleFunc("/api/problem", problemHandler)
-	http.HandleFunc("/api/order", orderHandler)
-
-	// Baza + admin user (login: 991134543 / parol: 991134543).
+	// Baza + admin user (login: 991134543 / parol: 991134543) + sozlamalar.
 	if _, err := support.InitDB(); err != nil {
 		log.Fatal("baza: ", err)
 	}
 
-	// Autentifikatsiya
-	http.HandleFunc("POST /api/auth/login", loginHandler)
-	http.HandleFunc("GET /api/auth/me", meHandler)
+	mux := http.NewServeMux()
 
-	// Promt CRUD — hammasi token bilan himoyalangan.
-	http.HandleFunc("GET /api/promts", support.RequireAuth(promtListHandler))
-	http.HandleFunc("POST /api/promts", support.RequireAuth(promtCreateHandler))
-	http.HandleFunc("GET /api/promts/{id}", support.RequireAuth(promtGetHandler))
-	http.HandleFunc("PUT /api/promts/{id}", support.RequireAuth(promtUpdateHandler))
-	http.HandleFunc("DELETE /api/promts/{id}", support.RequireAuth(promtDeleteHandler))
+	// Tashqi API proksisi (mavjud endpointlar).
+	mux.HandleFunc("/api/chats", chatsHandler)
+	mux.HandleFunc("/api/messages", messagesHandler)
+	mux.HandleFunc("/api/orders", ordersHandler)
+	mux.HandleFunc("/api/dashboard", dashboardHandler)
+	mux.HandleFunc("/api/problem", problemHandler)
+	mux.HandleFunc("/api/order", orderHandler)
+
+	// Autentifikatsiya
+	mux.HandleFunc("POST /api/auth/login", loginHandler)
+	mux.HandleFunc("GET /api/auth/me", meHandler)
+
+	// Promt CRUD
+	mux.HandleFunc("GET /api/promts", support.RequireAuth(promtListHandler))
+	mux.HandleFunc("POST /api/promts", support.RequireAuth(promtCreateHandler))
+	mux.HandleFunc("GET /api/promts/{id}", support.RequireAuth(promtGetHandler))
+	mux.HandleFunc("PUT /api/promts/{id}", support.RequireAuth(promtUpdateHandler))
+	mux.HandleFunc("DELETE /api/promts/{id}", support.RequireAuth(promtDeleteHandler))
+
+	// Statistika
+	mux.HandleFunc("GET /api/stats", support.RequireAuth(statsHandler))
+	mux.HandleFunc("GET /api/stats/daily", support.RequireAuth(dailyStatsHandler))
+	mux.HandleFunc("GET /api/stats/clients", support.RequireAuth(clientStatsHandler))
+
+	// AI javoblari va tasdiqlash navbati
+	mux.HandleFunc("GET /api/interactions", support.RequireAuth(interactionsHandler))
+	mux.HandleFunc("GET /api/interactions/{id}", support.RequireAuth(interactionGetHandler))
+	mux.HandleFunc("PATCH /api/interactions/{id}", support.RequireAuth(interactionPatchHandler))
+	mux.HandleFunc("POST /api/interactions/{id}/approve", support.RequireAuth(approveHandler))
+	mux.HandleFunc("POST /api/interactions/{id}/reject", support.RequireAuth(rejectHandler))
+
+	// Sozlamalar (avto-javob tugmasi) va qo'lda ishga tushirish
+	mux.HandleFunc("GET /api/settings", support.RequireAuth(settingsHandler))
+	mux.HandleFunc("PUT /api/settings", support.RequireAuth(settingsUpdateHandler))
+	mux.HandleFunc("POST /api/agent/run", support.RequireAuth(agentRunHandler))
 
 	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
-	http.HandleFunc("/openapi.json", openapiHandler)
-	http.HandleFunc("/redoc", redocHandler)
-	http.HandleFunc("/docs", docsHandler)
-	http.HandleFunc("/", docsHandler) // "/" → hujjat, qolgani → 404
+	mux.HandleFunc("/openapi.json", openapiHandler)
+	mux.HandleFunc("/redoc", redocHandler)
+	mux.HandleFunc("/docs", docsHandler)
+	mux.HandleFunc("/", docsHandler) // "/" → hujjat, qolgani → 404
+
+	// Fon sikli: yangi mijoz xabarlarini kuzatadi (panel orqali o'chiriladi).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	support.StartPoller(ctx)
+
+	srv := &http.Server{Addr: addr, Handler: withCORS(mux)}
+
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutCtx)
+	}()
 
 	log.Println("tinglanmoqda:", addr,
 		"— hujjat: http://localhost"+addr+"/docs |",
-		"POST /api/chats, GET /api/messages?conversation_id=..,",
-		"GET /api/orders?user_id=.., GET /api/dashboard?user_id=..,",
-		"GET|POST /api/problem?user_id=..,",
-		"GET|POST /api/order?q=DG..,",
-		"POST /api/auth/login, CRUD /api/promts")
-	log.Fatal(http.ListenAndServe(addr, nil))
+		"POST /api/auth/login, CRUD /api/promts,",
+		"GET /api/stats, /api/interactions, PUT /api/settings,",
+		"POST /api/agent/run")
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	log.Println("to'xtadi")
 }

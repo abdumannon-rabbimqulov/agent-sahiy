@@ -18,10 +18,15 @@ const DefaultMessageLimit = 10
 
 // Message — xabardan olinadigan maydonlar. Agent ham, client ham shu shaklda.
 type Message struct {
+	ID         int64  `json:"id"`
+	SenderID   int64  `json:"sender_id"`
 	Message    string `json:"message"`
 	SenderType string `json:"sender_type"`
 	CreatedAt  string `json:"created_at"`
 }
+
+// FromClient - xabarni mijoz yozganmi (agent/xodim emas).
+func (m Message) FromClient() bool { return m.SenderType == "client" }
 
 // FetchMessages suhbatning oxirgi `limit` ta xabarini eskisidan yangisiga
 // saralab qaytaradi. Server yangisini birinchi qilib beradi, shuning uchun
@@ -64,6 +69,7 @@ func FetchMessages(baseURL, token string, conversationID int64, limit int) ([]Me
 	var out struct {
 		Data []struct {
 			ID         int64  `json:"id"`
+			SenderID   int64  `json:"sender_id"`
 			Message    string `json:"message"`
 			SenderType string `json:"sender_type"`
 			CreatedAt  string `json:"created_at"`
@@ -82,6 +88,8 @@ func FetchMessages(baseURL, token string, conversationID int64, limit int) ([]Me
 	msgs := make([]Message, 0, len(rows))
 	for _, r := range rows {
 		msgs = append(msgs, Message{
+			ID:         r.ID,
+			SenderID:   r.SenderID,
 			Message:    r.Message,
 			SenderType: r.SenderType,
 			CreatedAt:  r.CreatedAt,

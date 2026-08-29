@@ -67,7 +67,15 @@ func InitDB() (*gorm.DB, error) {
 		sqlDB.SetConnMaxLifetime(time.Hour)
 	}
 
-	if err := db.AutoMigrate(&User{}, &Promt{}); err != nil {
+	if err := db.AutoMigrate(
+		&User{}, &Promt{},
+		&Interaction{}, &AgentStep{}, &ConversationState{}, &Setting{},
+	); err != nil {
+		return nil, err
+	}
+
+	// Global sozlamalar (auto_reply=false — hamma javob tasdiq kutadi).
+	if err := seedSettings(db); err != nil {
 		return nil, err
 	}
 
