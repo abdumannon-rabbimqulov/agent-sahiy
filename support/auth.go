@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // TokenTTL - JWT amal qilish muddati.
@@ -94,7 +96,14 @@ func Authenticate(login, password string) (string, *User, error) {
 		return "", nil, errors.New("baza ulanmagan")
 	}
 	u, err := FindUserByLogin(DB, login)
-	if err != nil || !u.CheckPassword(password) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil, ErrBadCredentials
+	}
+	if err != nil {
+		// Baza yiqilgan bo'lsa buni "parol xato" deb ko'rsatish chalg'itadi.
+		return "", nil, fmt.Errorf("baza: %w", err)
+	}
+	if !u.CheckPassword(password) {
 		return "", nil, ErrBadCredentials
 	}
 	if !u.IsActive {

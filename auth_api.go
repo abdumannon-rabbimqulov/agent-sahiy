@@ -40,8 +40,12 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, user, err := support.Authenticate(body.Login, body.Password)
-	if err != nil {
+	if errors.Is(err, support.ErrBadCredentials) {
 		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": user})

@@ -11,8 +11,11 @@ import (
 	"time"
 )
 
-// TelegramAPI - Bot API bazasi.
-const TelegramAPI = "https://api.telegram.org"
+// DefaultTelegramAPI - Bot API bazasi.
+const DefaultTelegramAPI = "https://api.telegram.org"
+
+// TelegramAPI - .env dagi TELEGRAM_API_URL (sinov uchun almashtiriladi).
+func TelegramAPI() string { return envStr("TELEGRAM_API_URL", DefaultTelegramAPI) }
 
 // TelegramReady - bot tokeni va guruh id'si berilganmi.
 func TelegramReady() bool {
@@ -39,7 +42,7 @@ func SendTelegram(text string) error {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/bot%s/sendMessage", TelegramAPI, token)
+	url := fmt.Sprintf("%s/bot%s/sendMessage", TelegramAPI(), token)
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).
 		Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {

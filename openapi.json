@@ -1442,7 +1442,7 @@
         "tags": [
           "agent"
         ],
-        "summary": "Tasdiqlash va yuborish",
+        "summary": "Tasdiqlash va mijozga yuborish",
         "security": [
           {
             "bearerAuth": []
@@ -1460,7 +1460,7 @@
             "example": 1
           }
         ],
-        "description": "`chat_reply` mijozga (`POST /api/v2/chat/send`), `help_text` Telegram guruhga ketadi. Yuborishda xato bo'lsa status `failed` bo'ladi va matn saqlanib qoladi.",
+        "description": "`chat_reply` mijozga yuboriladi (`POST /api/v2/chat/send`) va javob yetib borsa mijozning javobsiz xabarlari `PUT /api/v1/support.chat.message/read` orqali o'qilgan deb belgilanadi. `help_text` odatda allaqachon yuborilgan (tasdiq kutmaydi) — faqat oldin yuborilmagan bo'lsa qayta uriniladi. Yuborishda xato bo'lsa status `failed` bo'ladi va matn saqlanib qoladi.",
         "responses": {
           "200": {
             "description": "Yuborildi",
@@ -2235,13 +2235,26 @@
           "client_message": {
             "type": "string"
           },
+          "message_ids": {
+            "type": "string",
+            "example": "103,104",
+            "description": "Shu murojaatda javob berilayotgan mijoz xabarlari (oxirgi xodim javobidan keyingilari)"
+          },
+          "read_marked": {
+            "type": "boolean",
+            "description": "Xabarlar support'da o'qilgan deb belgilanganmi. Faqat chat javobi mijozga yetib borganda true bo'ladi"
+          },
           "chat_reply": {
             "type": "string",
-            "description": "Mijozga ketadigan javob (AI javobidagi `chat`)"
+            "description": "Mijozga ketadigan javob (AI javobidagi `chat`) — auto_reply o'chiq bo'lsa tasdiq kutadi"
           },
           "help_text": {
             "type": "string",
-            "description": "Telegram guruhga ketadigan matn (AI javobidagi `help`)"
+            "description": "Telegram guruhga ketadigan matn (AI javobidagi `help`) — tasdiqsiz, darhol yuboriladi"
+          },
+          "help_sent": {
+            "type": "boolean",
+            "description": "help Telegram guruhga yuborilganmi. help tasdiq kutmaydi — zanjir tugashi bilan darhol ketadi"
           },
           "status": {
             "type": "string",
@@ -2432,7 +2445,7 @@
         "properties": {
           "auto_reply": {
             "type": "boolean",
-            "description": "AI javobi tasdiqsiz yuboriladimi"
+            "description": "Mijozga ketadigan chat javobi tasdiqsiz yuboriladimi. help bunga bog'liq emas — u har doim darhol ketadi"
           },
           "poll_enabled": {
             "type": "boolean",

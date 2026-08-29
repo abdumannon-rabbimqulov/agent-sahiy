@@ -51,7 +51,7 @@ export default function Settings() {
       <Toggle
         name="auto_reply" value={s.auto_reply} onChange={change}
         title="Avtomatik javob"
-        desc="Yoqilsa: AI javobi (chat) mijozga, help esa Telegramga darhol ketadi. O'chiq bo'lsa hammasi tasdiqlash navbatiga tushadi."
+        desc="Yoqilsa: AI javobi (chat) mijozga darhol ketadi. O'chiq bo'lsa chat tasdiqlash navbatida kutadi. help esa har doim tasdiqsiz, darhol Telegram guruhga yuboriladi."
       />
       <Toggle
         name="poll_enabled" value={s.poll_enabled} onChange={change}

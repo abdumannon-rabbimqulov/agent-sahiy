@@ -55,19 +55,28 @@ function Item({ item, onDone }) {
       <label>Mijozga javob (chat)</label>
       <textarea value={chat} onChange={(e) => setChat(e.target.value)} />
 
-      <label>Xodimlarga (help → Telegram)</label>
-      <textarea value={help} onChange={(e) => setHelp(e.target.value)} />
+      <label>
+        Xodimlarga (help → Telegram)
+        {item.help_sent
+          ? <span className="muted"> — allaqachon yuborilgan, tasdiq kutmaydi</span>
+          : item.help_text
+            ? <span className="muted"> — yuborilmadi, tasdiqlaganda qayta uriniladi</span>
+            : null}
+      </label>
+      <textarea value={help} onChange={(e) => setHelp(e.target.value)} disabled={item.help_sent} />
 
       {item.error && <div className="err">{item.error}</div>}
       {err && <div className="err">{err}</div>}
 
       <div className="row" style={{ marginTop: 12 }}>
         <button onClick={() => act('approve')} disabled={!!busy || (!chat && !help)}>
-          {busy === 'approve' ? 'Yuborilmoqda…' : 'Tasdiqlash va yuborish'}
+          {busy === 'approve' ? 'Yuborilmoqda…' : 'Tasdiqlash va mijozga yuborish'}
         </button>
         <button className="ghost" onClick={() => act('save')} disabled={!!busy || !edited}>Saqlash</button>
         <button className="danger" onClick={() => act('reject')} disabled={!!busy}>Rad etish</button>
         <span className="muted" style={{ marginLeft: 'auto', fontSize: 13 }}>
+          {item.help_sent && <span title="help xodimlar guruhiga yuborilgan">✈︎ help ketdi · </span>}
+          {item.read_marked && <span title="Javob yetib bordi — xabarlar o'qilgan deb belgilangan">✓ o'qilgan · </span>}
           {item.steps_count} bosqich · {fmt.num(item.prompt_tokens + item.completion_tokens)} token · {fmt.usd(item.cost_usd)}
         </span>
       </div>
@@ -96,7 +105,10 @@ export default function Queue() {
       <div className="spread">
         <div>
           <h1>Tasdiqlash navbati</h1>
-          <p className="hint">AI tayyorlagan javoblar. Tasdiqlansa — mijozga va Telegramga ketadi.</p>
+          <p className="hint">
+          Tasdiqlash faqat <strong>mijozga</strong> ketadigan javobga tegishli.
+          <code>help</code> xodimlar guruhiga tasdiqsiz, darhol yuboriladi.
+        </p>
         </div>
         <div className="row">
           <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 190 }}>

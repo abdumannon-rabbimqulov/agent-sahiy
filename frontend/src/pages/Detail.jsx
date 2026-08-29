@@ -70,10 +70,26 @@ export default function Detail() {
       <div className="card">{item.client_message || <span className="muted">—</span>}</div>
 
       <h2>Mijozga javob (chat)</h2>
-      <div className="card">{item.chat_reply || <span className="muted">—</span>}</div>
+      <div className="card">
+        {item.chat_reply || <span className="muted">—</span>}
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+          {item.read_marked
+            ? `Javob yetib bordi — xabarlar o'qilgan deb belgilandi (${item.message_ids || '—'})`
+            : `O'qilgan deb belgilanmagan${item.message_ids ? ` — kutayotgan xabarlar: ${item.message_ids}` : ''}`}
+        </div>
+      </div>
 
       <h2>Xodimlarga (help)</h2>
-      <div className="card">{item.help_text || <span className="muted">—</span>}</div>
+      <div className="card">
+        {item.help_text || <span className="muted">—</span>}
+        {item.help_text && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+            {item.help_sent
+              ? 'Telegram guruhga yuborilgan (tasdiq kutmaydi)'
+              : 'Telegramga yuborilmadi — tasdiqlaganda qayta uriniladi'}
+          </div>
+        )}
+      </div>
 
       <h2>Zanjir bosqichlari</h2>
       {(item.steps || []).map((s) => <Step key={s.id} s={s} />)}

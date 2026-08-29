@@ -28,7 +28,15 @@ func StartPromtID() uint { return uint(envInt("START_PROMPT_ID", DefaultStartPro
 func MaxSteps() int { return envInt("AGENT_MAX_STEPS", DefaultMaxSteps) }
 
 // HistoryLimit - modelga ko'rsatiladigan oxirgi xabarlar soni.
-func HistoryLimit() int { return envInt("HISTORY_LIMIT", DefaultHistoryLimit) }
+// Modelga eng ko'pi 10 ta xabar ketadi: uzun tarix na foyda beradi, na
+// token. HISTORY_LIMIT bilan kamaytirish mumkin, ko'paytirish emas.
+func HistoryLimit() int {
+	n := envInt("HISTORY_LIMIT", DefaultHistoryLimit)
+	if n > DefaultHistoryLimit {
+		n = DefaultHistoryLimit
+	}
+	return n
+}
 
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
@@ -57,6 +65,9 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 			break
 		}
 	}
+	// Aynan shu murojaatda javob berilayotgan (javobsiz qolgan) mijoz
+	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
+	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 	transcript := formatTranscript(msgs)
 
 	// 2. Zanjir.
@@ -154,16 +165,53 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 		in.Error = "model na chat, na help qaytardi"
 	}
 
-	// 3. Avto-javob yoqilgan bo'lsa darhol yuboramiz.
-	if in.Status == StatusPending && AutoReplyOn() {
-		if err := Deliver(in); err != nil {
-			in.Status = StatusFailed
-			in.Error = err.Error()
+	// 3. help — TASDIQSIZ, darhol xodimlar guruhiga (zanjir yarim yo'lda
+	//    to'xtagan bo'lsa ham: xodimlar muammodan xabardor bo'lsin).
+	if in.HelpText != "" {
+		if err := DeliverHelp(in); err != nil {
+			log.Printf("agent: suhbat %d help yuborilmadi: %v", conversationID, err)
+			if in.Error == "" {
+				in.Error = err.Error()
+			} else {
+				in.Error += " | " + err.Error()
+			}
+		}
+	}
+
+	// 4. chat — mijozga. Avto-javob yoqilgan bo'lsa darhol, aks holda
+	//    admin tasdig'ini kutadi.
+	switch {
+	case in.Status == StatusFailed:
+		// zanjir xatosi — hech narsa yuborilmaydi
+
+	case in.ChatReply != "":
+		if AutoReplyOn() {
+			if err := DeliverChat(in); err != nil {
+				in.Status = StatusFailed
+				in.Error = err.Error()
+			} else {
+				in.Status = StatusSent
+				in.HandledBy = "avto"
+				now := time.Now()
+				in.SentAt = &now
+			}
 		} else {
+			in.Status = StatusPending
+		}
+
+	default:
+		// Faqat help bor edi — mijozga yoziladigan narsa yo'q, ya'ni
+		// tasdiqlashga ham hojat yo'q.
+		if in.HelpSent {
 			in.Status = StatusSent
 			in.HandledBy = "avto"
 			now := time.Now()
 			in.SentAt = &now
+		} else {
+			in.Status = StatusFailed
+			if in.Error == "" {
+				in.Error = "help yuborilmadi"
+			}
 		}
 	}
 
@@ -174,28 +222,76 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 	return in, nil
 }
 
-// Deliver interaksiya natijasini manzillarga yuboradi:
-// chat -> mijozga (support chat), help -> Telegram guruhga.
-func Deliver(in *Interaction) error {
-	var errs []string
-	if in.ChatReply != "" {
-		if err := SendToClient(in.ConversationID, in.ChatReply); err != nil {
-			errs = append(errs, "chat: "+err.Error())
+// DeliverChat mijozga javob yuboradi va javob yetib borsa o'sha xabarlarni
+// "o'qilgan" deb belgilaydi. Mijozga ketadigan yagona yo'l shu.
+func DeliverChat(in *Interaction) error {
+	if in.ChatReply == "" {
+		return nil
+	}
+	if err := SendToClient(in.ConversationID, in.ChatReply); err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+
+	// Javob mijozga yetib bordi — endi xabarlarni o'qilgan deb belgilaymiz.
+	if !in.ReadMarked {
+		ids := SplitIDs(in.MessageIDs)
+		if err := MarkReadCached(ids); err != nil {
+			// Javob ketgan, faqat belgi qo'yilmadi — murojaatni xato
+			// deb hisoblamaymiz, log yetarli.
+			log.Printf("agent: suhbat %d xabarlari o'qilgan deb belgilanmadi: %v", in.ConversationID, err)
+		} else {
+			in.ReadMarked = true
+			saveFlag(in, "read_marked", true)
+			log.Printf("agent: suhbat %d — %d ta xabar o'qilgan deb belgilandi", in.ConversationID, len(ids))
 		}
 	}
-	if in.HelpText != "" {
-		text := fmt.Sprintf("🆘 Suhbat #%d (mijoz %d)\n\n%s", in.ConversationID, in.ClientID, in.HelpText)
-		if in.ClientMessage != "" {
-			text += "\n\nMijoz xabari: " + in.ClientMessage
-		}
-		if err := SendTelegram(text); err != nil {
-			errs = append(errs, "telegram: "+err.Error())
-		}
+	return nil
+}
+
+// DeliverHelp xodimlar guruhiga (Telegram) xabar yuboradi.
+//
+// help TASDIQ KUTMAYDI: mijozga hech narsa ketmaydi, xodimlar esa muammodan
+// darhol xabardor bo'lishi kerak. Tasdiqlash faqat mijozga yoziladigan
+// chat javobiga tegishli.
+func DeliverHelp(in *Interaction) error {
+	if in.HelpText == "" || in.HelpSent {
+		return nil
+	}
+	text := fmt.Sprintf("🆘 Suhbat #%d (mijoz %d)\n\n%s", in.ConversationID, in.ClientID, in.HelpText)
+	if in.ClientMessage != "" {
+		text += "\n\nMijoz xabari: " + in.ClientMessage
+	}
+	if err := SendTelegram(text); err != nil {
+		return fmt.Errorf("telegram: %w", err)
+	}
+	in.HelpSent = true
+	saveFlag(in, "help_sent", true)
+	log.Printf("agent: suhbat %d — help xodimlar guruhiga yuborildi", in.ConversationID)
+	return nil
+}
+
+// Deliver - admin tasdiqlaganda: chat mijozga ketadi, help hali
+// yuborilmagan bo'lsa (masalan Telegram ishlamay qolgan edi) qayta uriniladi.
+func Deliver(in *Interaction) error {
+	var errs []string
+	if err := DeliverChat(in); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := DeliverHelp(in); err != nil {
+		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// saveFlag - bazadagi bitta bayroqni yangilaydi (yozuv hali saqlanmagan
+// bo'lsa hech narsa qilinmaydi — qiymat struct'da qolib, keyin saqlanadi).
+func saveFlag(in *Interaction, field string, val bool) {
+	if DB != nil && in.ID > 0 {
+		DB.Model(in).Update(field, val)
+	}
 }
 
 // fetchHistory suhbatning oxirgi xabarlarini oladi (token eskirsa yangilaydi).
@@ -214,23 +310,56 @@ func fetchHistory(conversationID int64) ([]Message, error) {
 	return msgs, err
 }
 
-// formatTranscript xabarlarni modelga tushunarli matnga aylantiradi.
-func formatTranscript(msgs []Message) string {
-	var b strings.Builder
-	for _, m := range msgs {
-		who := "XODIM"
-		if m.FromClient() {
-			who = "MIJOZ"
-		}
-		fmt.Fprintf(&b, "%s: %s\n", who, strings.TrimSpace(m.Message))
+// TranscriptMessage - modelga ketadigan bitta xabar. `type` — xabarni kim
+// yozgani: "client" (mijoz) yoki "agent" (biz tomon: agent yoki xodim).
+type TranscriptMessage struct {
+	Type      string `json:"type"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// SenderKind - xabarni kim yozgani: "client" yoki "agent".
+func (m Message) SenderKind() string {
+	if m.FromClient() {
+		return "client"
 	}
-	return strings.TrimSpace(b.String())
+	return "agent"
+}
+
+// formatTranscript oxirgi xabarlarni modelga JSON ro'yxat qilib beradi —
+// har biri o'z turi bilan, eskisidan yangisiga.
+func formatTranscript(msgs []Message) string {
+	// Xavfsizlik uchun yana bir marta kesamiz: modelga 10 tadan ortiq
+	// xabar ketmasligi kerak (server ko'proq qaytarib yuborsa ham).
+	if n := HistoryLimit(); len(msgs) > n {
+		msgs = msgs[len(msgs)-n:]
+	}
+
+	out := make([]TranscriptMessage, 0, len(msgs))
+	for _, m := range msgs {
+		text := strings.TrimSpace(m.Message)
+		if text == "" {
+			continue
+		}
+		out = append(out, TranscriptMessage{
+			Type:      m.SenderKind(),
+			Message:   text,
+			CreatedAt: m.CreatedAt,
+		})
+	}
+
+	raw, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
 }
 
 // buildUserMessage modelga ketadigan matn: suhbat + tizimdan olingan ma'lumot.
 func buildUserMessage(transcript string, data []string) string {
 	var b strings.Builder
-	b.WriteString("Suhbat:\n")
+	b.WriteString("Suhbatning oxirgi xabarlari (eskisidan yangisiga). ")
+	b.WriteString(`"type": "client" — mijoz yozgan, "type": "agent" — biz yozgan javob:` + "\n")
 	b.WriteString(transcript)
 	if len(data) > 0 {
 		b.WriteString("\n\nTizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):\n")

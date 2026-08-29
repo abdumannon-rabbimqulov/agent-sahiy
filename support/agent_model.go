@@ -26,6 +26,16 @@ type Interaction struct {
 	ChatReply string `gorm:"type:text" json:"chat_reply"`
 	HelpText  string `gorm:"type:text" json:"help_text"`
 
+	// MessageIDs - shu murojaatda javob berilayotgan mijoz xabarlari
+	// ("1,2,3"). Javob mijozga yetib borgandan keyin shular o'qilgan
+	// deb belgilanadi.
+	MessageIDs string `gorm:"size:255" json:"message_ids,omitempty"`
+	// ReadMarked - xabarlar o'qilgan deb belgilanganmi.
+	ReadMarked bool `gorm:"not null;default:false" json:"read_marked"`
+	// HelpSent - help matni Telegram guruhga yuborilganmi. help tasdiq
+	// kutmaydi: xodimlar darhol xabardor bo'lishi kerak.
+	HelpSent bool `gorm:"not null;default:false" json:"help_sent"`
+
 	Status     string `gorm:"size:16;index;not null;default:pending" json:"status"`
 	HandledBy  string `gorm:"size:64" json:"handled_by,omitempty"` // tasdiqlagan admin logini
 	StepsCount int    `json:"steps_count"`
