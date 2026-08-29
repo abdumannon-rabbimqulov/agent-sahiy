@@ -49,6 +49,16 @@ export default function Settings() {
       {msg && <div className="ok">{msg}</div>}
 
       <Toggle
+        name="agent_enabled" value={s.agent_enabled} onChange={change}
+        title="AI agent"
+        desc="O'chirilsa agent butunlay to'xtaydi: yangi murojaatlarga javob tayyorlanmaydi, Groq'ga so'rov ketmaydi, token sarflanmaydi. Navbatdagi tayyor javoblarni tasdiqlash esa ishlayveradi."
+      />
+      {!s.agent_enabled && (
+        <div className="err" style={{ marginBottom: 12 }}>
+          AI agent hozir <strong>o'chirilgan</strong> — yangi mijoz xabarlariga javob tayyorlanmaydi.
+        </div>
+      )}
+      <Toggle
         name="auto_reply" value={s.auto_reply} onChange={change}
         title="Avtomatik javob"
         desc="Yoqilsa: AI javobi (chat) mijozga darhol ketadi. O'chiq bo'lsa chat tasdiqlash navbatida kutadi. help esa har doim tasdiqsiz, darhol Telegram guruhga yuboriladi."
@@ -56,7 +66,7 @@ export default function Settings() {
       <Toggle
         name="poll_enabled" value={s.poll_enabled} onChange={change}
         title="Fon sikli"
-        desc="Yangi mijoz xabarlarini davriy tekshirish (POLL_INTERVAL_SEC). O'chirilsa agent faqat qo'lda ishga tushiriladi."
+        desc="Yangi mijoz xabarlarini davriy tekshirish (POLL_INTERVAL_SEC). O'chirilsa agent faqat qo'lda ishga tushiriladi. AI agent o'chiq bo'lsa bu sozlama ta'sir qilmaydi."
       />
     </>
   )

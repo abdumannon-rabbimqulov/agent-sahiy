@@ -1597,7 +1597,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Darhol kuchga kiradi. `auto_reply=true` — AI javobi tasdiqsiz ketadi.",
+        "description": "Darhol kuchga kiradi. `agent_enabled=false` — AI agentni butunlay to'xtatadi. `auto_reply=true` — mijozga javob tasdiqsiz ketadi (help ga ta'sir qilmaydi).",
         "requestBody": {
           "required": true,
           "content": {
@@ -1692,6 +1692,16 @@
           },
           "502": {
             "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "AI agent o'chirilgan",
             "content": {
               "application/json": {
                 "schema": {
@@ -2443,6 +2453,10 @@
       "Settings": {
         "type": "object",
         "properties": {
+          "agent_enabled": {
+            "type": "boolean",
+            "description": "AI agent ishlaydimi. false — zanjir umuman yurmaydi (fon sikli ham, /api/agent/run ham), Groq'ga so'rov ketmaydi. Navbatdagi javoblarni tasdiqlash ishlayveradi"
+          },
           "auto_reply": {
             "type": "boolean",
             "description": "Mijozga ketadigan chat javobi tasdiqsiz yuboriladimi. help bunga bog'liq emas — u har doim darhol ketadi"

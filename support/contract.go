@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -32,19 +33,53 @@ type AgentJSON struct {
 	// Help - Telegram guruhga (xodimlarga) yuboriladigan matn.
 	Help string `json:"help"`
 
-	// Promt - keyingi promt id'si. null yoki 0 => zanjir tugadi.
-	Promt *uint `json:"promt"`
+	// Promt - keyingi promt id'si. null, false yoki 0 => zanjir tugadi.
+	// Model son o'rniga satr ("2") yoki bool qaytarsa ham o'qiladi.
+	Promt PromtRef `json:"promt"`
 
 	// Raw - modelning asl javobi (panel va log uchun).
 	Raw string `json:"-"`
 }
 
+// PromtRef - "promt" kalitining qiymati. Model turli shaklda qaytarishi
+// mumkin: 2, "2", null, false — hammasi bir xil tushuniladi.
+type PromtRef struct {
+	ID uint
+}
+
+// UnmarshalJSON son, sonli satr, null va false ni qabul qiladi.
+func (p *PromtRef) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" || s == "false" || s == `""` {
+		p.ID = 0
+		return nil
+	}
+	s = strings.Trim(s, `"`)
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		// Tushunarsiz qiymat — zanjir tugadi deb hisoblanadi
+		// (xato qaytarsak butun javob yo'qoladi).
+		p.ID = 0
+		return nil
+	}
+	p.ID = uint(n)
+	return nil
+}
+
+// MarshalJSON - id 0 bo'lsa null.
+func (p PromtRef) MarshalJSON() ([]byte, error) {
+	if p.ID == 0 {
+		return []byte("null"), nil
+	}
+	return []byte(strconv.FormatUint(uint64(p.ID), 10)), nil
+}
+
 // NextPromt - keyingi promt id'si va zanjir davom etadimi.
 func (a AgentJSON) NextPromt() (uint, bool) {
-	if a.Promt == nil || *a.Promt == 0 {
+	if a.Promt.ID == 0 {
 		return 0, false
 	}
-	return *a.Promt, true
+	return a.Promt.ID, true
 }
 
 // NeedsData - kodning tashqi API'ga borishi kerakmi.

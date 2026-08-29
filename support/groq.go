@@ -116,6 +116,14 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 		return "", Usage{}, ErrNoGroqKey
 	}
 
+	// Groq json_object rejimida xabarlar ichida "json" so'zi bo'lishini
+	// TALAB qiladi (aks holda 400). Promt matnini admin yozadi va u so'z
+	// unda bo'lmasligi mumkin — shuning uchun kod o'zi kafolatlaydi.
+	if !strings.Contains(strings.ToLower(system+user), "json") {
+		system = strings.TrimRight(system, "\n") +
+			"\n\nJavobni faqat JSON obyekt ko'rinishida qaytar."
+	}
+
 	reqBody := groqRequest{
 		Model: g.Model,
 		Messages: []groqMessage{

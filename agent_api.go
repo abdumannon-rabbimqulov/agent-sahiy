@@ -223,8 +223,9 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	allowed := map[string]bool{
-		support.SettingAutoReply:   true,
-		support.SettingPollEnabled: true,
+		support.SettingAgentEnabled: true,
+		support.SettingAutoReply:    true,
+		support.SettingPollEnabled:  true,
 	}
 	for k, v := range body {
 		if !allowed[k] {
@@ -252,6 +253,11 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ConversationID <= 0 {
 		writeErr(w, http.StatusBadRequest, "conversation_id majburiy")
+		return
+	}
+
+	if !support.AgentEnabled() {
+		writeErr(w, http.StatusConflict, support.ErrAgentDisabled.Error())
 		return
 	}
 

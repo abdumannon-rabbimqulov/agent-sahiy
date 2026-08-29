@@ -30,7 +30,8 @@ func StartPoller(ctx context.Context) {
 				log.Println("poller: to'xtadi")
 				return
 			case <-t.C:
-				if !PollEnabled() {
+				// Agent butunlay o'chirilgan bo'lsa sikl ham tinch turadi.
+				if !AgentEnabled() || !PollEnabled() {
 					continue
 				}
 				if err := PollOnce(ctx); err != nil {
@@ -46,6 +47,9 @@ func StartPoller(ctx context.Context) {
 // RATE_LIMIT_COUNT — bitta siklda ko'pi bilan nechta suhbat ishlanadi
 // (qolganlari keyingi siklda navbat bilan olinadi).
 func PollOnce(ctx context.Context) error {
+	if !AgentEnabled() {
+		return ErrAgentDisabled
+	}
 	creds := CredentialsFromEnv()
 	token, err := Token(creds, TokenFile)
 	if err != nil {

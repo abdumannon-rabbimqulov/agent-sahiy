@@ -7,10 +7,12 @@ package support
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Zanjir sozlamalari (.env).
@@ -38,9 +40,19 @@ func HistoryLimit() int {
 	return n
 }
 
+// ErrAgentDisabled - AI agent panel orqali o'chirib qo'yilgan.
+var ErrAgentDisabled = errors.New("AI agent o'chirilgan (sozlamalar: agent_enabled)")
+
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
 func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
+	// O'chirilgan bo'lsa hech narsa qilinmaydi: model'ga so'rov ham
+	// ketmaydi, bazaga ham yozilmaydi (behuda "failed" yozuvlar
+	// to'planmasin).
+	if !AgentEnabled() {
+		return nil, ErrAgentDisabled
+	}
+
 	in := &Interaction{
 		ConversationID: conversationID,
 		ClientID:       clientID,
@@ -69,6 +81,7 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 	transcript := formatTranscript(msgs)
+	hint := scriptHint(msgs)
 
 	// 2. Zanjir.
 	groq := GroqFromEnv()
@@ -92,7 +105,7 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 			break
 		}
 
-		userMsg := buildUserMessage(transcript, dataCtx)
+		userMsg := buildUserMessage(transcript, hint, dataCtx)
 		raw, u, err := groq.Generate(ctx, p.Promt, userMsg)
 		usage = usage.Add(u)
 
@@ -312,10 +325,13 @@ func fetchHistory(conversationID int64) ([]Message, error) {
 
 // TranscriptMessage - modelga ketadigan bitta xabar. `type` — xabarni kim
 // yozgani: "client" (mijoz) yoki "agent" (biz tomon: agent yoki xodim).
+//
+// Sana yuborilmaydi: modelga xabarlar tartibi yetarli, sana esa faqat
+// token sarflaydi va javobda chalkashlik keltirib chiqaradi (haqiqiy
+// sanalar "Tizimdagi ma'lumot" blokida keladi).
 type TranscriptMessage struct {
-	Type      string `json:"type"`
-	Message   string `json:"message"`
-	CreatedAt string `json:"created_at,omitempty"`
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 // SenderKind - xabarni kim yozgani: "client" yoki "agent".
@@ -342,9 +358,8 @@ func formatTranscript(msgs []Message) string {
 			continue
 		}
 		out = append(out, TranscriptMessage{
-			Type:      m.SenderKind(),
-			Message:   text,
-			CreatedAt: m.CreatedAt,
+			Type:    m.SenderKind(),
+			Message: text,
 		})
 	}
 
@@ -355,12 +370,109 @@ func formatTranscript(msgs []Message) string {
 	return string(raw)
 }
 
-// buildUserMessage modelga ketadigan matn: suhbat + tizimdan olingan ma'lumot.
-func buildUserMessage(transcript string, data []string) string {
+// Til aniqlash uchun belgilar. Ro'yxatlar qisqa ataylab: maqsad — aniq
+// holatni ushlash, shubhali holatda esa modelga tilni o'zi tanlashiga
+// ruxsat berish.
+var (
+	// O'zbekcha kirillga xos harflar.
+	uzCyrLetters = []rune{'ў', 'қ', 'ғ', 'ҳ'}
+	// Ruschaga xos harflar (o'zbekcha kirillda deyarli uchramaydi).
+	ruLetters = []rune{'ы', 'ъ', 'э', 'ё', 'щ'}
+	// Tez-tez uchraydigan so'zlar.
+	uzWords = []string{"качон", "қачон", "буюртма", "керак", "йўқ", "йук", "бор",
+		"учун", "нима", "туриб", "бўлди", "булди", "менинг", "олдим", "жўнат",
+		"жунат", "етказ", "савол", "рахмат", "раҳмат", "яна", "ҳали", "хали"}
+	ruWords = []string{"что", "когда", "почему", "заказ", "здравствуйте", "привет",
+		"спасибо", "получил", "пришл", "отправ", "где", "мой", "моя", "мне",
+		"это", "как", "уже", "ещё", "еще", "вопрос", "ответ", "деньги"}
+)
+
+// lastClientMessage - oxirgi bo'sh bo'lmagan mijoz xabari.
+func lastClientMessage(msgs []Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].FromClient() && strings.TrimSpace(msgs[i].Message) != "" {
+			return msgs[i].Message
+		}
+	}
+	return ""
+}
+
+// scriptHint - mijozning oxirgi xabari qaysi alifboda va (aniq bo'lsa)
+// qaysi tilda ekanini modelga aytadi.
+//
+// Promt matnining o'zi bunga yetmaydi: promt o'zbekcha yozilgani uchun
+// model ruscha xabarga ham o'zbekcha javob yozib yuboradi, kirill xabarga
+// esa lotinda javob beradi. Bu yerda taxmin emas — matndagi harflar va
+// so'zlar hisobi.
+func scriptHint(msgs []Message) string {
+	last := lastClientMessage(msgs)
+	if last == "" {
+		return ""
+	}
+	low := strings.ToLower(last)
+
+	var cyr, lat int
+	for _, r := range last {
+		switch {
+		case unicode.Is(unicode.Cyrillic, r):
+			cyr++
+		case unicode.Is(unicode.Latin, r):
+			lat++
+		}
+	}
+	if cyr == 0 && lat == 0 {
+		return ""
+	}
+
+	const keepLang = " Mijozning TILINI o'zgartirma: qaysi tilda yozgan bo'lsa, " +
+		"javob ham aynan o'sha tilda bo'lsin."
+
+	if cyr <= lat {
+		return "MUHIM: mijoz LOTIN alifboda yozgan — javobni ham lotin alifboda yoz." + keepLang
+	}
+
+	// Kirill: rus tilimi yoki o'zbekcha kirillmi?
+	uz, ru := 0, 0
+	for _, r := range uzCyrLetters {
+		uz += strings.Count(low, string(r))
+	}
+	for _, r := range ruLetters {
+		ru += strings.Count(low, string(r))
+	}
+	for _, w := range uzWords {
+		if strings.Contains(low, w) {
+			uz += 2
+		}
+	}
+	for _, w := range ruWords {
+		if strings.Contains(low, w) {
+			ru += 2
+		}
+	}
+
+	switch {
+	case ru > uz:
+		return "MUHIM: mijoz RUS tilida yozgan — javobni ham rus tilida yoz. " +
+			"O'zbekchaga o'girma."
+	case uz > ru:
+		return "MUHIM: mijoz O'ZBEK tilida, KIRILL alifboda yozgan — javobni " +
+			"ham o'zbekcha kirill alifboda yoz. Lotinga ham, ruschaga ham o'girma."
+	default:
+		return "MUHIM: mijoz KIRILL alifboda yozgan — javobni ham kirill " +
+			"alifboda yoz, lotinga o'girma." + keepLang
+	}
+}
+
+// buildUserMessage modelga ketadigan matn: suhbat + alifbo ko'rsatmasi +
+// tizimdan olingan ma'lumot.
+func buildUserMessage(transcript, hint string, data []string) string {
 	var b strings.Builder
 	b.WriteString("Suhbatning oxirgi xabarlari (eskisidan yangisiga). ")
 	b.WriteString(`"type": "client" — mijoz yozgan, "type": "agent" — biz yozgan javob:` + "\n")
 	b.WriteString(transcript)
+	if hint != "" {
+		b.WriteString("\n\n" + hint)
+	}
 	if len(data) > 0 {
 		b.WriteString("\n\nTizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):\n")
 		b.WriteString(strings.Join(data, "\n"))

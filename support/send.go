@@ -37,7 +37,8 @@ func AgentSenderID() int64 {
 // SendMessage suhbatga agent nomidan xabar yuboradi.
 func SendMessage(baseURL, token string, senderID, conversationID int64, text string) error {
 	if senderID <= 0 {
-		return fmt.Errorf("AGENT_SENDER_ID berilmagan — xabar yuborib bo'lmaydi")
+		return fmt.Errorf("AGENT_SENDER_ID berilmagan — .env ga agent yozadigan " +
+			"support akkaunt id'sini qo'ying (login javobidagi admin.id) va API'ni qayta ishga tushiring")
 	}
 	if conversationID <= 0 {
 		return fmt.Errorf("conversation_id berilmagan")

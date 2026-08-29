@@ -89,6 +89,11 @@ export default function Queue() {
   const [data, setData] = useState({ items: [], total: 0 })
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [agentOff, setAgentOff] = useState(false)
+
+  useEffect(() => {
+    api.settings().then((s) => setAgentOff(!s.agent_enabled)).catch(() => {})
+  }, [])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -123,6 +128,12 @@ export default function Queue() {
         </div>
       </div>
 
+      {agentOff && (
+        <div className="err">
+          AI agent <strong>o'chirilgan</strong> — yangi javoblar tayyorlanmayapti.
+          Sozlamalar sahifasidan yoqishingiz mumkin. Navbatdagilarni tasdiqlash ishlaydi.
+        </div>
+      )}
       {err && <div className="err">{err}</div>}
       {loading && <p className="muted">Yuklanmoqda…</p>}
       {!loading && data.items.length === 0 && <p className="muted">Bo'sh — hozircha hech narsa yo'q.</p>}

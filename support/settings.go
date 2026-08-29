@@ -10,8 +10,9 @@ import (
 
 // Sozlama kalitlari.
 const (
-	SettingAutoReply   = "auto_reply"   // AI javobi tasdiqsiz ketadimi
-	SettingPollEnabled = "poll_enabled" // fon sikli ishlaydimi
+	SettingAgentEnabled = "agent_enabled" // AI agent umuman ishlaydimi
+	SettingAutoReply    = "auto_reply"    // AI javobi tasdiqsiz ketadimi
+	SettingPollEnabled  = "poll_enabled"  // fon sikli ishlaydimi
 )
 
 // settingsCache - bazaga har safar bormaslik uchun qisqa muddatli kesh.
@@ -83,10 +84,16 @@ func SetSetting(db *gorm.DB, key, value string) error {
 // AllSettings panel uchun barcha sozlamalar (default'lar bilan).
 func AllSettings() map[string]bool {
 	return map[string]bool{
-		SettingAutoReply:   GetBoolSetting(SettingAutoReply, false),
-		SettingPollEnabled: GetBoolSetting(SettingPollEnabled, true),
+		SettingAgentEnabled: AgentEnabled(),
+		SettingAutoReply:    AutoReplyOn(),
+		SettingPollEnabled:  PollEnabled(),
 	}
 }
+
+// AgentEnabled - AI agent ishlaydimi. O'chirilsa zanjir umuman
+// yurmaydi: na fon sikli, na qo'lda ishga tushirish model'ga bormaydi.
+// Navbatdagi tayyor javoblarni tasdiqlash esa ishlayveradi.
+func AgentEnabled() bool { return GetBoolSetting(SettingAgentEnabled, true) }
 
 // AutoReplyOn - AI javobi tasdiqsiz ketadimi.
 func AutoReplyOn() bool { return GetBoolSetting(SettingAutoReply, false) }
@@ -97,8 +104,9 @@ func PollEnabled() bool { return GetBoolSetting(SettingPollEnabled, true) }
 // seedSettings boshlang'ich sozlamalarni yozadi (bor bo'lsa tegilmaydi).
 func seedSettings(db *gorm.DB) error {
 	defs := map[string]string{
-		SettingAutoReply:   "false",
-		SettingPollEnabled: "true",
+		SettingAgentEnabled: "true",
+		SettingAutoReply:    "false",
+		SettingPollEnabled:  "true",
 	}
 	for k, v := range defs {
 		var n int64

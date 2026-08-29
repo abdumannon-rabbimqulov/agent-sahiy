@@ -113,10 +113,8 @@ kim yozgani (`type`) bilan:
 Suhbatning oxirgi xabarlari (eskisidan yangisiga). "type": "client" — mijoz
 yozgan, "type": "agent" — biz yozgan javob:
 [
-  { "type": "client", "message": "DG60607041 что с этим заказом.",
-    "created_at": "2026-08-29T10:16:30Z" },
-  { "type": "agent",  "message": "Tekshiryapmiz…",
-    "created_at": "2026-08-29T10:18:00Z" }
+  { "type": "client", "message": "DG60607041 что с этим заказом." },
+  { "type": "agent",  "message": "Tekshiryapmiz…" }
 ]
 
 Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
@@ -127,6 +125,15 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 (AI yoki xodim) yuborilgan. Bo'sh matnli xabarlar tashlanadi. Modelga
 10 tadan ortiq xabar hech qachon ketmaydi — `HISTORY_LIMIT` bilan faqat
 kamaytirish mumkin.
+
+Xabar **sanasi yuborilmaydi**: tartib yetarli, sana esa token sarflaydi va
+model javobida chalkashlik keltiradi. Haqiqiy sanalar (buyurtma yaratilgan,
+jo'natilgan) "Tizimdagi ma'lumot" blokida keladi.
+
+Bundan tashqari kod modelga alifbo ko'rsatmasini qo'shadi: mijozning oxirgi
+xabaridagi harflar sanaladi va "mijoz KIRILL/LOTIN alifboda yozgan — javobni
+ham shunday yoz" degan qator qo'shiladi. Promt matnining o'zi bunga yetmaydi:
+model o'zbekcha kirill xabarga lotinda javob yozib yuboradi.
 
 "Tizimdagi ma'lumot" bloki faqat oldingi bosqichda `dashboard`/`adminka`
 so'ralgan bo'lsa qo'shiladi. Ya'ni odatiy ikki bosqich:
@@ -141,10 +148,20 @@ id'sini ko'rsating.
 
 ## 4. Sozlamalar
 
-Panel orqali (`PUT /api/settings`, darhol kuchga kiradi):
+Panel orqali (`PUT /api/settings`, darhol kuchga kiradi — qayta ishga
+tushirish shart emas):
+
+Agentni tezda to'xtatish:
+
+```sh
+curl -X PUT http://localhost:8080/api/settings \
+  -H "Authorization: Bearer $TOKEN" -d '{"agent_enabled":false}'
+```
+
 
 | Sozlama | Ma'nosi |
 |---|---|
+| `agent_enabled` | **AI agentni to'xtatish tugmasi.** `false` — zanjir umuman yurmaydi: fon sikli ham, `/api/agent/run` ham modelga bormaydi, token sarflanmaydi, bazaga yangi yozuv qo'shilmaydi. Navbatdagi tayyor javoblarni tasdiqlash va yuborish ishlayveradi |
 | `auto_reply` | `true` — mijozga javob (chat) tasdiqsiz ketadi; `false` — chat navbatda kutadi. `help` ga ta'sir qilmaydi |
 | `poll_enabled` | Fon siklini yoqish/o'chirish |
 
@@ -174,7 +191,7 @@ Panel orqali (`PUT /api/settings`, darhol kuchga kiradi):
 | `interactions` | Har bir murojaat: mijoz xabari, chat/help javobi, status, tokenlar, xarajat, `message_ids` va `read_marked` |
 | `agent_steps` | Zanjirning har bosqichi: modelga ketgan matn va asl javob |
 | `conversation_states` | Poller qaysi suhbatni qayergacha ishlagani |
-| `settings` | `auto_reply`, `poll_enabled` |
+| `settings` | `agent_enabled`, `auto_reply`, `poll_enabled` |
 | `users` | Panel foydalanuvchilari (bcrypt parol) |
 
 ## 6. Tashqi so'rovlar
