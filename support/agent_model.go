@@ -7,6 +7,12 @@ import (
 )
 
 // Interaction statuslari.
+// Interaction manbalari.
+const (
+	SourceAgent    = "agent"    // AI zanjiri o'zi tayyorlagan
+	SourceTelegram = "telegram" // xodimning guruhdagi javobidan
+)
+
 const (
 	StatusPending  = "pending"  // admin tasdig'ini kutmoqda
 	StatusSent     = "sent"     // avtomatik yuborildi
@@ -32,9 +38,17 @@ type Interaction struct {
 	MessageIDs string `gorm:"size:255" json:"message_ids,omitempty"`
 	// ReadMarked - xabarlar o'qilgan deb belgilanganmi.
 	ReadMarked bool `gorm:"not null;default:false" json:"read_marked"`
+	// ChatResolved - javobdan keyin suhbat "hal qilindi" holatiga
+	// o'tkazilganmi (support tizimida).
+	ChatResolved bool `gorm:"not null;default:false" json:"chat_resolved"`
 	// HelpSent - help matni Telegram guruhga yuborilganmi. help tasdiq
 	// kutmaydi: xodimlar darhol xabardor bo'lishi kerak.
 	HelpSent bool `gorm:"not null;default:false" json:"help_sent"`
+
+	// Source - javob qayerdan paydo bo'lgan: "agent" (AI zanjiri) yoki
+	// "telegram" (xodim guruhda reply qilgan, LLM uni mijoz tiliga
+	// moslab yozgan).
+	Source string `gorm:"size:16;index;not null;default:agent" json:"source"`
 
 	Status     string `gorm:"size:16;index;not null;default:pending" json:"status"`
 	HandledBy  string `gorm:"size:64" json:"handled_by,omitempty"` // tasdiqlagan admin logini

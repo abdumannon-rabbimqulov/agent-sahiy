@@ -47,6 +47,10 @@
     {
       "name": "settings",
       "description": "Global sozlamalar"
+    },
+    {
+      "name": "issues",
+      "description": "Muammoli buyurtmalar: aniqlash, Telegram orqali hal qilish"
     }
   ],
   "paths": {
@@ -1597,7 +1601,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Darhol kuchga kiradi. `agent_enabled=false` — AI agentni butunlay to'xtatadi. `auto_reply=true` — mijozga javob tasdiqsiz ketadi (help ga ta'sir qilmaydi).",
+        "description": "Darhol kuchga kiradi (fon sikli har aylanishda sozlamalarni qaytadan o'qiydi). Bool va sonli sozlamalarni birga yuborish mumkin: `{\"agent_enabled\":false}`, `{\"poll_interval_sec\":300,\"chat_delay_sec\":15}`. Chegaradan chiqqan son 400 bilan rad etiladi.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1663,6 +1667,11 @@
                     "type": "integer",
                     "format": "int64",
                     "example": 8169002
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Oxirgi so'z biz tomondan bo'lsa ham ishga tushirish. Sukut bo'yicha bunday suhbat 409 bilan rad etiladi"
                   }
                 }
               }
@@ -1701,7 +1710,282 @@
             }
           },
           "409": {
-            "description": "AI agent o'chirilgan",
+            "description": "AI agent o'chirilgan yoki suhbatga allaqachon javob berilgan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/issues": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Muammoli buyurtmalar",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "",
+                "open",
+                "resolved"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ro'yxat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OrderIssue"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/issues/{id}": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Bitta muammo",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Muammo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderIssue"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/issues/{id}/resolve": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Qo'lda hal qilindi deb belgilash",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "description": "Odatda yechim Telegram guruhdagi reply orqali keladi (`resolved_via: telegram`). Bu endpoint paneldan qo'lda yopish uchun (`resolved_via: panel`).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "resolution"
+                ],
+                "properties": {
+                  "resolution": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Yopildi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderIssue"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/issues/review": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Ochiq muammolarni darhol qayta ko'rish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Har bir ochiq muammo uchun: adminkadagi holat o'zgarganmi (o'zgargan bo'lsa avtomatik yopiladi), mijozga javob berilganmi va eslatma vaqti kelganmi. Odatda buni fon sikli bajaradi.",
+        "responses": {
+          "200": {
+            "description": "Ko'rib chiqildi"
+          },
+          "502": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats/issues/daily": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Muammolar — kunlik hisobot",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kunlar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IssueDailyStat"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
             "content": {
               "application/json": {
                 "schema": {
@@ -2038,9 +2322,22 @@
           "quantity": {
             "type": "integer"
           },
+          "pay_status": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ],
+            "description": "1 — to'langan, 0 — to'lanmagan"
+          },
+          "paid_at": {
+            "type": "string",
+            "example": "2026-08-21 10:00:00",
+            "description": "To'lov qilingan vaqt"
+          },
           "created_at": {
             "type": "string",
-            "description": "to'lov qilingan vaqt"
+            "description": "Buyurtma yaratilgan vaqt"
           },
           "shipped_at": {
             "type": "string"
@@ -2050,6 +2347,10 @@
           },
           "in_storage_at": {
             "type": "string"
+          },
+          "b2c_percentage": {
+            "type": "number",
+            "description": "skus[0].sku_info.B2C_percentage — noldan katta bo'lsa oddiy mijoz (B2C), nol bo'lsa ulgurji (B2B)"
           }
         }
       },
@@ -2095,6 +2396,21 @@
           "user_id": {
             "type": "integer",
             "format": "int64"
+          },
+          "delivered": {
+            "type": "boolean",
+            "description": "Mijoz olib ketganmi"
+          },
+          "delivered_at": {
+            "type": "string",
+            "description": "Qachon olib ketilgani"
+          },
+          "city": {
+            "type": "string"
+          },
+          "branch_address": {
+            "type": "string",
+            "description": "Filial manzili"
           }
         }
       },
@@ -2254,6 +2570,10 @@
             "type": "boolean",
             "description": "Xabarlar support'da o'qilgan deb belgilanganmi. Faqat chat javobi mijozga yetib borganda true bo'ladi"
           },
+          "chat_resolved": {
+            "type": "boolean",
+            "description": "Javobdan keyin suhbat 'hal qilindi' holatiga o'tkazilganmi"
+          },
           "chat_reply": {
             "type": "string",
             "description": "Mijozga ketadigan javob (AI javobidagi `chat`) — auto_reply o'chiq bo'lsa tasdiq kutadi"
@@ -2265,6 +2585,14 @@
           "help_sent": {
             "type": "boolean",
             "description": "help Telegram guruhga yuborilganmi. help tasdiq kutmaydi — zanjir tugashi bilan darhol ketadi"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "telegram"
+            ],
+            "description": "agent — AI zanjiri tayyorlagan; telegram — xodimning guruhdagi javobidan qayta yozilgan"
           },
           "status": {
             "type": "string",
@@ -2386,6 +2714,22 @@
           },
           "tokens_today": {
             "type": "integer"
+          },
+          "issues_open": {
+            "type": "integer",
+            "description": "Hozir ochiq muammolar"
+          },
+          "issues_opened_today": {
+            "type": "integer",
+            "description": "Bugun aniqlangan"
+          },
+          "issues_resolved_today": {
+            "type": "integer",
+            "description": "Bugun hal qilingan"
+          },
+          "issues_avg_hours": {
+            "type": "number",
+            "description": "O'rtacha hal qilish vaqti (soat)"
           }
         }
       },
@@ -2464,6 +2808,32 @@
           "poll_enabled": {
             "type": "boolean",
             "description": "Fon sikli ishlaydimi"
+          },
+          "poll_interval_sec": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 3600,
+            "default": 60,
+            "description": "Fon sikllari orasidagi oraliq (sekund). Darhol kuchga kiradi"
+          },
+          "batch_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 5,
+            "description": "Bitta siklda ishlanadigan suhbatlar soni; qolganlari keyingi siklda"
+          },
+          "chat_delay_sec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600,
+            "default": 0,
+            "description": "Suhbatlar orasidagi tanaffus (sekund) — agentni sekinlashtirish uchun"
+          },
+          "auto_resolve": {
+            "type": "boolean",
+            "default": true,
+            "description": "Mijozga javob ketgandan keyin suhbat support tizimida 'hal qilindi' (resolution_state=2) holatiga o'tkaziladimi"
           }
         }
       },
@@ -2506,6 +2876,108 @@
             "type": "integer",
             "nullable": true,
             "description": "Keyingi promt id; null — zanjir tugadi"
+          }
+        }
+      },
+      "OrderIssue": {
+        "type": "object",
+        "description": "Uzoq qotib qolgan buyurtma. Status 3/4 bo'lib, to'lovdan (PROBLEM_DAYS) kundan ko'p o'tgan bo'lsa kod avtomatik ochadi va Telegram guruhga yozadi.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "order_sn": {
+            "type": "string",
+            "example": "DG60645244"
+          },
+          "client_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "conversation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "integer",
+            "example": 3
+          },
+          "status_label": {
+            "type": "string",
+            "example": "sotib olingan, to'langan"
+          },
+          "days_since_paid": {
+            "type": "integer",
+            "example": 9
+          },
+          "package_name": {
+            "type": "string"
+          },
+          "paid_at": {
+            "type": "string",
+            "example": "2026-08-21 10:00:00"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved"
+            ]
+          },
+          "tg_message_id": {
+            "type": "integer",
+            "description": "Guruhdagi xabar — reply shunga qilinadi"
+          },
+          "notify_count": {
+            "type": "integer",
+            "description": "Guruhga necha marta yozilgan"
+          },
+          "last_notified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolution": {
+            "type": "string",
+            "description": "Qanday hal qilingani"
+          },
+          "resolved_by": {
+            "type": "string",
+            "example": "@dilshod"
+          },
+          "resolved_via": {
+            "type": "string",
+            "enum": [
+              "telegram",
+              "auto",
+              "panel"
+            ]
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IssueDailyStat": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "opened": {
+            "type": "integer"
+          },
+          "resolved": {
+            "type": "integer"
           }
         }
       }

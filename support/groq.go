@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -153,26 +152,28 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 	defer cancel()
 
 	url := strings.TrimRight(g.BaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return "", Usage{}, fmt.Errorf("so'rov yaratish: %w", err)
+	newReq := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+		if err != nil {
+			return nil, fmt.Errorf("so'rov yaratish: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+g.APIKey)
+		return req, nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+g.APIKey)
 
+	// Groq bepul tarifda tez-tez 429 (tezlik chegarasi) qaytaradi —
+	// bir necha soniya kutib qayta uriniladi.
 	start := time.Now()
-	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	status, body, err := doWithRetry(&http.Client{Timeout: timeout}, newReq, Retries())
 	if err != nil {
 		return "", Usage{}, fmt.Errorf("groq so'rovi: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
 	ms := time.Since(start).Milliseconds()
 
 	var out groqResponse
 	if err := json.Unmarshal(body, &out); err != nil {
-		return "", Usage{DurationMS: ms}, fmt.Errorf("javob JSON emas (status %d): %s", resp.StatusCode, snippet(body))
+		return "", Usage{DurationMS: ms}, fmt.Errorf("javob JSON emas (status %d): %s", status, snippet(body))
 	}
 
 	u := Usage{
@@ -190,8 +191,8 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 	if out.Error != nil {
 		return "", u, fmt.Errorf("groq: %s", out.Error.Message)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", u, fmt.Errorf("groq status %d: %s", resp.StatusCode, snippet(body))
+	if status < 200 || status >= 300 {
+		return "", u, fmt.Errorf("groq status %d: %s", status, snippet(body))
 	}
 	if len(out.Choices) == 0 {
 		return "", u, errors.New("groq javobi bo'sh")

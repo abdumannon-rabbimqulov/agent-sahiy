@@ -3,7 +3,6 @@ package support
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -105,37 +104,5 @@ func TestFormatTranscript(t *testing.T) {
 	}
 	if got[0].Type != "agent" || got[1].Type != "client" {
 		t.Errorf("type noto'g'ri: %s / %s", got[0].Type, got[1].Type)
-	}
-}
-
-func TestScriptHint(t *testing.T) {
-	cl := func(text string) []Message { return []Message{{SenderType: "client", Message: text}} }
-
-	cases := []struct {
-		name string
-		msgs []Message
-		want string // hint ichida bo'lishi kerak bo'lgan so'z
-	}{
-		{"rus", cl("здравствуйте, мой заказ DG60648223 куплен но не отправлен"), "RUS tilida"},
-		{"rus qisqa", cl("DG60607041 что с этим заказом."), "RUS tilida"},
-		{"o'zbek kirill", cl("DG60645244 буниси качондан бери КУПЛЕНО да турибди"), "O'ZBEK tilida"},
-		{"o'zbek lotin", cl("DG60623437 raqamli zakazim otmen qilinibti"), "LOTIN alifboda"},
-	}
-	for _, c := range cases {
-		if got := scriptHint(c.msgs); !strings.Contains(got, c.want) {
-			t.Errorf("%s: %q kutilgan, keldi: %q", c.name, c.want, got)
-		}
-	}
-
-	// Oxirgi MIJOZ xabari hisobga olinadi, xodimniki emas.
-	mix := []Message{
-		{SenderType: "client", Message: "здравствуйте, когда придёт заказ"},
-		{SenderType: "agent", Message: "tekshiryapmiz"},
-	}
-	if h := scriptHint(mix); !strings.Contains(h, "RUS tilida") {
-		t.Errorf("oxirgi mijoz xabari ruscha edi: %q", h)
-	}
-	if h := scriptHint(nil); h != "" {
-		t.Errorf("bo'sh kutilgan: %q", h)
 	}
 }

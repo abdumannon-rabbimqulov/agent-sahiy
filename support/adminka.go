@@ -3,7 +3,6 @@ package support
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -65,10 +64,15 @@ type AdminkaOrder struct {
 	ExpressNum   string `json:"express_num"`   // Xitoydagi trek/posilka raqami
 	PackageName  string `json:"package_name"`  // posilka nomi
 	Quantity     int    `json:"quantity"`      // soni
-	CreatedAt    string `json:"created_at"`    // to'lov qilingan vaqt
-	ShippedAt    string `json:"shipped_at"`    // yo'lga chiqqan sana
-	PackedAt     string `json:"packed_at"`     // qadoqlangan vaqt
-	InStorageAt  string `json:"in_storage_at"` // omborga kirgan vaqt
+	PayStatus    int    `json:"pay_status"`    // 1 — to'langan, 0 — to'lanmagan
+	// B2CPercentage — mijoz turi shu maydondan aniqlanadi:
+	// noldan katta bo'lsa oddiy mijoz (B2C), nol bo'lsa ulgurji (B2B).
+	B2CPercentage float64 `json:"b2c_percentage"`
+	PaidAt        string  `json:"paid_at"`       // to'lov qilingan vaqt
+	CreatedAt     string  `json:"created_at"`    // buyurtma yaratilgan vaqt
+	ShippedAt     string  `json:"shipped_at"`    // yo'lga chiqqan sana
+	PackedAt      string  `json:"packed_at"`     // qadoqlangan vaqt
+	InStorageAt   string  `json:"in_storage_at"` // omborga kirgan vaqt
 }
 
 // FetchOrders adminkadan buyurtmalarni oladi (GET).
@@ -103,26 +107,28 @@ func FetchOrders(a Adminka, f OrderFilter) ([]AdminkaOrder, error) {
 	q.Set("begin_date", "")
 	q.Set("end_date", "")
 
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+AdminkaPath+"?"+q.Encode(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("so'rov yaratish: %w", err)
+	url := strings.TrimRight(base, "/") + AdminkaPath + "?" + q.Encode()
+	newReq := func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("so'rov yaratish: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+a.Token)
+		return req, nil
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+a.Token)
 
+	// Adminka Cloudflare orqasida: 522/5xx vaqtinchalik bo'lishi mumkin.
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	status, raw, err := doWithRetry(client, newReq, Retries())
 	if err != nil {
 		return nil, fmt.Errorf("so'rov yuborish: %w", err)
 	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusUnauthorized {
+	if status == http.StatusUnauthorized {
 		return nil, ErrUnauthorized
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("adminka buyurtmalari (status %d): %s", resp.StatusCode, string(raw))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("adminka buyurtmalari (status %d): %s", status, snippet(raw))
 	}
 
 	// Javob shakli barqaror emas — xom map sifatida o'qib, maydonlar
@@ -178,6 +184,13 @@ func pickOrder(m map[string]any) AdminkaOrder {
 		)),
 		PackageName: str(first(m, "express.package.package_name", "package_name")),
 		Quantity:    quantity(m),
+		PayStatus:   int(num64(first(m, "pay_status", "order.pay_status", "payment.status"))),
+		B2CPercentage: numFloat(first(m,
+			"skus.0.sku_info.B2C_percentage",
+			"skus.0.sku_info.b2c_percentage",
+			"B2C_percentage",
+		)),
+		PaidAt:      str(first(m, "paid_at", "order.paid_at", "payment.paid_at", "pay_time")),
 		CreatedAt:   str(get(m, "created_at")),
 		ShippedAt:   str(first(m, "express.package.order.shipped_at", "shipped_at")),
 		PackedAt:    str(first(m, "express.package.order.packed_at", "packed_at")),
@@ -253,6 +266,21 @@ func str(v any) string {
 	default:
 		return fmt.Sprint(x)
 	}
+}
+
+// numFloat kasrli raqamni oladi (matn bo'lsa ham).
+func numFloat(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		if err != nil {
+			return 0
+		}
+		return f
+	}
+	return 0
 }
 
 // num64 raqamni oladi; matn bo'lsa ham parse qilib ko'radi.

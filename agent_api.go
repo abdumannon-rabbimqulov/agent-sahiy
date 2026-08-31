@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -215,26 +216,65 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, support.AllSettings())
 }
 
-// settingsUpdateHandler: PUT /api/settings {"auto_reply":true}
+// settingsUpdateHandler: PUT /api/settings
+// {"auto_reply":true} yoki {"poll_interval_sec":120,"chat_delay_sec":10}
+//
+// Bool va sonli sozlamalar birga kelishi mumkin. Darhol kuchga kiradi.
 func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
-	var body map[string]bool
+	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "body JSON emas")
 		return
 	}
-	allowed := map[string]bool{
+
+	// Har bir sozlama uchun ruxsat etilgan oraliq. Chegara buzilsa
+	// xato qaytariladi — jim turib qiymatni o'zgartirib qo'ymaymiz.
+	limits := map[string]struct{ min, max int }{
+		support.SettingPollInterval: {10, 3600},
+		support.SettingBatchSize:    {1, 50},
+		support.SettingChatDelay:    {0, 600},
+	}
+	bools := map[string]bool{
 		support.SettingAgentEnabled: true,
 		support.SettingAutoReply:    true,
 		support.SettingPollEnabled:  true,
+		support.SettingAutoResolve:  true,
 	}
+
 	for k, v := range body {
-		if !allowed[k] {
-			writeErr(w, http.StatusBadRequest, "noma'lum sozlama: "+k)
-			return
-		}
-		if err := support.SetSetting(support.DB, k, strconv.FormatBool(v)); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
+		switch {
+		case bools[k]:
+			b, ok := v.(bool)
+			if !ok {
+				writeErr(w, http.StatusBadRequest, k+": true yoki false bo'lishi kerak")
+				return
+			}
+			if err := support.SetSetting(support.DB, k, strconv.FormatBool(b)); err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+		default:
+			lim, ok := limits[k]
+			if !ok {
+				writeErr(w, http.StatusBadRequest, "noma'lum sozlama: "+k)
+				return
+			}
+			f, ok := v.(float64)
+			if !ok {
+				writeErr(w, http.StatusBadRequest, k+": son bo'lishi kerak")
+				return
+			}
+			n := int(f)
+			if n < lim.min || n > lim.max {
+				writeErr(w, http.StatusBadRequest,
+					fmt.Sprintf("%s: %d–%d oralig'ida bo'lishi kerak", k, lim.min, lim.max))
+				return
+			}
+			if err := support.SetSetting(support.DB, k, strconv.Itoa(n)); err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, support.AllSettings())
@@ -246,6 +286,8 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ConversationID int64 `json:"conversation_id"`
 		ClientID       int64 `json:"client_id"`
+		// Force - oxirgi so'z biz tomondan bo'lsa ham ishga tushirish.
+		Force bool `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "body JSON emas")
@@ -264,7 +306,16 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	in, err := support.RunChain(ctx, body.ConversationID, body.ClientID)
+	run := support.RunChain
+	if body.Force {
+		run = support.RunChainForce
+	}
+
+	in, err := run(ctx, body.ConversationID, body.ClientID)
+	if errors.Is(err, support.ErrAlreadyAnswered) {
+		writeErr(w, http.StatusConflict, err.Error()+` (qayta ishga tushirish uchun: {"force":true})`)
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": err.Error(), "interaction": in,
@@ -272,4 +323,114 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, in)
+}
+
+// issuesHandler: GET /api/issues?state=open&page=1&limit=20
+func issuesHandler(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	page, limit := queryInt(r, "page", 1), queryInt(r, "limit", 20)
+
+	rows, total, err := support.ListIssues(support.DB, state, page, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total": total, "page": page, "limit": limit, "items": rows,
+	})
+}
+
+// issueGetHandler: GET /api/issues/{id}
+func issueGetHandler(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
+		return
+	}
+	var is support.OrderIssue
+	err := support.DB.First(&is, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeErr(w, http.StatusNotFound, "muammo topilmadi")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, is)
+}
+
+// issueResolveHandler: POST /api/issues/{id}/resolve {"resolution":"..."}
+// Paneldan qo'lda yopish (odatda yechim Telegram guruhdagi reply orqali keladi).
+func issueResolveHandler(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
+		return
+	}
+	claims, err := support.ClaimsFromRequest(r)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var body struct {
+		Resolution string `json:"resolution"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "body JSON emas")
+		return
+	}
+	if body.Resolution == "" {
+		writeErr(w, http.StatusBadRequest, "qanday hal qilingani yozilishi kerak")
+		return
+	}
+
+	var is support.OrderIssue
+	err = support.DB.First(&is, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeErr(w, http.StatusNotFound, "muammo topilmadi")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if is.State == support.IssueResolved {
+		writeErr(w, http.StatusConflict, "bu muammo allaqachon yopilgan")
+		return
+	}
+
+	if err := support.ResolveIssue(support.DB, &is, body.Resolution,
+		claims.Login, support.ResolvedViaPanel); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, is)
+}
+
+// issuesDailyHandler: GET /api/stats/issues/daily?days=30
+func issuesDailyHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := support.IssueDailyStats(support.DB, queryInt(r, "days", 30))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+// issuesReviewHandler: POST /api/issues/review
+// Ochiq muammolarni darhol qayta ko'rib chiqadi: adminkada holat
+// o'zgarganmi, mijozga javob berilganmi va eslatma vaqti kelganmi.
+// Odatda buni fon sikli o'zi bajaradi — bu esa qo'lda tekshirish uchun.
+func issuesReviewHandler(w http.ResponseWriter, r *http.Request) {
+	if err := support.ReviewOpenIssues(support.DB); err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	stats, err := support.GetIssueStats(support.DB)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ko'rib chiqildi", "stats": stats})
 }

@@ -68,6 +68,32 @@ berilgan xabarlar qayta belgilanmaydi.
 Belgilash o'zi xato bersa javob baribir yuborilgan hisoblanadi — murojaat
 `failed` bo'lmaydi, logda ogohlantirish qoladi.
 
+## 1.2. Suhbat qachon yopiladi
+
+Mijozga javob yetib borgach suhbat support tizimida **"hal qilindi"**
+holatiga o'tkaziladi (`PUT .../conversation/resolution/{id}`,
+`{"resolution_state": 2}`). Tartib bitta joyda — `DeliverChat`:
+
+```
+xabar yuborildi → xabarlar o'qilgan deb belgilandi → suhbat yopildi
+```
+
+| Holat | Yopiladimi |
+|---|---|
+| `chat` mijozga yetib bordi (avto yoki tasdiqlangan) | ✅ ha |
+| Xodimning Telegramdagi javobi mijozga yetkazildi | ✅ ha (u ham `DeliverChat` orqali ketadi) |
+| Faqat `help` ketdi, mijozga xabar yo'q | ❌ yo'q |
+| Javob navbatda kutmoqda / rad etilgan | ❌ yo'q |
+
+Mijoz yopilgan suhbatga yana yozsa — support tizimining o'zi uni qayta
+ochadi, biz aralashmaymiz.
+
+Yopish xatosi javobni buzmaydi: murojaat `sent` bo'lib qolaveradi, xato
+logga tushadi (`chat_resolved` esa `false` qoladi).
+
+Panel sozlamasi: **"Javobdan keyin suhbatni yopish"** (`auto_resolve`,
+default yoqilgan).
+
 ## 2. Promt yozish: model qaytaradigan JSON
 
 Har bir promt matnida modeldan **faqat JSON** qaytarishni talab qiling.
@@ -121,19 +147,59 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 { "adminka": [ … ], "dashboard": [ … ] }
 ```
 
+### Tizimdagi ma'lumot — saralangan
+
+Modelga xom javob berilmaydi (bitta buyurtma ~10 KB). `support/context.go`
+faqat javob yozish uchun kerakli maydonlarni qoldiradi — token ham
+tejaladi, model ham chalkashmaydi:
+
+```json
+{
+  "mijoz_turi": "B2C (oddiy mijoz)",
+  "adminka": [
+    { "order_sn": "DG60607041", "status_label": "sotib olingan, to'langan",
+      "paid": true, "paid_at": "21-avgust", "days_since_paid": 8,
+      "problem": true, "tekshiruvda": true,
+      "express_num": "JT3172404674793", "shipped_at": "24-avgust" }
+  ],
+  "yetkazma": {
+    "olinmagan": [
+      { "express_num": "JT3172404674793", "filial": "Chirchiq",
+        "manzil": "Toshkent viloyati, Chirchiq shahri…", "kelgan": "17-avgust" }
+    ],
+    "oxirgi_kunlarda_olingan": [ { "sana": "28-avgust", "soni": 2, "filial": "SAHIY JIZZAX" } ]
+  }
+}
+```
+
+| Maydon | Qayerdan | Nima uchun |
+|---|---|---|
+| `mijoz_turi` | `skus[0].sku_info.B2C_percentage` (noldan katta → B2C, nol → B2B, buyurtma yo'q → noma'lum) | Yetkazish tarifini to'g'ri tushuntirish (promt #4) |
+| `olinmagan` | yetkazmada `delivered: false` | Mijozga qaysi filialda ekanini aytish |
+| `oxirgi_kunlarda_olingan` | `delivered: true`, oxirgi 3 kun | "Olib ketdingizmi?" deb so'rash |
+
+Sanalar odam o'qiydigan ko'rinishga o'tkaziladi ("21-avgust"), 3 kundan
+eski olib ketishlar va manzil/ism/summa kabi maydonlar umuman
+yuborilmaydi.
+
 `type` qiymatlari: **`client`** — mijoz yozgan, **`agent`** — biz tomondan
 (AI yoki xodim) yuborilgan. Bo'sh matnli xabarlar tashlanadi. Modelga
 10 tadan ortiq xabar hech qachon ketmaydi — `HISTORY_LIMIT` bilan faqat
 kamaytirish mumkin.
 
+Mijoz rasm yuborsa (xabar matni — havola), modelga `[rasm yuborildi]`
+bo'lib ketadi: model rasmni ko'ra olmaydi, uzun havola esa token yeydi.
+Promt #2 shu belgini ko'rsa rasmni qayta so'ramaydi.
+
 Xabar **sanasi yuborilmaydi**: tartib yetarli, sana esa token sarflaydi va
 model javobida chalkashlik keltiradi. Haqiqiy sanalar (buyurtma yaratilgan,
 jo'natilgan) "Tizimdagi ma'lumot" blokida keladi.
 
-Bundan tashqari kod modelga alifbo ko'rsatmasini qo'shadi: mijozning oxirgi
-xabaridagi harflar sanaladi va "mijoz KIRILL/LOTIN alifboda yozgan — javobni
-ham shunday yoz" degan qator qo'shiladi. Promt matnining o'zi bunga yetmaydi:
-model o'zbekcha kirill xabarga lotinda javob yozib yuboradi.
+Til haqidagi ko'rsatma modelga **kod tomonidan qo'shilmaydi** — uni
+promtning o'zi aytadi (har bir promtning eng boshida "TIL QOIDASI" bloki
+turadi). Ilgari kod alifboni o'zi aniqlab qo'shardi, lekin mijozning
+oxirgi xabari rasm bo'lganda (`[rasm yuborildi]`) noto'g'ri til
+tanlanardi.
 
 "Tizimdagi ma'lumot" bloki faqat oldingi bosqichda `dashboard`/`adminka`
 so'ralgan bo'lsa qo'shiladi. Ya'ni odatiy ikki bosqich:
@@ -145,6 +211,85 @@ so'ralgan bo'lsa qo'shiladi. Ya'ni odatiy ikki bosqich:
 Ko'proq bosqich kerak bo'lsa (masalan alohida "muammoli buyurtma" yoki
 "pul qaytarish" promti) — yangi promt yarating va oldingi promtda uning
 id'sini ko'rsating.
+
+## 3.1. Muammoli buyurtmalar
+
+Adminka status kodlari:
+
+| status | ma'nosi |
+|---|---|
+| 3 | sotib olingan, to'langan |
+| 4 | kiritish uchun kutilmoqda |
+| 6 | yakunlangan |
+
+**Qoida:** buyurtma **to'langan** (`pay_status = 1`) bo'lib, status 3 yoki 4
+bo'lib, **to'lov sanasidan (`paid_at`) `PROBLEM_DAYS` (3) kundan ko'p**
+o'tgan bo'lsa — muammoli.
+
+`paid_at` bo'sh bo'lsa (eski yozuvlar) `created_at` ga qaytiladi.
+**To'lanmagan buyurtma hech qachon muammoli hisoblanmaydi** — u kutib
+turishi normal, xodim aralashuvi kerak emas.
+
+Bu qarorni **kod** chiqaradi, model emas: modelga sana ayirmasini ishonib
+bo'lmaydi. Modelga tayyor maydonlar beriladi:
+
+```json
+{ "order_sn": "DG60645244", "status_label": "sotib olingan, to'langan",
+  "paid": true, "paid_at": "2026-08-21 10:00:00",
+  "days_since_paid": 9, "problem": true, "tekshiruvda": true }
+```
+
+Nima bo'ladi:
+
+| Holat | Mijozga | Guruhga |
+|---|---|---|
+| `paid: false` | "to'lov hali o'tmagan" | — |
+| `problem: true` | "buyurtmangiz tekshirilmoqda" | ⚠️ muammo xabari (avtomatik, tasdiqsiz) |
+| status 3/4, `problem: false` | "tez orada yo'lga chiqadi" | — |
+
+**Hal qilish — Telegram guruhdagi reply orqali.** Bot yozgan xabarga xodim
+reply qilsa, o'sha matn yechim bo'lib saqlanadi (`resolved_via: telegram`,
+`resolved_by: @username`) va bot "✅ … hal qilindi" deb tasdiqlaydi.
+
+**Xodim javobi mijozga ham yetadi.** Reply matni promt #5 orqali mijoz
+tiliga moslab qayta yoziladi (ichki atamalarsiz, xushmuomala) va odatdagi
+qoida bo'yicha ketadi: `auto_reply` yoqiq bo'lsa darhol mijozga, aks
+holda tasdiqlash navbatiga. Bunday javoblar panelda `source: telegram`
+belgisi bilan ko'rinadi. Guruhdagi tasdiqda holat ham yoziladi
+("mijozga yuborildi" / "admin tasdig'i kutilmoqda").
+
+LLM ishlamay qolsa javob YO'QOLMAYDI: xodim matni o'z holicha qoralama
+bo'lib navbatga tushadi.
+Guruh javoblari `TG_POLL_SEC` (30 s) da bir marta `getUpdates` bilan
+o'qiladi; oxirgi `update_id` `settings` jadvalida saqlanadi.
+
+**Takroriy eslatma** — har siklda `ReviewOpenIssues` ochiq muammolarni
+qayta ko'radi va faqat shundan keyin eslatma yuboradi:
+
+1. Adminkadagi holat o'zgarganmi → o'zgargan bo'lsa avtomatik yopiladi
+   (`resolved_via: auto`, guruhga "✅ holat o'zgardi" deb yoziladi).
+2. Mijozga biz javob berganmizmi — chatdan tekshiriladi va eslatmada
+   ko'rsatiladi.
+3. `ISSUE_REMIND_HOURS` (24 soat) o'tgan bo'lsa — eslatma yuboriladi;
+   reply endi yangi xabarga qilinadi.
+
+Qo'lda: `POST /api/issues/review`, paneldan yopish:
+`POST /api/issues/{id}/resolve`.
+
+Kunlik hisobot: `GET /api/stats/issues/daily` + `/api/stats` dagi
+`issues_open`, `issues_opened_today`, `issues_resolved_today`,
+`issues_avg_hours` — dashboardda "Bugungi hisobot" bloki.
+
+### Javob berilgan suhbat qayta ishlanmaydi
+
+Suhbatdagi oxirgi so'z **biz tomondan** bo'lsa, zanjir umuman
+yurmaydi (`ErrAlreadyAnswered`): mijoz javob kutmayapti, qayta ishlash
+esa behuda token va takroriy javob (hatto muammoni qayta ko'tarish)
+demakdir. Bu tekshiruv `RunChain` ning ichida — fon sikli ham,
+`POST /api/agent/run` ham unga bo'ysunadi.
+
+Qo'lda majburan ishga tushirish kerak bo'lsa:
+`POST /api/agent/run {"conversation_id":123,"force":true}`.
 
 ## 4. Sozlamalar
 
@@ -164,6 +309,16 @@ curl -X PUT http://localhost:8080/api/settings \
 | `agent_enabled` | **AI agentni to'xtatish tugmasi.** `false` — zanjir umuman yurmaydi: fon sikli ham, `/api/agent/run` ham modelga bormaydi, token sarflanmaydi, bazaga yangi yozuv qo'shilmaydi. Navbatdagi tayyor javoblarni tasdiqlash va yuborish ishlayveradi |
 | `auto_reply` | `true` — mijozga javob (chat) tasdiqsiz ketadi; `false` — chat navbatda kutadi. `help` ga ta'sir qilmaydi |
 | `poll_enabled` | Fon siklini yoqish/o'chirish |
+| `auto_resolve` | Javobdan keyin suhbatni "hal qilindi" holatiga o'tkazish (default yoqilgan) |
+| `poll_interval_sec` | Sikllar orasidagi oraliq, 10–3600 s (sekinlashtirish uchun oshiring) |
+| `batch_size` | Bitta siklda nechta suhbat, 1–50 (qolganlari keyingi siklda) |
+| `chat_delay_sec` | Suhbatlar orasidagi tanaffus, 0–600 s |
+
+**Tezlikni sekinlashtirish** panel orqali: Sozlamalar → "Ishlash tezligi".
+Masalan `poll_interval_sec=300`, `batch_size=2`, `chat_delay_sec=20` —
+har 5 daqiqada 2 ta suhbat, orasida 20 soniya tanaffus. O'zgarish darhol
+kuchga kiradi, API'ni qayta ishga tushirish shart emas. `.env` dagi
+`POLL_INTERVAL_SEC` / `RATE_LIMIT_COUNT` endi faqat boshlang'ich qiymat.
 
 `.env` orqali (qayta ishga tushirish kerak):
 
@@ -180,7 +335,14 @@ curl -X PUT http://localhost:8080/api/settings \
 | `CHATS_LIMIT` | 30 | Bir siklda ko'riladigan suhbatlar |
 | `RATE_LIMIT_COUNT` | 5 | Bir siklda ishlanadigan suhbatlar (qolgani keyingi siklda) |
 | `AGENT_SENDER_ID` | — | **Majburiy.** Agent chatda qaysi id bilan yozadi |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_GROUP_ID` | — | `help` shu guruhga ketadi |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_GROUP_ID` | — | `help` va muammoli buyurtmalar shu guruhga ketadi |
+| `TG_POLL_SEC` | 30 | Guruhdagi reply'lar necha soniyada tekshiriladi |
+| `HTTP_RETRIES` | 2 | Vaqtinchalik xatolarda (429, 5xx, Cloudflare 522) qo'shimcha urinishlar |
+| `HTTP_RETRY_DELAY_MS` | 2000 | Urinishlar orasidagi birinchi tanaffus (har safar ikkilanadi) |
+| `HTTP_RETRY_MAX_MS` | 20000 | Kutishning yuqori chegarasi (`Retry-After` uzun bo'lsa ham) |
+| `PROBLEM_DAYS` | 3 | To'lovdan necha kun o'tsa muammoli |
+| `PROBLEM_STATUSES` | `3,4` | Kuzatiladigan statuslar |
+| `ISSUE_REMIND_HOURS` | 24 | Eslatma oralig'i |
 | `CORS_ORIGIN` | `http://localhost:5173` | Frontend manzili |
 
 ## 5. Baza jadvallari
@@ -191,8 +353,25 @@ curl -X PUT http://localhost:8080/api/settings \
 | `interactions` | Har bir murojaat: mijoz xabari, chat/help javobi, status, tokenlar, xarajat, `message_ids` va `read_marked` |
 | `agent_steps` | Zanjirning har bosqichi: modelga ketgan matn va asl javob |
 | `conversation_states` | Poller qaysi suhbatni qayergacha ishlagani |
-| `settings` | `agent_enabled`, `auto_reply`, `poll_enabled` |
+| `order_issues` | Muammoli buyurtmalar: qachon aniqlangan, guruhga necha marta yozilgan, qanday va kim tomonidan hal qilingan |
+| `settings` | `agent_enabled`, `auto_reply`, `poll_enabled`, `tg_update_offset` |
 | `users` | Panel foydalanuvchilari (bcrypt parol) |
+
+## 5.1. Vaqtinchalik uzilishlar
+
+Sahiy API'lari Cloudflare orqasida va vaqti-vaqti bilan **522** (origin
+javob bermayapti) qaytaradi; Groq bepul tarifda **429** (tezlik chegarasi)
+beradi. Shunday javoblarda kod avtomatik qayta uriniladi
+(`HTTP_RETRIES`, tanaffus har safar ikkilanadi: 2s → 4s). Server
+`Retry-After` sarlavhasini yuborsa (Groq 429 da yuboradi) o'shanga
+amal qilinadi, lekin `HTTP_RETRY_MAX_MS` dan oshmaydi — juda uzoq
+kutgandan ko'ra murojaatni keyingi siklga qoldirgan ma'qul.
+
+Qayta urinilmaydi:
+- **4xx** (401 kabi) — token yaroqsiz bo'lsa takrorlash foydasiz;
+- **xabar yuborish** (`/api/v2/chat/send`, Telegram `sendMessage`) —
+  birinchi urinish aslida o'tib ketgan bo'lsa mijozga ikki marta xabar
+  ketib qolishi mumkin.
 
 ## 6. Tashqi so'rovlar
 
@@ -202,10 +381,12 @@ curl -X PUT http://localhost:8080/api/settings \
 | Xabarlar | `GET {BASE_URL}/api/v1/support.chat.message/conversation/{id}` |
 | **Javob yuborish** | `POST {BASE_URL}/api/v2/chat/send` |
 | **O'qilgan deb belgilash** | `PUT {BASE_URL}/api/v1/support.chat.message/read?ids=1,2,3` |
+| **Suhbatni yopish** | `PUT {BASE_URL}/api/v1/support.chat.conversation/resolution/{id}` |
 | Daigou buyurtmalar | `GET {USER_BASE_URL}/api/admin/daigou-orders` |
 | Yetkazma | `POST {SERVICE_BASE_URL}/api/v2/admin/delivery/orders/filter` |
 | AI | `POST {GROQ_BASE_URL}/chat/completions` |
-| Telegram | `POST https://api.telegram.org/bot{TOKEN}/sendMessage` |
+| Telegram (yuborish) | `POST https://api.telegram.org/bot{TOKEN}/sendMessage` |
+| Telegram (javoblarni o'qish) | `GET https://api.telegram.org/bot{TOKEN}/getUpdates` |
 
 ## 7. O'lik `.env` kalitlari
 

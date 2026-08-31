@@ -3,7 +3,6 @@ package support
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -44,26 +43,26 @@ func FetchMessages(baseURL, token string, conversationID int64, limit int) ([]Me
 	}
 	url := fmt.Sprintf("%s%s%d?page=1&limit=%d", strings.TrimRight(base, "/"), MessagesPath, conversationID, limit)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("so'rov yaratish: %w", err)
+	newReq := func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("so'rov yaratish: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	status, raw, err := doWithRetry(client, newReq, Retries())
 	if err != nil {
 		return nil, fmt.Errorf("so'rov yuborish: %w", err)
 	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusUnauthorized {
+	if status == http.StatusUnauthorized {
 		return nil, ErrUnauthorized
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("xabarlar (status %d): %s", resp.StatusCode, string(raw))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("xabarlar (status %d): %s", status, snippet(raw))
 	}
 
 	var out struct {

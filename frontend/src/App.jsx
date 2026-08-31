@@ -4,6 +4,7 @@ import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Queue from './pages/Queue.jsx'
 import Detail from './pages/Detail.jsx'
+import Issues from './pages/Issues.jsx'
 import Promts from './pages/Promts.jsx'
 import Settings from './pages/Settings.jsx'
 
@@ -25,6 +26,7 @@ function Layout({ children }) {
         <nav>
           <NavLink to="/">Statistika</NavLink>
           <NavLink to="/queue">Tasdiqlash navbati</NavLink>
+          <NavLink to="/issues">Muammoli buyurtmalar</NavLink>
           <NavLink to="/promts">Promtlar</NavLink>
           <NavLink to="/settings">Sozlamalar</NavLink>
         </nav>
@@ -49,6 +51,7 @@ export default function App() {
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/queue" element={<Queue />} />
                   <Route path="/interactions/:id" element={<Detail />} />
+                  <Route path="/issues" element={<Issues />} />
                   <Route path="/promts" element={<Promts />} />
                   <Route path="/settings" element={<Settings />} />
                 </Routes>

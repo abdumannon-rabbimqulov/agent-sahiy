@@ -12,7 +12,6 @@ import (
 	"log"
 	"strings"
 	"time"
-	"unicode"
 )
 
 // Zanjir sozlamalari (.env).
@@ -43,9 +42,23 @@ func HistoryLimit() int {
 // ErrAgentDisabled - AI agent panel orqali o'chirib qo'yilgan.
 var ErrAgentDisabled = errors.New("AI agent o'chirilgan (sozlamalar: agent_enabled)")
 
+// ErrAlreadyAnswered - suhbatdagi oxirgi so'z biz tomondan aytilgan,
+// ya'ni mijoz javobsiz qolmagan.
+var ErrAlreadyAnswered = errors.New("suhbatga javob berilgan — yangi mijoz xabari yo'q")
+
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
 func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
+	return runChain(ctx, conversationID, clientID, false)
+}
+
+// RunChainForce - tekshiruvsiz ishga tushirish (paneldan qo'lda qayta
+// urinish uchun): oxirgi so'z biz tomondan bo'lsa ham zanjir yuradi.
+func RunChainForce(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
+	return runChain(ctx, conversationID, clientID, true)
+}
+
+func runChain(ctx context.Context, conversationID, clientID int64, force bool) (*Interaction, error) {
 	// O'chirilgan bo'lsa hech narsa qilinmaydi: model'ga so'rov ham
 	// ketmaydi, bazaga ham yozilmaydi (behuda "failed" yozuvlar
 	// to'planmasin).
@@ -71,6 +84,13 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 		saveOrLog(in)
 		return in, fmt.Errorf("suhbat %d: xabar yo'q", conversationID)
 	}
+
+	// Oxirgi so'z biz tomondan bo'lsa — mijoz javob kutmayapti.
+	// Bunday suhbatni qayta ishlash behuda token va takroriy javob
+	// (hatto muammo sifatida qayta ko'tarilishi) demakdir.
+	if !force && !msgs[len(msgs)-1].FromClient() {
+		return nil, ErrAlreadyAnswered
+	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].FromClient() {
 			in.ClientMessage = msgs[i].Message
@@ -81,7 +101,6 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 	transcript := formatTranscript(msgs)
-	hint := scriptHint(msgs)
 
 	// 2. Zanjir.
 	groq := GroqFromEnv()
@@ -105,7 +124,7 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 			break
 		}
 
-		userMsg := buildUserMessage(transcript, hint, dataCtx)
+		userMsg := buildUserMessage(transcript, dataCtx)
 		raw, u, err := groq.Generate(ctx, p.Promt, userMsg)
 		usage = usage.Add(u)
 
@@ -143,7 +162,7 @@ func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
 		if a.NeedsData() {
-			dataCtx = append(dataCtx, fetchSystemData(a, clientID))
+			dataCtx = append(dataCtx, fetchSystemData(a, clientID, conversationID))
 		}
 
 		next, more := a.NextPromt()
@@ -258,6 +277,19 @@ func DeliverChat(in *Interaction) error {
 			log.Printf("agent: suhbat %d — %d ta xabar o'qilgan deb belgilandi", in.ConversationID, len(ids))
 		}
 	}
+
+	// Javob berildi — suhbat "hal qilindi" holatiga o'tkaziladi.
+	// Mijoz yana yozsa, support tizimining o'zi uni qayta ochadi.
+	if AutoResolveOn() && !in.ChatResolved {
+		if err := ResolveChat(in.ConversationID); err != nil {
+			// Javob ketgan — yopilmagani murojaatni buzmaydi.
+			log.Printf("agent: suhbat %d yopilmadi: %v", in.ConversationID, err)
+		} else {
+			in.ChatResolved = true
+			saveFlag(in, "chat_resolved", true)
+			log.Printf("agent: suhbat %d — hal qilindi deb belgilandi", in.ConversationID)
+		}
+	}
 	return nil
 }
 
@@ -357,6 +389,12 @@ func formatTranscript(msgs []Message) string {
 		if text == "" {
 			continue
 		}
+		// Mijoz rasm yuborsa, xabar matni — havola. Model rasmni ko'ra
+		// olmaydi, uzun havola esa faqat token yeydi. Shuning uchun
+		// tushunarli belgi bilan almashtiramiz.
+		if isImageLink(text) {
+			text = "[rasm yuborildi]"
+		}
 		out = append(out, TranscriptMessage{
 			Type:    m.SenderKind(),
 			Message: text,
@@ -370,109 +408,39 @@ func formatTranscript(msgs []Message) string {
 	return string(raw)
 }
 
-// Til aniqlash uchun belgilar. Ro'yxatlar qisqa ataylab: maqsad — aniq
-// holatni ushlash, shubhali holatda esa modelga tilni o'zi tanlashiga
-// ruxsat berish.
-var (
-	// O'zbekcha kirillga xos harflar.
-	uzCyrLetters = []rune{'ў', 'қ', 'ғ', 'ҳ'}
-	// Ruschaga xos harflar (o'zbekcha kirillda deyarli uchramaydi).
-	ruLetters = []rune{'ы', 'ъ', 'э', 'ё', 'щ'}
-	// Tez-tez uchraydigan so'zlar.
-	uzWords = []string{"качон", "қачон", "буюртма", "керак", "йўқ", "йук", "бор",
-		"учун", "нима", "туриб", "бўлди", "булди", "менинг", "олдим", "жўнат",
-		"жунат", "етказ", "савол", "рахмат", "раҳмат", "яна", "ҳали", "хали"}
-	ruWords = []string{"что", "когда", "почему", "заказ", "здравствуйте", "привет",
-		"спасибо", "получил", "пришл", "отправ", "где", "мой", "моя", "мне",
-		"это", "как", "уже", "ещё", "еще", "вопрос", "ответ", "деньги"}
-)
+// imageExts - rasm havolasini aniqlash uchun.
+var imageExts = []string{".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"}
 
-// lastClientMessage - oxirgi bo'sh bo'lmagan mijoz xabari.
-func lastClientMessage(msgs []Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].FromClient() && strings.TrimSpace(msgs[i].Message) != "" {
-			return msgs[i].Message
+// isImageLink - xabar butunlay rasm havolasidan iboratmi.
+func isImageLink(s string) bool {
+	if !strings.HasPrefix(s, "http") || strings.ContainsAny(s, " \n") {
+		return false
+	}
+	low := strings.ToLower(s)
+	if strings.Contains(low, "chat-images") {
+		return true
+	}
+	for _, e := range imageExts {
+		if strings.Contains(low, e) {
+			return true
 		}
 	}
-	return ""
+	return false
 }
 
-// scriptHint - mijozning oxirgi xabari qaysi alifboda va (aniq bo'lsa)
-// qaysi tilda ekanini modelga aytadi.
+// buildUserMessage modelga ketadigan matn: suhbat + tizimdan olingan
+// ma'lumot.
 //
-// Promt matnining o'zi bunga yetmaydi: promt o'zbekcha yozilgani uchun
-// model ruscha xabarga ham o'zbekcha javob yozib yuboradi, kirill xabarga
-// esa lotinda javob beradi. Bu yerda taxmin emas — matndagi harflar va
-// so'zlar hisobi.
-func scriptHint(msgs []Message) string {
-	last := lastClientMessage(msgs)
-	if last == "" {
-		return ""
-	}
-	low := strings.ToLower(last)
-
-	var cyr, lat int
-	for _, r := range last {
-		switch {
-		case unicode.Is(unicode.Cyrillic, r):
-			cyr++
-		case unicode.Is(unicode.Latin, r):
-			lat++
-		}
-	}
-	if cyr == 0 && lat == 0 {
-		return ""
-	}
-
-	const keepLang = " Mijozning TILINI o'zgartirma: qaysi tilda yozgan bo'lsa, " +
-		"javob ham aynan o'sha tilda bo'lsin."
-
-	if cyr <= lat {
-		return "MUHIM: mijoz LOTIN alifboda yozgan — javobni ham lotin alifboda yoz." + keepLang
-	}
-
-	// Kirill: rus tilimi yoki o'zbekcha kirillmi?
-	uz, ru := 0, 0
-	for _, r := range uzCyrLetters {
-		uz += strings.Count(low, string(r))
-	}
-	for _, r := range ruLetters {
-		ru += strings.Count(low, string(r))
-	}
-	for _, w := range uzWords {
-		if strings.Contains(low, w) {
-			uz += 2
-		}
-	}
-	for _, w := range ruWords {
-		if strings.Contains(low, w) {
-			ru += 2
-		}
-	}
-
-	switch {
-	case ru > uz:
-		return "MUHIM: mijoz RUS tilida yozgan — javobni ham rus tilida yoz. " +
-			"O'zbekchaga o'girma."
-	case uz > ru:
-		return "MUHIM: mijoz O'ZBEK tilida, KIRILL alifboda yozgan — javobni " +
-			"ham o'zbekcha kirill alifboda yoz. Lotinga ham, ruschaga ham o'girma."
-	default:
-		return "MUHIM: mijoz KIRILL alifboda yozgan — javobni ham kirill " +
-			"alifboda yoz, lotinga o'girma." + keepLang
-	}
-}
-
-// buildUserMessage modelga ketadigan matn: suhbat + alifbo ko'rsatmasi +
-// tizimdan olingan ma'lumot.
-func buildUserMessage(transcript, hint string, data []string) string {
+// Til haqida ko'rsatma bu yerda QO'SHILMAYDI: uni promtning o'zi
+// aytadi. Ilgari kod alifboni o'zi aniqlab qo'shib yuborardi, lekin
+// oxirgi xabar rasm bo'lsa ("[rasm yuborildi]") noto'g'ri til
+// tanlanardi — masalan ruscha yozgan mijozga "lotin alifboda yoz"
+// degan ko'rsatma ketardi.
+func buildUserMessage(transcript string, data []string) string {
 	var b strings.Builder
 	b.WriteString("Suhbatning oxirgi xabarlari (eskisidan yangisiga). ")
 	b.WriteString(`"type": "client" — mijoz yozgan, "type": "agent" — biz yozgan javob:` + "\n")
 	b.WriteString(transcript)
-	if hint != "" {
-		b.WriteString("\n\n" + hint)
-	}
 	if len(data) > 0 {
 		b.WriteString("\n\nTizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):\n")
 		b.WriteString(strings.Join(data, "\n"))
@@ -481,8 +449,12 @@ func buildUserMessage(transcript, hint string, data []string) string {
 }
 
 // fetchSystemData model so'ragan manbalardan ma'lumot oladi va JSON matn
-// qilib qaytaradi. Xato bo'lsa ham matn qaytadi — model buni ko'radi.
-func fetchSystemData(a AgentJSON, clientID int64) string {
+// qilib qaytaradi.
+//
+// Modelga XOM javob berilmaydi: bitta buyurtma ~10 KB, undan javob yozish
+// uchun 6-7 maydon kerak. Shu yerda saralanadi (context.go) — token ham
+// tejaladi, model ham chalkashmaydi.
+func fetchSystemData(a AgentJSON, clientID, conversationID int64) string {
 	out := map[string]any{}
 	numbers := a.Numbers()
 
@@ -504,7 +476,12 @@ func fetchSystemData(a AgentJSON, clientID int64) string {
 			r, err := FetchOrders(adm, f)
 			rows, errs = appendResult(rows, errs, r, err)
 		}
-		out["adminka"] = rows
+
+		rows = dedupOrders(rows)
+		// Mijoz turi (B2C/B2B) — yetkazish tarifini tushuntirish uchun.
+		out["mijoz_turi"] = CustomerType(rows)
+		// Muammoli buyurtmalarni aniqlash (kerak bo'lsa guruhga xabar ketadi).
+		out["adminka"] = BriefOrders(DetectIssues(rows, clientID, conversationID))
 		if len(errs) > 0 {
 			out["adminka_error"] = strings.Join(errs, "; ")
 		}
@@ -530,7 +507,7 @@ func fetchSystemData(a AgentJSON, clientID int64) string {
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
 				rows, errs = appendDelivery(rows, errs, r, err)
 			}
-			out["dashboard"] = rows
+			out["yetkazma"] = BriefDelivery(rows)
 			if len(errs) > 0 {
 				out["dashboard_error"] = strings.Join(errs, "; ")
 			}
@@ -553,6 +530,21 @@ func fetchDeliveryRetry(svc Service, token string, f DeliveryFilter) ([]Delivery
 		}
 	}
 	return rows, err
+}
+
+// dedupOrders - bir buyurtma bir necha marta tushib qolmasin (raqamlar
+// bo'yicha alohida so'rovlar bir xil buyurtmani qaytarishi mumkin).
+func dedupOrders(rows []AdminkaOrder) []AdminkaOrder {
+	seen := map[string]bool{}
+	out := make([]AdminkaOrder, 0, len(rows))
+	for _, o := range rows {
+		if o.OrderSN != "" && seen[o.OrderSN] {
+			continue
+		}
+		seen[o.OrderSN] = true
+		out = append(out, o)
+	}
+	return out
 }
 
 // trimAll bo'sh satrlarni tashlab, chekkalarini tozalaydi.

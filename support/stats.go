@@ -32,6 +32,60 @@ type Stats struct {
 	CostToday        float64 `json:"cost_today"`
 	CostMonth        float64 `json:"cost_month"`
 	TokensToday      int64   `json:"tokens_today"`
+
+	// Muammoli buyurtmalar (kunlik hisobot uchun)
+	IssuesOpen          int64   `json:"issues_open"`
+	IssuesOpenedToday   int64   `json:"issues_opened_today"`
+	IssuesResolvedToday int64   `json:"issues_resolved_today"`
+	IssuesAvgHours      float64 `json:"issues_avg_hours"`
+}
+
+// IssueStats - muammolar bo'yicha umumiy hisob.
+type IssueStats struct {
+	Open          int64   `json:"issues_open"`
+	OpenedToday   int64   `json:"issues_opened_today"`
+	ResolvedToday int64   `json:"issues_resolved_today"`
+	AvgHours      float64 `json:"issues_avg_hours"`
+}
+
+// GetIssueStats - muammolar bo'yicha raqamlar.
+func GetIssueStats(db *gorm.DB) (IssueStats, error) {
+	var s IssueStats
+	err := db.Model(&OrderIssue{}).Select(`
+		COUNT(*) FILTER (WHERE state = 'open') AS open,
+		COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now())) AS opened_today,
+		COUNT(*) FILTER (WHERE resolved_at >= date_trunc('day', now())) AS resolved_today,
+		COALESCE(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600)
+			FILTER (WHERE resolved_at IS NOT NULL), 0) AS avg_hours
+	`).Scan(&s).Error
+	return s, err
+}
+
+// IssueDailyStat - kunlik hisobot qatori.
+type IssueDailyStat struct {
+	Day      time.Time `json:"day"`
+	Opened   int64     `json:"opened"`
+	Resolved int64     `json:"resolved"`
+}
+
+// IssueDailyStats - oxirgi `days` kunda ochilgan va yopilgan muammolar.
+func IssueDailyStats(db *gorm.DB, days int) ([]IssueDailyStat, error) {
+	if days < 1 || days > 365 {
+		days = 30
+	}
+	var out []IssueDailyStat
+	err := db.Raw(`
+		SELECT d.day,
+		       COALESCE(o.cnt, 0) AS opened,
+		       COALESCE(r.cnt, 0) AS resolved
+		FROM generate_series(date_trunc('day', now()) - make_interval(days => ?),
+		                     date_trunc('day', now()), '1 day') AS d(day)
+		LEFT JOIN (SELECT date_trunc('day', created_at) AS day, COUNT(*) AS cnt
+		             FROM order_issues GROUP BY 1) o ON o.day = d.day
+		LEFT JOIN (SELECT date_trunc('day', resolved_at) AS day, COUNT(*) AS cnt
+		             FROM order_issues WHERE resolved_at IS NOT NULL GROUP BY 1) r ON r.day = d.day
+		ORDER BY d.day DESC`, days-1).Scan(&out).Error
+	return out, err
 }
 
 // GetStats umumiy hisobni bitta so'rovda yig'adi.
@@ -62,6 +116,15 @@ func GetStats(db *gorm.DB) (Stats, error) {
 		return s, err
 	}
 	s.TotalTokens = s.PromptTokens + s.CompletionTokens
+
+	is, err := GetIssueStats(db)
+	if err != nil {
+		return s, err
+	}
+	s.IssuesOpen = is.Open
+	s.IssuesOpenedToday = is.OpenedToday
+	s.IssuesResolvedToday = is.ResolvedToday
+	s.IssuesAvgHours = is.AvgHours
 	return s, nil
 }
 

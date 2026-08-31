@@ -93,7 +93,7 @@ func ServiceLogin(s Service) (string, time.Duration, error) {
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", 0, fmt.Errorf("service login (status %d): %s", resp.StatusCode, string(raw))
+		return "", 0, fmt.Errorf("service login (status %d): %s", resp.StatusCode, snippet(raw))
 	}
 
 	// expires_in ba'zan son, ba'zan matn ("2592000") bo'lib keladi.
@@ -169,6 +169,14 @@ type DeliveryOrder struct {
 	BranchName     string `json:"branch_name"`
 	CreatedAt      string `json:"created_at"`
 	UserID         int64  `json:"user_id"`
+
+	// Delivered — mijoz buyurtmani olib ketganmi.
+	Delivered bool `json:"delivered"`
+	// DeliveredAt — qachon olib ketilgani (delivered=true bo'lsa).
+	DeliveredAt string `json:"delivered_at,omitempty"`
+	// City, BranchAddress — qaysi filialda ekanini aytish uchun.
+	City          string `json:"city,omitempty"`
+	BranchAddress string `json:"branch_address,omitempty"`
 }
 
 // FetchDelivery yetkazma buyurtmalarini oladi.
@@ -211,26 +219,27 @@ func fetchDeliveryPage(s Service, token string, f DeliveryFilter, delivered stri
 		q.Set("user_id", strconv.FormatInt(f.UserID, 10))
 	}
 
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+DeliveryPath+"?"+q.Encode(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("so'rov yaratish: %w", err)
+	deliveryURL := strings.TrimRight(base, "/") + DeliveryPath + "?" + q.Encode()
+	newReq := func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, deliveryURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("so'rov yaratish: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	status, raw, err := doWithRetry(client, newReq, Retries())
 	if err != nil {
 		return nil, fmt.Errorf("so'rov yuborish: %w", err)
 	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return nil, ErrUnauthorized
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("yetkazma buyurtmalari (status %d): %s", resp.StatusCode, string(raw))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("yetkazma buyurtmalari (status %d): %s", status, snippet(raw))
 	}
 
 	// Buyurtma topilmasa `data` obyekt emas, bo'sh massiv `[]` bo'lib keladi.
@@ -256,12 +265,35 @@ func fetchDeliveryPage(s Service, token string, f DeliveryFilter, delivered stri
 			LocationNumber: str(get(m, "location_number")),
 			ExpressNum:     str(get(m, "express_num")),
 			// branch_name ba'zan yuqorida, ba'zan delivery_address ichida.
-			BranchName: str(first(m, "branch_name", "delivery_address.branch_name")),
-			CreatedAt:  str(get(m, "created_at")),
-			UserID:     num64(get(m, "user_id")),
+			BranchName: str(first(m, "branch_name", "delivery_address.branch_name",
+				"station.name", "delivery_address.branch_name_uz")),
+			CreatedAt: str(get(m, "created_at")),
+			UserID:    num64(get(m, "user_id")),
+
+			Delivered:   truthy(get(m, "delivered")),
+			DeliveredAt: str(get(m, "delivered_at")),
+			City:        str(get(m, "city")),
+			BranchAddress: str(first(m,
+				"delivery_address.branch_address",
+				"station.address",
+				"address_info.address",
+			)),
 		})
 	}
 	return orders, nil
+}
+
+// truthy — bool, son yoki matn ko'rinishidagi "ha" ni tushunadi.
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x == "true" || x == "1"
+	}
+	return false
 }
 
 // DeliveryJSON buyurtmalarni tayyor JSON matn qilib qaytaradi.

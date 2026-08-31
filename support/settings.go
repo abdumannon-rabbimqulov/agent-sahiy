@@ -13,6 +13,13 @@ const (
 	SettingAgentEnabled = "agent_enabled" // AI agent umuman ishlaydimi
 	SettingAutoReply    = "auto_reply"    // AI javobi tasdiqsiz ketadimi
 	SettingPollEnabled  = "poll_enabled"  // fon sikli ishlaydimi
+	SettingAutoResolve  = "auto_resolve"  // javobdan keyin suhbat yopiladimi
+
+	// Tezlik sozlamalari — panel orqali o'zgartiriladi, darhol kuchga
+	// kiradi (fon sikli har aylanishda qaytadan o'qiydi).
+	SettingPollInterval = "poll_interval_sec" // sikllar orasidagi oraliq
+	SettingBatchSize    = "batch_size"        // bir siklda nechta suhbat
+	SettingChatDelay    = "chat_delay_sec"    // suhbatlar orasidagi tanaffus
 )
 
 // settingsCache - bazaga har safar bormaslik uchun qisqa muddatli kesh.
@@ -58,6 +65,26 @@ func GetSetting(key, def string) string {
 	return def
 }
 
+// GetIntSetting kalitni butun son sifatida o'qiydi (bo'lmasa def).
+// min/max — ruxsat etilgan oraliq; undan tashqarisi kesiladi.
+func GetIntSetting(key string, def, min, max int) int {
+	v := GetSetting(key, "")
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
 // GetBoolSetting kalitni bool sifatida o'qiydi.
 func GetBoolSetting(key string, def bool) bool {
 	v := GetSetting(key, "")
@@ -82,12 +109,40 @@ func SetSetting(db *gorm.DB, key, value string) error {
 }
 
 // AllSettings panel uchun barcha sozlamalar (default'lar bilan).
-func AllSettings() map[string]bool {
-	return map[string]bool{
+func AllSettings() map[string]any {
+	return map[string]any{
 		SettingAgentEnabled: AgentEnabled(),
 		SettingAutoReply:    AutoReplyOn(),
 		SettingPollEnabled:  PollEnabled(),
+		SettingAutoResolve:  AutoResolveOn(),
+		SettingPollInterval: PollInterval(),
+		SettingBatchSize:    BatchSize(),
+		SettingChatDelay:    ChatDelay(),
 	}
+}
+
+// AutoResolveOn - mijozga javob ketgandan keyin suhbat "hal qilindi"
+// holatiga o'tkaziladimi.
+func AutoResolveOn() bool { return GetBoolSetting(SettingAutoResolve, true) }
+
+// PollInterval - fon sikllari orasidagi oraliq (sekund).
+// Panelda berilmagan bo'lsa .env dagi POLL_INTERVAL_SEC ishlatiladi.
+func PollInterval() int {
+	return GetIntSetting(SettingPollInterval,
+		envInt("POLL_INTERVAL_SEC", DefaultPollInterval), 10, 3600)
+}
+
+// BatchSize - bitta siklda nechta suhbat ishlanadi. Qolganlari
+// YO'QOLMAYDI — keyingi siklda navbat bilan olinadi.
+func BatchSize() int {
+	return GetIntSetting(SettingBatchSize, envInt("RATE_LIMIT_COUNT", 5), 1, 50)
+}
+
+// ChatDelay - ketma-ket suhbatlar orasidagi tanaffus (sekund).
+// Agentni sekinlashtirish uchun: modelning tezlik chegarasiga
+// urilmaslik va tashqi API'larni bosmaslik.
+func ChatDelay() int {
+	return GetIntSetting(SettingChatDelay, envInt("CHAT_DELAY_SEC", 0), 0, 600)
 }
 
 // AgentEnabled - AI agent ishlaydimi. O'chirilsa zanjir umuman
@@ -107,6 +162,10 @@ func seedSettings(db *gorm.DB) error {
 		SettingAgentEnabled: "true",
 		SettingAutoReply:    "false",
 		SettingPollEnabled:  "true",
+		SettingAutoResolve:  "true",
+		SettingPollInterval: strconv.Itoa(envInt("POLL_INTERVAL_SEC", DefaultPollInterval)),
+		SettingBatchSize:    strconv.Itoa(envInt("RATE_LIMIT_COUNT", 5)),
+		SettingChatDelay:    strconv.Itoa(envInt("CHAT_DELAY_SEC", 0)),
 	}
 	for k, v := range defs {
 		var n int64

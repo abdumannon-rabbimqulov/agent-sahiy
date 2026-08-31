@@ -38,6 +38,9 @@ function Item({ item, onDone }) {
         <div>
           <strong>Suhbat #{item.conversation_id}</strong>{' '}
           <span className="muted">· mijoz {item.client_id} · {fmt.date(item.created_at)}</span>
+          {item.source === 'telegram' && (
+            <span className="badge" style={{ marginLeft: 8 }}>xodim javobidan</span>
+          )}
         </div>
         <div className="row">
           <span className={`badge ${st.cls}`}>{st.label}</span>
@@ -77,6 +80,7 @@ function Item({ item, onDone }) {
         <span className="muted" style={{ marginLeft: 'auto', fontSize: 13 }}>
           {item.help_sent && <span title="help xodimlar guruhiga yuborilgan">✈︎ help ketdi · </span>}
           {item.read_marked && <span title="Javob yetib bordi — xabarlar o'qilgan deb belgilangan">✓ o'qilgan · </span>}
+          {item.chat_resolved && <span title="Suhbat 'hal qilindi' holatiga o'tkazildi">✓ yopilgan · </span>}
           {item.steps_count} bosqich · {fmt.num(item.prompt_tokens + item.completion_tokens)} token · {fmt.usd(item.cost_usd)}
         </span>
       </div>

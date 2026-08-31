@@ -15,14 +15,16 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [daily, setDaily] = useState([])
   const [clients, setClients] = useState([])
+  const [issues, setIssues] = useState([])
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    Promise.all([api.stats(), api.daily(14), api.clients(30, 15)])
-      .then(([s, d, c]) => {
+    Promise.all([api.stats(), api.daily(14), api.clients(30, 15), api.issuesDaily(14)])
+      .then(([s, d, c, i]) => {
         setStats(s)
         setDaily([...d].reverse())
         setClients(c)
+        setIssues(i)
       })
       .catch((e) => setErr(e.message))
   }, [])
@@ -46,6 +48,36 @@ export default function Dashboard() {
         <Card k="Unikal mijozlar" v={fmt.num(stats.unique_clients)} />
         <Card k="Xato" v={fmt.num(stats.failed)} s={`${fmt.num(stats.rejected)} rad etilgan`} />
       </div>
+
+      <h2>Bugungi hisobot</h2>
+      <div className="cards">
+        <Card k="Yangi muammoli buyurtma" v={fmt.num(stats.issues_opened_today)} s="bugun aniqlangan" />
+        <Card k="Hal qilingan" v={fmt.num(stats.issues_resolved_today)} s="bugun yopilgan" />
+        <Card k="Ochiq muammo" v={fmt.num(stats.issues_open)} s="hozir kutmoqda" />
+        <Card k="O'rtacha hal qilish" v={stats.issues_avg_hours ? `${stats.issues_avg_hours.toFixed(1)} soat` : '—'} />
+        <Card k="Bugungi murojaat" v={fmt.num(daily.length ? daily[daily.length - 1].total : 0)}
+              s={`${fmt.num(stats.tokens_today)} token · ${fmt.usd(stats.cost_today)}`} />
+      </div>
+
+      <h2>Muammolar — kunlik</h2>
+      <table>
+        <thead><tr><th>Kun</th><th>Aniqlangan</th><th>Hal qilingan</th><th>Murojaat</th><th>Token</th></tr></thead>
+        <tbody>
+          {issues.slice(0, 14).map((d) => {
+            const day = daily.find((x) => x.day.slice(0, 10) === d.day.slice(0, 10))
+            return (
+              <tr key={d.day}>
+                <td>{fmt.day(d.day)}</td>
+                <td>{d.opened}</td>
+                <td>{d.resolved}</td>
+                <td className="muted">{day ? day.total : 0}</td>
+                <td className="muted">{fmt.num(day ? day.tokens : 0)}</td>
+              </tr>
+            )
+          })}
+          {issues.length === 0 && <tr><td colSpan="5" className="muted">Ma'lumot yo'q</td></tr>}
+        </tbody>
+      </table>
 
       <h2>Tokenlar va xarajat</h2>
       <div className="cards">

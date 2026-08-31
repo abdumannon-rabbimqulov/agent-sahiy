@@ -86,7 +86,7 @@ func Login(c Credentials) (string, error) {
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("login muvaffaqiyatsiz (status %d): %s", resp.StatusCode, string(raw))
+		return "", fmt.Errorf("login muvaffaqiyatsiz (status %d): %s", resp.StatusCode, snippet(raw))
 	}
 
 	token, err := extractToken(raw)

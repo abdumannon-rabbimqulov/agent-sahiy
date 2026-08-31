@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -23,8 +22,22 @@ type Chat struct {
 	ID          int64  `json:"id"`
 	ClientID    int64  `json:"client_id"`
 	CreatedAt   string `json:"created_at"`
-	MsCreatedAt string `json:"ms_created_at"`
+	MsCreatedAt string `json:"ms_created_at"` // oxirgi xabar vaqti
+
+	// Message — oxirgi xabar matni (ro'yxatda ko'rinadi).
+	Message string `json:"message"`
+	// OperatorUnseenCount — BIZ o'qimagan mijoz xabarlari soni.
+	// Noldan katta bo'lsa suhbat javobsiz qolgan.
+	OperatorUnseenCount int `json:"operator_unseen_count"`
+	// UnseenCount — mijoz o'qimagan xabarlar soni.
+	UnseenCount int `json:"unseen_count"`
+	// State, ResolutionState — suhbat holati (1 — ochiq).
+	State           int `json:"state"`
+	ResolutionState int `json:"resolution_state"`
 }
+
+// Unanswered — suhbatda biz o'qimagan (javobsiz) mijoz xabari bormi.
+func (c Chat) Unanswered() bool { return c.OperatorUnseenCount > 0 }
 
 // ChatFilter — so'rov shartlari. ClientID 0 bo'lsa hamma suhbatlar keladi,
 // noldan katta bo'lsa faqat o'sha mijoz bilan bog'liq suhbatlar.
@@ -61,27 +74,27 @@ func FetchChats(baseURL, token string, f ChatFilter) ([]Chat, error) {
 		return nil, fmt.Errorf("body marshal: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("so'rov yaratish: %w", err)
+	newReq := func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("so'rov yaratish: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	status, raw, err := doWithRetry(client, newReq, Retries())
 	if err != nil {
 		return nil, fmt.Errorf("so'rov yuborish: %w", err)
 	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusUnauthorized {
+	if status == http.StatusUnauthorized {
 		return nil, ErrUnauthorized
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("suhbatlar ro'yxati (status %d): %s", resp.StatusCode, string(raw))
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("suhbatlar ro'yxati (status %d): %s", status, snippet(raw))
 	}
 
 	var out struct {
@@ -93,6 +106,46 @@ func FetchChats(baseURL, token string, f ChatFilter) ([]Chat, error) {
 		return nil, fmt.Errorf("javobni o'qish: %w", err)
 	}
 	return out.Data.Chats, nil
+}
+
+// FetchAllChats bir necha sahifani yig'ib qaytaradi.
+//
+// Server ro'yxatni yangilik bo'yicha saralamaydi: eng yangi xabarlar
+// oxirgi sahifalarda ham bo'lishi mumkin. Shuning uchun poller bir
+// sahifa bilan cheklanmaydi — bir nechta sahifa olinadi va keyin
+// o'zimiz saralaymiz.
+func FetchAllChats(baseURL, token string, pages, limit int) ([]Chat, error) {
+	if pages < 1 {
+		pages = 1
+	}
+	if limit < 1 {
+		limit = 100
+	}
+
+	seen := map[int64]bool{}
+	var all []Chat
+	for p := 1; p <= pages; p++ {
+		part, err := FetchChats(baseURL, token, ChatFilter{Page: p, Limit: limit})
+		if err != nil {
+			if len(all) > 0 {
+				break // bir qismi olindi — shuning bilan davom etamiz
+			}
+			return nil, err
+		}
+		if len(part) == 0 {
+			break
+		}
+		for _, c := range part {
+			if !seen[c.ID] {
+				seen[c.ID] = true
+				all = append(all, c)
+			}
+		}
+		if len(part) < limit {
+			break // oxirgi sahifa
+		}
+	}
+	return all, nil
 }
 
 // ChatsJSON suhbatlarni tayyor JSON matn qilib qaytaradi:

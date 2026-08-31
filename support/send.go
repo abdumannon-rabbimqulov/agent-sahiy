@@ -18,6 +18,12 @@ const SendPath = "/api/v2/chat/send"
 // ResolutionPath - suhbatni "hal bo'ldi" deb belgilash.
 const ResolutionPath = "/api/v1/support.chat.conversation/resolution/"
 
+// Suhbatning resolution holatlari (jonli ma'lumotdan aniqlangan).
+const (
+	ResolutionOpen     = 1 // ochiq, hal qilinmagan
+	ResolutionResolved = 2 // hal qilindi
+)
+
 // SendRequest - /api/v2/chat/send body.
 type SendRequest struct {
 	SenderID       int64  `json:"sender_id"`
@@ -87,13 +93,20 @@ func SendMessage(baseURL, token string, senderID, conversationID int64, text str
 	return nil
 }
 
-// ResolveConversation suhbatni yopadi (state: 1 — hal bo'ldi).
+// ResolveConversation suhbatning holatini yangilaydi
+// (ResolutionResolved — hal qilindi, ResolutionOpen — ochiq).
+//
+// Server maydonni AYNAN "resolution_state" deb kutadi.
 func ResolveConversation(baseURL, token string, conversationID int64, state int, comment string) error {
 	base := baseURL
 	if base == "" {
 		base = DefaultBaseURL
 	}
-	body, err := json.Marshal(map[string]any{"state": state, "comment": comment})
+	payload := map[string]any{"resolution_state": state}
+	if strings.TrimSpace(comment) != "" {
+		payload["comment"] = comment
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
@@ -118,6 +131,26 @@ func ResolveConversation(baseURL, token string, conversationID int64, state int,
 		return fmt.Errorf("resolution (status %d): %s", resp.StatusCode, snippet(raw))
 	}
 	return nil
+}
+
+// ResolveChat suhbatni "hal qilindi" deb belgilaydi. Token keshidan
+// olinadi; eskirgan bo'lsa yangilab bir marta qayta uriniladi.
+func ResolveChat(conversationID int64) error {
+	if conversationID <= 0 {
+		return fmt.Errorf("conversation_id berilmagan")
+	}
+	creds := CredentialsFromEnv()
+	token, err := Token(creds, TokenFile)
+	if err != nil {
+		return fmt.Errorf("support login: %w", err)
+	}
+	err = ResolveConversation(creds.BaseURL, token, conversationID, ResolutionResolved, "")
+	if err == ErrUnauthorized {
+		if token, err = Refresh(creds, TokenFile); err == nil {
+			err = ResolveConversation(creds.BaseURL, token, conversationID, ResolutionResolved, "")
+		}
+	}
+	return err
 }
 
 // SendToClient token keshidan foydalanib xabar yuboradi; token eskirgan

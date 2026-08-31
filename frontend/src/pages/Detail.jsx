@@ -53,6 +53,7 @@ export default function Detail() {
       </div>
       <p className="hint">
         Mijoz {item.client_id} · {fmt.date(item.created_at)} · model: {item.model || '—'}
+        {item.source === 'telegram' && ' · manba: xodimning Telegramdagi javobi'}
       </p>
 
       <div className="cards">

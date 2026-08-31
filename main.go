@@ -387,6 +387,13 @@ func main() {
 	mux.HandleFunc("POST /api/interactions/{id}/approve", support.RequireAuth(approveHandler))
 	mux.HandleFunc("POST /api/interactions/{id}/reject", support.RequireAuth(rejectHandler))
 
+	// Muammoli buyurtmalar
+	mux.HandleFunc("GET /api/issues", support.RequireAuth(issuesHandler))
+	mux.HandleFunc("GET /api/issues/{id}", support.RequireAuth(issueGetHandler))
+	mux.HandleFunc("POST /api/issues/{id}/resolve", support.RequireAuth(issueResolveHandler))
+	mux.HandleFunc("POST /api/issues/review", support.RequireAuth(issuesReviewHandler))
+	mux.HandleFunc("GET /api/stats/issues/daily", support.RequireAuth(issuesDailyHandler))
+
 	// Sozlamalar (avto-javob tugmasi) va qo'lda ishga tushirish
 	mux.HandleFunc("GET /api/settings", support.RequireAuth(settingsHandler))
 	mux.HandleFunc("PUT /api/settings", support.RequireAuth(settingsUpdateHandler))
@@ -402,6 +409,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	support.StartPoller(ctx)
+
+	// Telegram guruhidagi javoblar (muammo yechimlari) — agent
+	// o'chirilgan bo'lsa ham o'qiladi.
+	support.StartTelegramPoller(ctx)
 
 	srv := &http.Server{Addr: addr, Handler: withCORS(mux)}
 

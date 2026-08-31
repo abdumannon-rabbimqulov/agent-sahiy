@@ -57,6 +57,13 @@ export const api = {
   updatePromt: (id, body) => request(`/api/promts/${id}`, { method: 'PUT', body }),
   deletePromt: (id) => request(`/api/promts/${id}`, { method: 'DELETE' }),
 
+  issues: (state = '', page = 1, limit = 50) =>
+    request(`/api/issues?state=${state}&page=${page}&limit=${limit}`),
+  resolveIssue: (id, resolution) =>
+    request(`/api/issues/${id}/resolve`, { method: 'POST', body: { resolution } }),
+  reviewIssues: () => request('/api/issues/review', { method: 'POST' }),
+  issuesDaily: (days = 14) => request(`/api/stats/issues/daily?days=${days}`),
+
   settings: () => request('/api/settings'),
   saveSettings: (body) => request('/api/settings', { method: 'PUT', body }),
 
