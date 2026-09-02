@@ -55,8 +55,11 @@ export default function Dashboard() {
         <Card k="Hal qilingan" v={fmt.num(stats.issues_resolved_today)} s="bugun yopilgan" />
         <Card k="Ochiq muammo" v={fmt.num(stats.issues_open)} s="hozir kutmoqda" />
         <Card k="O'rtacha hal qilish" v={stats.issues_avg_hours ? `${stats.issues_avg_hours.toFixed(1)} soat` : '—'} />
-        <Card k="Bugungi murojaat" v={fmt.num(daily.length ? daily[daily.length - 1].total : 0)}
+        <Card k="Bugungi murojaat" v={fmt.num(stats.total_today)}
               s={`${fmt.num(stats.tokens_today)} token · ${fmt.usd(stats.cost_today)}`} />
+        <Card k="Bugun tasdiqlangan" v={fmt.num(stats.approved_today)} s="admin yuborgan" />
+        <Card k="Bugun avto yuborilgan" v={fmt.num(stats.sent_today)} s="AI o'zi yuborgan" />
+        <Card k="Bugun rad etilgan" v={fmt.num(stats.rejected_today)} />
       </div>
 
       <h2>Muammolar — kunlik</h2>

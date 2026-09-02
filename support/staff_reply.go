@@ -24,19 +24,30 @@ func StaffPromtID() uint { return uint(envInt("STAFF_REPLY_PROMPT_ID", DefaultSt
 
 // AnswerFromStaffReply xodimning javobidan mijozga xabar tayyorlaydi.
 //
+// Ro'yxatda bitta mijozning bir nechta buyurtmasi bo'lishi mumkin (guruhga
+// ketgan bitta xabar) — mijozga baribir BITTA javob tayyorlanadi, unda
+// hamma buyurtma raqami ko'rsatiladi.
+//
 // LLM ishlamasa ham javob YO'QOLMAYDI: xodim matni o'z holicha qoralama
 // bo'lib navbatga tushadi va admin uni tahrirlab yuborishi mumkin.
-func AnswerFromStaffReply(ctx context.Context, is *OrderIssue, reply, who string) (*Interaction, error) {
+func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who string) (*Interaction, error) {
+	if len(issues) == 0 {
+		return nil, fmt.Errorf("muammo berilmagan")
+	}
+	is := &issues[0]
 	if is.ConversationID <= 0 {
 		return nil, fmt.Errorf("suhbat id yo'q")
 	}
+
+	sns := issueNumbers(issues)
 
 	in := &Interaction{
 		ConversationID: is.ConversationID,
 		ClientID:       is.ClientID,
 		Source:         SourceTelegram,
 		Status:         StatusPending,
-		ChatReply:      strings.TrimSpace(reply), // zaxira: xodim matni
+		// Zaxira: xodim matni o'z holicha, buyurtma raqami bilan.
+		ChatReply: WithOrderSN(strings.TrimSpace(reply), sns),
 	}
 
 	// Suhbat tarixi — til va kontekst uchun.
@@ -53,7 +64,7 @@ func AnswerFromStaffReply(ctx context.Context, is *OrderIssue, reply, who string
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 
 	// LLM bilan mijoz tiliga moslab yozamiz.
-	if usage, err := rewriteStaffReply(ctx, in, is, reply, msgs); err != nil {
+	if usage, err := rewriteStaffReply(ctx, in, sns, reply, msgs); err != nil {
 		in.Error = fmt.Sprintf("xodim javobini qayta yozib bo'lmadi: %v", err)
 		log.Printf("xodim javobi: %v — xodim matni qoralama bo'lib qoldi", err)
 	} else {
@@ -88,7 +99,7 @@ func AnswerFromStaffReply(ctx context.Context, is *OrderIssue, reply, who string
 
 // rewriteStaffReply - LLM chaqiruvi. Muvaffaqiyatli bo'lsa in.ChatReply
 // mijozga mos matn bilan almashadi.
-func rewriteStaffReply(ctx context.Context, in *Interaction, is *OrderIssue,
+func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 	reply string, msgs []Message) (Usage, error) {
 
 	if !AgentEnabled() {
@@ -108,7 +119,7 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, is *OrderIssue,
 	// Ichki holat matni ("status_label") ataylab yuborilmaydi — model uni
 	// javobga ko'chirib, mijozga ichki atamalarni chiqarib yuborardi.
 	info := map[string]any{
-		"order_sn":     is.OrderSN,
+		"order_sn":     strings.Join(sns, ", "),
 		"xodim_javobi": strings.TrimSpace(reply),
 	}
 	raw, _ := json.MarshalIndent(info, "", "  ")
@@ -119,6 +130,10 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, is *OrderIssue,
 	b.WriteString(formatTranscript(msgs))
 	b.WriteString("\n\nXodim javobi:\n")
 	b.Write(raw)
+	// Mijoz bir nechta buyurtma haqida yozgan bo'lishi mumkin — javob
+	// qaysi buyurtma haqida ekani matnning o'zida ko'rinishi kerak.
+	b.WriteString("\n\nJavob matnida buyurtma raqamini (order_sn) albatta yoz — ")
+	b.WriteString("mijoz javob qaysi buyurtmasi haqida ekanini bilsin.")
 	userMsg := b.String()
 
 	out, usage, err := groq.Generate(ctx, p.Promt, userMsg)
@@ -146,9 +161,43 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, is *OrderIssue,
 	if a.Chat == "" {
 		return usage, fmt.Errorf("model bo'sh javob qaytardi")
 	}
-	in.ChatReply = a.Chat
+	// Model raqamni tashlab ketsa — kod o'zi qo'shadi.
+	in.ChatReply = WithOrderSN(a.Chat, sns)
 	if a.Help != "" {
 		in.HelpText = a.Help
 	}
 	return usage, nil
+}
+
+// issueNumbers - muammolardagi buyurtma raqamlari.
+func issueNumbers(issues []OrderIssue) []string {
+	out := make([]string, 0, len(issues))
+	for _, is := range issues {
+		if sn := strings.TrimSpace(is.OrderSN); sn != "" {
+			out = append(out, sn)
+		}
+	}
+	return out
+}
+
+// WithOrderSN - javob matnida buyurtma raqami borligini kafolatlaydi.
+//
+// Model (yoki xodim) raqamni yozmagan bo'lsa, matn oldiga qo'shiladi:
+// mijoz javob qaysi buyurtmasi haqida ekanini bilishi kerak. Matnda
+// allaqachon bor raqam takrorlanmaydi.
+func WithOrderSN(text string, sns []string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || len(sns) == 0 {
+		return text
+	}
+	var missing []string
+	for _, sn := range sns {
+		if !strings.Contains(text, sn) {
+			missing = append(missing, sn)
+		}
+	}
+	if len(missing) == 0 {
+		return text
+	}
+	return strings.Join(missing, ", ") + " — " + text
 }

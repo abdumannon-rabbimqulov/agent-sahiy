@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -323,6 +324,47 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, in)
+}
+
+// agentScanHandler: POST /api/agent/scan {"pages":6,"limit":100,"max":0}
+//
+// Suhbatlar ro'yxatini (support.chat.conversation/filter) to'liq ko'rib
+// chiqadi va HAR BIR mijoz uchun zanjirni ketma-ket yuritadi —
+// `operator_unseen_count` filtri va `batch_size` chegarasisiz.
+//
+// Ish uzoq davom etadi (har suhbat bir necha sekund), shuning uchun fonda
+// bajariladi: javob darhol qaytadi, natija esa navbatda (interactions)
+// va logda ko'rinadi.
+func agentScanHandler(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Pages int `json:"pages"`
+		Limit int `json:"limit"`
+		Max   int `json:"max"` // 0 — hammasi
+	}
+	// Bo'sh body ham to'g'ri: hamma qiymat default bo'ladi.
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	if !support.AgentEnabled() {
+		writeErr(w, http.StatusConflict, support.ErrAgentDisabled.Error())
+		return
+	}
+	if support.ScanRunning() {
+		writeErr(w, http.StatusConflict, "skanerlash allaqachon ketyapti")
+		return
+	}
+
+	go func() {
+		// So'rov tugagach ish to'xtamasin — o'z konteksti bilan yuradi.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		if _, err := support.ScanOnce(ctx, body.Pages, body.Limit, body.Max); err != nil {
+			log.Printf("skaner: %v", err)
+		}
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"status": "skanerlash boshlandi — natija navbatda va logda ko'rinadi",
+	})
 }
 
 // issuesHandler: GET /api/issues?state=open&page=1&limit=20

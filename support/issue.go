@@ -38,6 +38,7 @@ const (
 // Qanday yo'l bilan hal bo'lgani.
 const (
 	ResolvedViaTelegram = "telegram" // xodim guruhda reply qildi
+	ResolvedViaChat     = "chat"     // xodim mijozga support chatda javob berdi
 	ResolvedViaAuto     = "auto"     // adminkada status o'zgardi
 	ResolvedViaPanel    = "panel"    // admin paneldan yopdi
 )
@@ -211,6 +212,17 @@ func FindOpenIssue(db *gorm.DB, orderSN string) *OrderIssue {
 	var is OrderIssue
 	err := db.Where("order_sn = ? AND state = ?", orderSN, IssueOpen).First(&is).Error
 	if err != nil {
+		return nil
+	}
+	return &is
+}
+
+// LastIssue - buyurtma bo'yicha eng oxirgi yozuv (ochiq yoki yopilgan).
+// Yopilgan muammo qayta ko'tarilishi kerakmi-yo'qmi degan qarorda
+// ishlatiladi.
+func LastIssue(db *gorm.DB, orderSN string) *OrderIssue {
+	var is OrderIssue
+	if err := db.Where("order_sn = ?", orderSN).Order("id desc").First(&is).Error; err != nil {
 		return nil
 	}
 	return &is

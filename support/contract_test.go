@@ -106,3 +106,25 @@ func TestFormatTranscript(t *testing.T) {
 		t.Errorf("type noto'g'ri: %s / %s", got[0].Type, got[1].Type)
 	}
 }
+
+func TestIsUnclear(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"tushunmadim kaliti", `{"tushunmadim":true,"chat":"..."}`, true},
+		{"savolning o'zi", `{"chat":"Assalomu alaykum! Sizga qanday yordam bera olaman?"}`, true},
+		{"oddiy javob", `{"chat":"Buyurtmangiz yo'lda."}`, false},
+		{"bo'sh", `{}`, false},
+	}
+	for _, c := range cases {
+		a, err := ParseAgentJSON(c.raw)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := a.IsUnclear(); got != c.want {
+			t.Errorf("%s: IsUnclear = %v, kutilgan %v", c.name, got, c.want)
+		}
+	}
+}

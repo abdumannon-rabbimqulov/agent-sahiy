@@ -127,10 +127,12 @@ func handleTelegramReply(u tgUpdate) {
 		return
 	}
 
-	var is OrderIssue
+	// Bitta xabarda bir mijozning bir necha buyurtmasi bo'lishi mumkin —
+	// reply ularning HAMMASINI yopadi.
+	var issues []OrderIssue
 	err := DB.Where("tg_message_id = ? AND state = ?", m.ReplyTo.MessageID, IssueOpen).
-		First(&is).Error
-	if err != nil {
+		Order("id asc").Find(&issues).Error
+	if err != nil || len(issues) == 0 {
 		return // bu reply muammoga tegishli emas
 	}
 
@@ -142,11 +144,19 @@ func handleTelegramReply(u tgUpdate) {
 		who = "xodim"
 	}
 
-	if err := ResolveIssue(DB, &is, strings.TrimSpace(m.Text), who, ResolvedViaTelegram); err != nil {
-		log.Printf("telegram: muammoni yopib bo'lmadi (%s): %v", is.OrderSN, err)
+	var closed []string
+	for i := range issues {
+		if err := ResolveIssue(DB, &issues[i], strings.TrimSpace(m.Text), who, ResolvedViaTelegram); err != nil {
+			log.Printf("telegram: muammoni yopib bo'lmadi (%s): %v", issues[i].OrderSN, err)
+			continue
+		}
+		closed = append(closed, issues[i].OrderSN)
+	}
+	if len(closed) == 0 {
 		return
 	}
-	log.Printf("telegram: %s muammosi %s tomonidan hal qilindi", is.OrderSN, who)
+	sns := strings.Join(closed, ", ")
+	log.Printf("telegram: %s muammosi %s tomonidan hal qilindi", sns, who)
 
 	// Xodim javobidan mijozga xabar tayyorlanadi: LLM uni mijoz tiliga
 	// moslab yozadi, so'ng odatdagi qoida bo'yicha ketadi (avto-javob
@@ -155,8 +165,9 @@ func handleTelegramReply(u tgUpdate) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	if in, err := AnswerFromStaffReply(ctx, &is, m.Text, who); err != nil {
-		log.Printf("telegram: mijozga javob tayyorlanmadi (%s): %v", is.OrderSN, err)
+	// Buyurtmalar bitta mijozniki — mijozga ham bitta javob tayyorlanadi.
+	if in, err := AnswerFromStaffReply(ctx, issues, m.Text, who); err != nil {
+		log.Printf("telegram: mijozga javob tayyorlanmadi (%s): %v", sns, err)
 	} else {
 		switch in.Status {
 		case StatusSent:
@@ -170,7 +181,7 @@ func handleTelegramReply(u tgUpdate) {
 
 	// Xodimga qisqa tasdiq — javobi hisobga olingani ko'rinsin.
 	if _, err := SendTelegramMessage(
-		fmt.Sprintf("✅ %s — hal qilindi deb belgilandi (%s).\n%s", is.OrderSN, who, holat),
+		fmt.Sprintf("✅ %s — hal qilindi deb belgilandi (%s).\n%s", sns, who, holat),
 		m.MessageID); err != nil {
 		log.Printf("telegram: tasdiq yuborilmadi: %v", err)
 	}

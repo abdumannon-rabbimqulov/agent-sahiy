@@ -1722,6 +1722,74 @@
         }
       }
     },
+    "/api/agent/scan": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Hamma mijozni ketma-ket ko'rib chiqish",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Suhbatlar ro'yxatini (support.chat.conversation/filter) to'liq oladi va har bir mijoz uchun zanjirni KETMA-KET yuritadi. Pollerdan farqi: `operator_unseen_count` filtri va `batch_size` chegarasi qo'llanmaydi. Oxirgi so'z biz tomondan bo'lgan suhbat modelga bormaydi (token sarflanmaydi). Ish fonda bajariladi — javob darhol qaytadi, natija navbatda (interactions) va logda ko'rinadi.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "pages": {
+                    "type": "integer",
+                    "description": "nechta sahifa olinadi (bo'sh — CHATS_PAGES)",
+                    "example": 6
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "description": "sahifadagi suhbatlar soni (bo'sh — CHATS_LIMIT)",
+                    "example": 100
+                  },
+                  "max": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "eng ko'p nechta suhbat ko'riladi (0 — hammasi)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Skanerlash boshlandi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Agent o'chirilgan yoki skanerlash allaqachon ketyapti"
+          }
+        }
+      }
+    },
     "/api/issues": {
       "get": {
         "tags": [
@@ -2594,6 +2662,10 @@
             ],
             "description": "agent — AI zanjiri tayyorlagan; telegram — xodimning guruhdagi javobidan qayta yozilgan"
           },
+          "forced": {
+            "type": "boolean",
+            "description": "Qo'lda, tekshiruvsiz ishga tushirilgan (force:true) — oxirgi so'z biz tomondan bo'lsa ham"
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -2681,6 +2753,22 @@
           "needed_staff": {
             "type": "integer",
             "description": "help matni bo'lgan (xodim kerak)"
+          },
+          "total_today": {
+            "type": "integer",
+            "description": "bugun kelgan murojaat (created_at bo'yicha)"
+          },
+          "sent_today": {
+            "type": "integer",
+            "description": "bugun avtomatik yuborilgan (sent_at bo'yicha)"
+          },
+          "approved_today": {
+            "type": "integer",
+            "description": "bugun admin tasdiqlab yuborgan (sent_at bo'yicha)"
+          },
+          "rejected_today": {
+            "type": "integer",
+            "description": "bugun rad etilgan"
           },
           "unique_clients": {
             "type": "integer"
@@ -2872,6 +2960,10 @@
             "type": "string",
             "description": "Telegram guruhga yuboriladigan matn"
           },
+          "tushunmadim": {
+            "type": "boolean",
+            "description": "true — model mijoz muammosini tushunmadi. Kod savol berishdan oldin adminka va dashboarddan mijozning kelmagan buyurtmalarini o'zi tekshiradi: topilsa ma'lumot bilan modelga qayta beriladi, topilmasa mijozdan buyurtma raqami so'raladi"
+          },
           "promt": {
             "type": "integer",
             "nullable": true,
@@ -2948,9 +3040,11 @@
             "type": "string",
             "enum": [
               "telegram",
+              "chat",
               "auto",
               "panel"
-            ]
+            ],
+            "description": "telegram — xodim guruhda reply qildi; chat — xodim mijozga support chatda javob berdi; auto — adminkada holat o'zgardi; panel — admin paneldan yopdi"
           },
           "resolved_at": {
             "type": "string",

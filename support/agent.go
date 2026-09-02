@@ -70,6 +70,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		ConversationID: conversationID,
 		ClientID:       clientID,
 		Status:         StatusFailed,
+		Forced:         force,
 	}
 
 	// 1. Suhbat tarixi.
@@ -101,6 +102,11 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 	transcript := formatTranscript(msgs)
+	// Bugun bu suhbatda biz hali yozmaganmiz — javob salom bilan boshlanadi.
+	greet := NeedsGreeting(msgs)
+	// Mijoz yozgan raqamlar — model ularni tashlab ketsa ham qidiruv
+	// baribir shu raqamlar bo'yicha ketadi.
+	chatSN, chatEx := ExtractNumbers(msgs)
 
 	// 2. Zanjir.
 	groq := GroqFromEnv()
@@ -115,6 +121,8 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		dataCtx  []string // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
+		// probed - "tushunmadim" fallback'i bir marta ishlagan.
+		probed bool
 	)
 
 	for step := 1; step <= maxSteps; step++ {
@@ -124,7 +132,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			break
 		}
 
-		userMsg := buildUserMessage(transcript, dataCtx)
+		userMsg := buildUserMessage(transcript, dataCtx, greet)
 		raw, u, err := groq.Generate(ctx, p.Promt, userMsg)
 		usage = usage.Add(u)
 
@@ -161,8 +169,46 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
+		// `pending` — mijozning hali kelmagan buyurtmasi topildimi.
+		fetched, pending := false, false
 		if a.NeedsData() {
-			dataCtx = append(dataCtx, fetchSystemData(a, clientID, conversationID))
+			// Model qaytargan raqamlarga suhbatdan topilganlarini
+			// qo'shamiz — eski buyurtma ham topilsin.
+			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
+			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
+			data, p := fetchSystemData(a, clientID, conversationID)
+			dataCtx = append(dataCtx, data)
+			fetched, pending = true, p
+		}
+
+		// Model mijoz muammosini tushunmadi. Darhol "buyurtma raqamini
+		// bering" deb so'ramaymiz: avval KOD adminka va dashboardni o'zi
+		// ko'radi. Kelmagan buyurtma bo'lsa — o'sha ma'lumot bilan model
+		// qaytadan chaqiriladi (mijoz katta ehtimol o'sha buyurtma
+		// haqida yozgan). Bo'lmasa — javob o'z holicha qoladi, ya'ni
+		// mijozdan buyurtma raqami so'raladi.
+		//
+		// Bir marta qilinadi: ikkinchi marta ham tushunmasa, so'rash eng
+		// to'g'ri yo'l. Oxirgi bosqichda ham qilinmaydi — qayta so'rashga
+		// bosqich qolmaydi.
+		if a.IsUnclear() && !probed && step < maxSteps {
+			probed = true
+			if !fetched {
+				// Raqamsiz so'rov — mijozning hamma buyurtmasi olinadi.
+				probe := AgentJSON{Adminka: true, Dashboard: true,
+					OrderSN: chatSN, ExpressNum: chatEx}
+				data, p := fetchSystemData(probe, clientID, conversationID)
+				pending = p
+				if pending {
+					dataCtx = append(dataCtx, data)
+				}
+			}
+			if pending {
+				dataCtx = append(dataCtx, unclearHint)
+				log.Printf("agent: suhbat %d — model tushunmadi, kelmagan buyurtma topildi: qayta so'raldi", conversationID)
+				continue // xuddi shu promt, endi ma'lumot bilan
+			}
+			log.Printf("agent: suhbat %d — model tushunmadi, kelmagan buyurtma yo'q: buyurtma raqami so'raladi", conversationID)
 		}
 
 		next, more := a.NextPromt()
@@ -355,6 +401,14 @@ func fetchHistory(conversationID int64) ([]Message, error) {
 	return msgs, err
 }
 
+// unclearHint - "tushunmadim" fallback'ida ma'lumot bilan birga
+// ketadigan ko'rsatma: mijoz aynan shu buyurtmalar haqida yozgan
+// bo'lishi ehtimoli katta.
+const unclearHint = "Sen mijoz muammosini tushunmading, shuning uchun " +
+	"uning buyurtmalari tizimdan olindi. Yuqorida mijozning HALI KELMAGAN " +
+	"buyurtmalari bor — mijoz katta ehtimol o'shalar haqida yozgan. " +
+	"Shu ma'lumotga tayanib javob yoz; endi \"" + AskHelpText + "\" deb so'rama."
+
 // TranscriptMessage - modelga ketadigan bitta xabar. `type` — xabarni kim
 // yozgani: "client" (mijoz) yoki "agent" (biz tomon: agent yoki xodim).
 //
@@ -429,14 +483,14 @@ func isImageLink(s string) bool {
 }
 
 // buildUserMessage modelga ketadigan matn: suhbat + tizimdan olingan
-// ma'lumot.
+// ma'lumot + salomlashish ko'rsatmasi.
 //
 // Til haqida ko'rsatma bu yerda QO'SHILMAYDI: uni promtning o'zi
 // aytadi. Ilgari kod alifboni o'zi aniqlab qo'shib yuborardi, lekin
 // oxirgi xabar rasm bo'lsa ("[rasm yuborildi]") noto'g'ri til
 // tanlanardi — masalan ruscha yozgan mijozga "lotin alifboda yoz"
 // degan ko'rsatma ketardi.
-func buildUserMessage(transcript string, data []string) string {
+func buildUserMessage(transcript string, data []string, greet bool) string {
 	var b strings.Builder
 	b.WriteString("Suhbatning oxirgi xabarlari (eskisidan yangisiga). ")
 	b.WriteString(`"type": "client" — mijoz yozgan, "type": "agent" — biz yozgan javob:` + "\n")
@@ -445,6 +499,25 @@ func buildUserMessage(transcript string, data []string) string {
 		b.WriteString("\n\nTizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):\n")
 		b.WriteString(strings.Join(data, "\n"))
 	}
+	// Salom kuniga bir marta: yangi kunning birinchi javobi salom bilan
+	// boshlanadi, kun davomidagi keyingi javoblarda takrorlanmaydi.
+	//
+	// Salom — javobning BOSHI, o'zi emas: model baribir mijoz muammosini
+	// hal qilishi kerak, tushunmasa esa so'rashi kerak.
+	b.WriteString("\n\n")
+	if greet {
+		b.WriteString("Bugun bu suhbatda biz hali yozmadik — chat javobini \"" + GreetingText + "\" bilan boshla (faqat shu ikki so'z, boshqa salomlashish qo'shma). ")
+		b.WriteString("Salom — javobning boshi, o'zi emas: undan keyin mijoz muammosiga javob yoz. ")
+	} else {
+		b.WriteString("Bugun bu suhbatda allaqachon yozganmiz — javobda salomlashma, to'g'ridan-to'g'ri mavzuga o't. ")
+	}
+	b.WriteString("Avval yuqoridagi xabarlarning HAMMASINI o'qib, mijozning muammosini o'zing aniqla: ")
+	b.WriteString("mijoz muammosini oxirgi xabarda emas, oldingi xabarlarida aytgan bo'lishi mumkin. ")
+	b.WriteString("Muammo tushunarli bo'lsa to'g'ridan-to'g'ri javob yoz. ")
+	b.WriteString("Shu xabarlarning hech biridan muammo tushunilmasa — o'zingdan to'qima, ")
+	b.WriteString(`javobingga "tushunmadim": true qo'sh va chat matnida "` + AskHelpText + `" deb so'ra. `)
+	b.WriteString("Bunda kod mijozning buyurtmalarini tizimdan olib senga qaytadan beradi: ")
+	b.WriteString("kelmagan buyurtmasi bo'lsa, savol o'rniga o'sha buyurtma haqida javob yozasan.")
 	return b.String()
 }
 
@@ -454,9 +527,14 @@ func buildUserMessage(transcript string, data []string) string {
 // Modelga XOM javob berilmaydi: bitta buyurtma ~10 KB, undan javob yozish
 // uchun 6-7 maydon kerak. Shu yerda saralanadi (context.go) — token ham
 // tejaladi, model ham chalkashmaydi.
-func fetchSystemData(a AgentJSON, clientID, conversationID int64) string {
+func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool) {
 	out := map[string]any{}
 	numbers := a.Numbers()
+	// pending - mijozning hali kelmagan (yakunlanmagan) buyurtmasi
+	// topildimi. Model muammoni tushunmaganda shu bo'yicha qaror
+	// qilinadi: bor bo'lsa — modelga qaytadan beriladi, yo'q bo'lsa —
+	// mijozdan buyurtma raqami so'raladi.
+	pending := false
 
 	if a.Adminka {
 		adm := AdminkaFromEnv()
@@ -467,13 +545,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) string {
 			rows, errs = appendResult(rows, errs, r, err)
 		}
 		for _, n := range numbers {
-			f := OrderFilter{Size: DefaultOrdersPerCall}
-			if strings.HasPrefix(strings.ToUpper(n), "DG") {
-				f.OrderSN = n
-			} else {
-				f.ExpressNum = n
-			}
-			r, err := FetchOrders(adm, f)
+			r, err := findOrderByNumber(adm, n)
 			rows, errs = appendResult(rows, errs, r, err)
 		}
 
@@ -481,7 +553,11 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) string {
 		// Mijoz turi (B2C/B2B) — yetkazish tarifini tushuntirish uchun.
 		out["mijoz_turi"] = CustomerType(rows)
 		// Muammoli buyurtmalarni aniqlash (kerak bo'lsa guruhga xabar ketadi).
-		out["adminka"] = BriefOrders(DetectIssues(rows, clientID, conversationID))
+		views := DetectIssues(rows, clientID, conversationID)
+		out["adminka"] = BriefOrders(views)
+		if HasPendingOrders(views) {
+			pending = true
+		}
 		if len(errs) > 0 {
 			out["adminka_error"] = strings.Join(errs, "; ")
 		}
@@ -507,7 +583,11 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) string {
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
 				rows, errs = appendDelivery(rows, errs, r, err)
 			}
-			out["yetkazma"] = BriefDelivery(rows)
+			brief := BriefDelivery(rows)
+			out["yetkazma"] = brief
+			if len(brief.Pending) > 0 {
+				pending = true
+			}
 			if len(errs) > 0 {
 				out["dashboard_error"] = strings.Join(errs, "; ")
 			}
@@ -516,9 +596,22 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) string {
 
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
+		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending
 	}
-	return string(raw)
+	return string(raw), pending
+}
+
+// HasPendingOrders - mijozda hali kelmagan (yakunlanmagan) buyurtma bormi.
+//
+// Yakunlangan (status 6) buyurtma "kelgan" hisoblanadi; to'lanmagani ham
+// hisobga olinmaydi — u hali yo'lga chiqmagan, muammo emas.
+func HasPendingOrders(views []OrderView) bool {
+	for _, v := range views {
+		if v.Paid && v.Status != StatusFinished {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchDeliveryRetry - token eskirgan bo'lsa bir marta yangilab qayta uriniladi.
@@ -530,6 +623,29 @@ func fetchDeliveryRetry(svc Service, token string, f DeliveryFilter) ([]Delivery
 		}
 	}
 	return rows, err
+}
+
+// findOrderByNumber - buyurtmani raqami bo'yicha qidiradi.
+//
+// Avval aniq maydon bo'yicha (DG… → order_sn, qolgani → express_num),
+// natija bo'lmasa `keyword` bilan qayta uriniladi: eski buyurtmalarda
+// trek boshqa maydonda saqlangan bo'lishi mumkin. Buyurtma yoshi
+// ahamiyatsiz — qidiruv butun baza bo'yicha ketadi.
+func findOrderByNumber(adm Adminka, n string) ([]AdminkaOrder, error) {
+	f := OrderFilter{Size: DefaultOrdersPerCall}
+	if strings.HasPrefix(strings.ToUpper(n), "DG") {
+		f.OrderSN = n
+	} else {
+		f.ExpressNum = n
+	}
+	rows, err := FetchOrders(adm, f)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 0 {
+		return rows, nil
+	}
+	return FetchOrders(adm, OrderFilter{Keyword: n, Size: DefaultOrdersPerCall})
 }
 
 // dedupOrders - bir buyurtma bir necha marta tushib qolmasin (raqamlar

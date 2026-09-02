@@ -18,6 +18,14 @@ type Stats struct {
 	AIResolved  int64 `json:"ai_resolved"`  // AI o'zi hal qilgan (help'siz yuborilgan)
 	NeededStaff int64 `json:"needed_staff"` // xodim aralashuvi kerak bo'lgan (help bor)
 
+	// Bugungi kesim. Tasdiqlash/yuborish `sent_at` bo'yicha sanaladi,
+	// `created_at` bo'yicha emas: kecha kelgan murojaatni bugun
+	// tasdiqlash mumkin — u bugungi ish hisoblanadi.
+	TotalToday    int64 `json:"total_today"`    // bugun kelgan murojaat
+	SentToday     int64 `json:"sent_today"`     // bugun avtomatik yuborilgan
+	ApprovedToday int64 `json:"approved_today"` // bugun admin tasdiqlab yuborgan
+	RejectedToday int64 `json:"rejected_today"` // bugun rad etilgan
+
 	// Mijozlar
 	UniqueClients int64 `json:"unique_clients"`
 	UniqueChats   int64 `json:"unique_chats"`
@@ -101,6 +109,10 @@ func GetStats(db *gorm.DB) (Stats, error) {
 		COUNT(*) FILTER (WHERE status = 'failed')   AS failed,
 		COUNT(*) FILTER (WHERE status IN ('sent','approved') AND (help_text = '' OR help_text IS NULL)) AS ai_resolved,
 		COUNT(*) FILTER (WHERE help_text <> '')     AS needed_staff,
+		COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now()))                              AS total_today,
+		COUNT(*) FILTER (WHERE status = 'sent'     AND sent_at    >= date_trunc('day', now()))      AS sent_today,
+		COUNT(*) FILTER (WHERE status = 'approved' AND sent_at    >= date_trunc('day', now()))      AS approved_today,
+		COUNT(*) FILTER (WHERE status = 'rejected' AND updated_at >= date_trunc('day', now()))      AS rejected_today,
 		COUNT(DISTINCT client_id)       AS unique_clients,
 		COUNT(DISTINCT conversation_id) AS unique_chats,
 		COALESCE(SUM(prompt_tokens),0)     AS prompt_tokens,

@@ -398,6 +398,7 @@ func main() {
 	mux.HandleFunc("GET /api/settings", support.RequireAuth(settingsHandler))
 	mux.HandleFunc("PUT /api/settings", support.RequireAuth(settingsUpdateHandler))
 	mux.HandleFunc("POST /api/agent/run", support.RequireAuth(agentRunHandler))
+	mux.HandleFunc("POST /api/agent/scan", support.RequireAuth(agentScanHandler))
 
 	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
 	mux.HandleFunc("/openapi.json", openapiHandler)

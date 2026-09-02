@@ -80,3 +80,116 @@ func TestSanaMatn(t *testing.T) {
 		t.Errorf("bo'sh kutilgan: %q", got)
 	}
 }
+
+// TestStaffAnsweredIn - muammoni faqat XODIM javobi yopadi; AI agentning
+// o'z javobi (AGENT_SENDER_ID) hisobga olinmaydi.
+func TestStaffAnsweredIn(t *testing.T) {
+	t.Setenv("AGENT_SENDER_ID", "74")
+
+	client := Message{ID: 1, SenderID: 5, SenderType: "client", Message: "qachon keladi?"}
+	ai := Message{ID: 2, SenderID: 74, SenderType: "agent", Message: "tekshirilmoqda",
+		CreatedAt: "2026-08-30T10:00:00Z"}
+	xodim := Message{ID: 3, SenderID: 56, SenderType: "agent", Message: "ertaga jo'natamiz",
+		CreatedAt: "2026-08-30T12:00:00Z"}
+
+	if ok, _ := staffAnsweredIn([]Message{client}); ok {
+		t.Error("oxirgi so'z mijozniki — javob berilmagan")
+	}
+	if ok, _ := staffAnsweredIn([]Message{client, ai}); ok {
+		t.Error("AI javobi muammoni yopmasligi kerak")
+	}
+	ok, at := staffAnsweredIn([]Message{client, ai, xodim})
+	if !ok {
+		t.Fatal("xodim javobi tanilishi kerak")
+	}
+	if at.IsZero() {
+		t.Error("javob vaqti o'qilmadi")
+	}
+	if ok, _ := staffAnsweredIn(nil); ok {
+		t.Error("bo'sh suhbat")
+	}
+}
+
+func TestIssuesTextGrouped(t *testing.T) {
+	list := []*OrderIssue{
+		{OrderSN: "DG1", ClientID: 7, ConversationID: 9, StatusLabel: "kutilmoqda",
+			PaidAt: "2026-08-21 10:00:00", DaysSincePaid: 5, PackageName: "telefon"},
+		{OrderSN: "DG2", ClientID: 7, ConversationID: 9, StatusLabel: "yo'lda",
+			PaidAt: "2026-08-22 10:00:00", DaysSincePaid: 4},
+	}
+
+	// Ikkita muammo — bitta matn, ikkalasi ham ichida.
+	got := issuesText(list)
+	for _, want := range []string{"2 ta", "DG1", "DG2", "Mijoz: 7", "suhbat #9", "hammasini yopadi"} {
+		if !contains(got, want) {
+			t.Errorf("guruh matnida %q yo'q:\n%s", want, got)
+		}
+	}
+	if n := countSub(got, "Mijoz: 7"); n != 1 {
+		t.Errorf("mijoz qatori %d marta yozilgan, 1 marta bo'lishi kerak:\n%s", n, got)
+	}
+
+	// Bitta muammo — eski qisqa ko'rinish.
+	one := issuesText(list[:1])
+	if !contains(one, "Muammoli buyurtma — DG1") || contains(one, "hammasini yopadi") {
+		t.Errorf("yakka muammo matni noto'g'ri:\n%s", one)
+	}
+
+	if issuesText(nil) != "" {
+		t.Error("bo'sh ro'yxatga matn yozilmasligi kerak")
+	}
+}
+
+func TestRemindTextGrouped(t *testing.T) {
+	items := []remindItem{
+		{Issue: &OrderIssue{OrderSN: "DG1", ClientID: 7, ConversationID: 9, StatusLabel: "kutilmoqda"}, Days: 5},
+		{Issue: &OrderIssue{OrderSN: "DG2", ClientID: 7, ConversationID: 9, StatusLabel: "yo'lda"}, Days: 4},
+	}
+	got := remindText(items)
+	for _, want := range []string{"2 ta buyurtma", "DG1", "DG2", "BERILMAGAN", "hammasini yopadi"} {
+		if !contains(got, want) {
+			t.Errorf("eslatma matnida %q yo'q:\n%s", want, got)
+		}
+	}
+	if n := countSub(got, "BERILMAGAN"); n != 1 {
+		t.Errorf("javob holati %d marta yozilgan, 1 marta bo'lishi kerak:\n%s", n, got)
+	}
+	if remindText(nil) != "" {
+		t.Error("bo'sh ro'yxatga eslatma yozilmasligi kerak")
+	}
+}
+
+// countSub - matnda qism necha marta uchraydi.
+func countSub(s, sub string) int {
+	n := 0
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			n++
+		}
+	}
+	return n
+}
+
+func TestHasPendingOrders(t *testing.T) {
+	paid := func(status int) OrderView {
+		return NewOrderView(AdminkaOrder{OrderSN: "DG1", Status: status, PayStatus: 1,
+			PaidAt: time.Now().Format(adminkaTimeLayout)})
+	}
+	if !HasPendingOrders([]OrderView{paid(StatusPaid)}) {
+		t.Error("to'langan, yakunlanmagan buyurtma — kelmagan hisoblanishi kerak")
+	}
+	if !HasPendingOrders([]OrderView{paid(StatusFinished), paid(StatusWaiting)}) {
+		t.Error("bittasi yakunlanmagan — kelmagan bor")
+	}
+	if HasPendingOrders([]OrderView{paid(StatusFinished)}) {
+		t.Error("yakunlangan buyurtma kelmagan emas")
+	}
+	// To'lanmagan buyurtma hali yo'lga chiqmagan — hisobga olinmaydi.
+	unpaid := NewOrderView(AdminkaOrder{OrderSN: "DG2", Status: StatusPaid})
+	if HasPendingOrders([]OrderView{unpaid}) {
+		t.Error("to'lanmagan buyurtma kelmagan hisoblanmasligi kerak")
+	}
+	if HasPendingOrders(nil) {
+		t.Error("bo'sh ro'yxat")
+	}
+}

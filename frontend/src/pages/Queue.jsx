@@ -41,6 +41,11 @@ function Item({ item, onDone }) {
           {item.source === 'telegram' && (
             <span className="badge" style={{ marginLeft: 8 }}>xodim javobidan</span>
           )}
+          {item.forced && (
+            <span className="badge" style={{ marginLeft: 8 }} title="Tekshiruvsiz, qo'lda ishga tushirilgan">
+              qo'lda
+            </span>
+          )}
         </div>
         <div className="row">
           <span className={`badge ${st.cls}`}>{st.label}</span>

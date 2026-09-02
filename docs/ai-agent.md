@@ -107,6 +107,7 @@ Kod quyidagi kalitlarni tushunadi, qolganlari e'tiborsiz qoladi:
 | `express_num` | massiv | Yetkazma qidiruvi uchun trek raqamlari. Bo'sh bo'lsa mijozning barcha yetkazmalari |
 | `chat` | satr | **Mijozga** yuboriladigan javob |
 | `help` | satr | **Telegram guruhga** yuboriladigan matn (xodim aralashuvi kerak) |
+| `tushunmadim` | bool | `true` → model mijoz muammosini tushunmadi. Kod savol berishdan oldin buyurtmalarni o'zi tekshiradi (pastga qarang) |
 | `promt` | son yoki `null` | Keyingi promt `id`. `null` — zanjir tugadi |
 
 Namuna:
@@ -146,6 +147,50 @@ yozgan, "type": "agent" — biz yozgan javob:
 Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 { "adminka": [ … ], "dashboard": [ … ] }
 ```
+
+### Salom kuniga bir marta
+
+Har bosqichdagi promt oxirida bitta qator salomlashish ko'rsatmasi ketadi
+(`support/greeting.go`). Kod suhbat tarixiga qaraydi: **bugun** biz tomondan
+(agent yoki xodim) hech narsa yozilmagan bo'lsa — modelga javobni
+"Assalomu alaykum" bilan boshlash aytiladi, aks holda "salomlashma, mavzuga
+o't" deyiladi. Shu bilan yangi kun salom bilan boshlanadi, kun davomidagi
+keyingi javoblarda esa salom takrorlanmaydi.
+
+Salom — javobning **boshi**, o'zi emas: ko'rsatmada model salomdan keyin
+mijoz muammosiga javob yozishi kerakligi ham aytiladi.
+
+Xabar sanasi o'qib bo'lmasa u hisobga olinmaydi — shubhali holatda salom
+beriladi (ortiqcha salom, tushib qolganidan yaxshiroq).
+
+### Model tushunmasa — avval kod tekshiradi
+
+Model mijoz nima so'rayotganini tushunmasa, darhol "buyurtma raqamingizni
+yuboring" demaydi. Tartib shunday (`agent.go`, `runChain`):
+
+1. Model javobiga `"tushunmadim": true` qo'yadi (eski promtlar uchun
+   zaxira: chat matnining o'zi "Sizga qanday yordam bera olaman?" bo'lsa
+   ham shu deb tushuniladi — `AgentJSON.IsUnclear`).
+2. **Kod o'zi** adminka va dashboardni ko'radi — mijozning barcha
+   buyurtmalari (suhbatdan topilgan raqamlar bilan birga).
+3. **Kelmagan buyurtma bor bo'lsa** (to'langan, lekin yakunlanmagan
+   adminka buyurtmasi yoki filialda olinmagan yetkazma —
+   `HasPendingOrders`) o'sha ma'lumot **modelga qaytadan** beriladi:
+   xuddi shu promt, endi buyurtmalar bilan. Mijoz katta ehtimol aynan
+   o'sha buyurtma haqida yozgan bo'ladi.
+4. **Kelmagan buyurtma yo'q bo'lsa** javob o'z holicha qoladi — ya'ni
+   mijozdan buyurtma raqami so'raladi.
+
+Fallback bir marta ishlaydi (`probed`) va oxirgi bosqichda umuman
+ishlamaydi — qayta so'rashga bosqich qolmasligi kerak. Logda ko'rinadi:
+
+```
+agent: suhbat 60307 — model tushunmadi, kelmagan buyurtma topildi: qayta so'raldi
+agent: suhbat 60307 — model tushunmadi, kelmagan buyurtma yo'q: buyurtma raqami so'raladi
+```
+
+Model shu bosqichda allaqachon `adminka`/`dashboard` so'ragan bo'lsa,
+ma'lumot ikkinchi marta olinmaydi — o'sha natija ishlatiladi.
 
 ### Tizimdagi ma'lumot — saralangan
 
@@ -247,9 +292,19 @@ Nima bo'ladi:
 | `problem: true` | "buyurtmangiz tekshirilmoqda" | ⚠️ muammo xabari (avtomatik, tasdiqsiz) |
 | status 3/4, `problem: false` | "tez orada yo'lga chiqadi" | — |
 
+**Bitta mijoz — bitta xabar.** Bir mijozning bir necha buyurtmasi birdan
+muammoli bo'lsa, guruhga ularning har biri uchun alohida emas, hammasi
+raqamlangan ro'yxat bo'lib **bitta** xabarda ketadi (mijoz va suhbat
+raqami sarlavhada bir marta yoziladi). Takroriy eslatmalar ham xuddi
+shunday: eslatma vaqti kelgan buyurtmalar mijoz bo'yicha guruhlanib
+bitta xabarga yig'iladi.
+
 **Hal qilish — Telegram guruhdagi reply orqali.** Bot yozgan xabarga xodim
 reply qilsa, o'sha matn yechim bo'lib saqlanadi (`resolved_via: telegram`,
 `resolved_by: @username`) va bot "✅ … hal qilindi" deb tasdiqlaydi.
+Xabarda bir nechta buyurtma bo'lsa, bitta reply **hammasini** yopadi va
+mijozga ham bitta javob tayyorlanadi (promt #5 ga hamma buyurtma raqami
+birga uzatiladi).
 
 **Xodim javobi mijozga ham yetadi.** Reply matni promt #5 orqali mijoz
 tiliga moslab qayta yoziladi (ichki atamalarsiz, xushmuomala) va odatdagi
@@ -258,20 +313,34 @@ holda tasdiqlash navbatiga. Bunday javoblar panelda `source: telegram`
 belgisi bilan ko'rinadi. Guruhdagi tasdiqda holat ham yoziladi
 ("mijozga yuborildi" / "admin tasdig'i kutilmoqda").
 
+**Javobda buyurtma raqami bo'ladi.** Modelga "javob matnida `order_sn`
+ni albatta yoz" deb aytiladi, model tashlab ketsa esa kod o'zi qo'shadi
+(`WithOrderSN`): matnda yo'q raqamlar boshiga qo'yiladi —
+`DG60607041 — Buyurtmangiz ertaga jo'natiladi.` Matnda allaqachon bor
+raqam takrorlanmaydi. Mijoz javob qaysi buyurtmasi haqida ekanini bilishi
+kerak, ayniqsa bitta xabarda bir nechta buyurtma yopilganda.
+
 LLM ishlamay qolsa javob YO'QOLMAYDI: xodim matni o'z holicha qoralama
-bo'lib navbatga tushadi.
+bo'lib navbatga tushadi — u ham buyurtma raqami bilan.
 Guruh javoblari `TG_POLL_SEC` (30 s) da bir marta `getUpdates` bilan
 o'qiladi; oxirgi `update_id` `settings` jadvalida saqlanadi.
 
 **Takroriy eslatma** — har siklda `ReviewOpenIssues` ochiq muammolarni
 qayta ko'radi va faqat shundan keyin eslatma yuboradi:
 
-1. Adminkadagi holat o'zgarganmi → o'zgargan bo'lsa avtomatik yopiladi
+1. **Xodim mijozga chatda javob berganmi** → bergan bo'lsa muammo
+   yopiladi (`resolved_via: chat`) va eslatma yuborilmaydi. AI agentning
+   o'z javobi (`AGENT_SENDER_ID` bilan yozilgan) bunga kirmaydi —
+   "tekshirilmoqda" degan javob muammoni hal qilmaydi.
+2. Adminkadagi holat o'zgarganmi → o'zgargan bo'lsa avtomatik yopiladi
    (`resolved_via: auto`, guruhga "✅ holat o'zgardi" deb yoziladi).
-2. Mijozga biz javob berganmizmi — chatdan tekshiriladi va eslatmada
-   ko'rsatiladi.
 3. `ISSUE_REMIND_HOURS` (24 soat) o'tgan bo'lsa — eslatma yuboriladi;
    reply endi yangi xabarga qilinadi.
+
+**Yopilgan muammo qayta ko'tarilmaydi** — buyurtma hali ham qotib tursa
+ham. Faqat adminkadagi **holat o'zgargan** bo'lsa (masalan 3 → 4) yangi
+muammo ochiladi. Shu sababli guruhga bir xil buyurtma haqida takror
+xabar ketmaydi.
 
 Qo'lda: `POST /api/issues/review`, paneldan yopish:
 `POST /api/issues/{id}/resolve`.
@@ -279,6 +348,14 @@ Qo'lda: `POST /api/issues/review`, paneldan yopish:
 Kunlik hisobot: `GET /api/stats/issues/daily` + `/api/stats` dagi
 `issues_open`, `issues_opened_today`, `issues_resolved_today`,
 `issues_avg_hours` — dashboardda "Bugungi hisobot" bloki.
+
+Xuddi shu blokda murojaatlarning bugungi kesimi ham bor: `total_today`
+(bugun kelgan), `sent_today` (AI o'zi yuborgan), `approved_today` (admin
+tasdiqlab yuborgan), `rejected_today`. **Tasdiqlash `sent_at` bo'yicha
+sanaladi, `created_at` bo'yicha emas** — kecha kelgan murojaatni bugun
+tasdiqlasangiz, u bugungi ishga kiradi. Kunlik jadval (`/api/stats/daily`)
+esa aksincha, murojaat **kelgan** kun bo'yicha guruhlanadi — shuning uchun
+bu ikki raqam bir-biriga teng bo'lmasligi normal.
 
 ### Javob berilgan suhbat qayta ishlanmaydi
 
@@ -319,6 +396,45 @@ Masalan `poll_interval_sec=300`, `batch_size=2`, `chat_delay_sec=20` —
 har 5 daqiqada 2 ta suhbat, orasida 20 soniya tanaffus. O'zgarish darhol
 kuchga kiradi, API'ni qayta ishga tushirish shart emas. `.env` dagi
 `POLL_INTERVAL_SEC` / `RATE_LIMIT_COUNT` endi faqat boshlang'ich qiymat.
+
+**`batch_size` ni oshirish har doim ham tezlashtirmaydi.** U faqat
+*yuqori chegara*: poller avval ro'yxatni filtrlaydi (`operator_unseen_count
+> 0` va oxirgi xabar vaqti o'zgargan bo'lsa), keyin shundan `batch_size`
+tasini oladi. Filtrdan 3 ta suhbat o'tsa, `batch_size=20` ham 3 tani
+ishlaydi. Har siklda logga aynan shu yoziladi:
+
+```
+poller: 3 ta javobsiz suhbat, shundan 3 tasi ishlanadi
+```
+
+Birinchi son doim kichik bo'lsa — muammo `batch_size` da emas, filtrda.
+
+### Hamma mijozni ketma-ket ko'rib chiqish — `POST /api/agent/scan`
+
+Filtrni chetlab o'tib, ro'yxatdagi **hamma** suhbatni ko'rish uchun:
+
+```bash
+curl -X POST http://localhost:8080/api/agent/scan \
+  -H "Authorization: Bearer $TOKEN" -d '{"max":50}'
+```
+
+`support.chat.conversation/filter` dan suhbatlar olinadi (`pages`/`limit`
+berilmasa `CHATS_PAGES`/`CHATS_LIMIT`), eng yangi xabardan boshlab
+**ketma-ket** har biri uchun zanjir yuritiladi. `operator_unseen_count`
+filtri ham, `batch_size` chegarasi ham qo'llanmaydi; `max` (0 — hammasi)
+bilan cheklanadi va `chat_delay_sec` tanaffusi saqlanadi.
+
+Oxirgi so'z biz tomondan bo'lgan suhbat modelga **bormaydi**
+(`ErrAlreadyAnswered`) — token sarflanmaydi. Ish uzoq davom etadi, shuning
+uchun fonda bajariladi: so'rov darhol `202` qaytaradi, natija navbatda va
+logda ko'rinadi:
+
+```
+skaner: 128 ta suhbat olindi, 50 tasi ko'riladi
+skaner: tugadi — 12 zanjir, 36 javob berilgan, 2 xato (jami 128)
+```
+
+Bir vaqtda faqat bitta skaner yuradi (ikkinchi so'rov `409` oladi).
 
 `.env` orqali (qayta ishga tushirish kerak):
 

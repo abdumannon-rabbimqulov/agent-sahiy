@@ -45,6 +45,10 @@ type Interaction struct {
 	// kutmaydi: xodimlar darhol xabardor bo'lishi kerak.
 	HelpSent bool `gorm:"not null;default:false" json:"help_sent"`
 
+	// Forced - qo'lda, tekshiruvsiz ishga tushirilganmi (oxirgi so'z
+	// biz tomondan bo'lsa ham). Panelda ajratib ko'rsatiladi.
+	Forced bool `gorm:"not null;default:false" json:"forced"`
+
 	// Source - javob qayerdan paydo bo'lgan: "agent" (AI zanjiri) yoki
 	// "telegram" (xodim guruhda reply qilgan, LLM uni mijoz tiliga
 	// moslab yozgan).
