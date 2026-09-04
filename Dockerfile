@@ -12,7 +12,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sahiy .
 # --- 2-bosqich: runtime ---
 FROM alpine:3.20
 # Tashqi API'lar HTTPS — ildiz sertifikatlarsiz TLS ishlamaydi.
-RUN apk add --no-cache ca-certificates tzdata
+# tesseract — rasmdagi buyurtma/trek raqamini MODELSIZ o'qish uchun
+# (support/ocr.go). Ko'ruvchi modelga faqat OCR hech narsa topmaganda
+# boriladi. `-data-eng` bo'lmasa tesseract ishga tushmaydi.
+RUN apk add --no-cache ca-certificates tzdata tesseract-ocr tesseract-ocr-data-eng
 # Kod .env ni va token cache fayllarini ISH KATALOGIDAN o'qiydi/yozadi
 # (loadEnv(".env"), support.TokenFile, support.ServiceTokenFile).
 WORKDIR /app

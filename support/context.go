@@ -11,8 +11,11 @@ import (
 	"time"
 )
 
-// PickupDays - "oxirgi kunlarda olingan" deb hisoblanadigan oraliq.
-const PickupDays = 3
+// DeliveryDays - kuryerga berilgan buyurtma qancha muddatda yetib
+// borishi kerak. Shu muddat ichida yetkazma "yetkazilmoqda"; undan
+// oshsa holati NOANIQ — yetkazilgan bo'lishi ham, mijozning telefoni
+// o'chiq bo'lgani uchun kuryer qaytargan bo'lishi ham mumkin.
+const DeliveryDays = 3
 
 // Mijoz turlari.
 const (
@@ -89,34 +92,53 @@ type PendingPickup struct {
 	ArrivedAt  string `json:"kelgan,omitempty"`
 }
 
-// PickedUpDay - bir kunda olib ketilgan buyurtmalar.
-type PickedUpDay struct {
-	Date   string `json:"sana"`
-	Count  int    `json:"soni"`
-	Branch string `json:"filial,omitempty"`
+// SentDelivery - kuryerga berilgan yetkazma (delivered = true).
+//
+// `Days` — berilganiga necha kun bo'lgani. Shu son ikki ro'yxatni
+// ajratadi: DeliveryDays ichida — yo'lda, undan oshsa — noaniq.
+type SentDelivery struct {
+	ExpressNum string `json:"express_num,omitempty"`
+	Branch     string `json:"filial,omitempty"`
+	SentAt     string `json:"berilgan,omitempty"` // qachon kuryerga berilgan
+	Days       int    `json:"kun"`                // berilganiga necha kun
 }
 
 // DeliveryBrief - yetkazma bo'yicha modelga ketadigan xulosa.
 type DeliveryBrief struct {
-	// Olinmagan — filialda kutmoqda.
+	// Olinmagan — filialda kutmoqda (delivered = false).
 	Pending []PendingPickup `json:"olinmagan,omitempty"`
-	// Oxirgi kunlarda olib ketilganlar (kun bo'yicha guruhlangan).
-	RecentPickups []PickedUpDay `json:"oxirgi_kunlarda_olingan,omitempty"`
+	// Kuryerga berilgan va muddati o'tmagan — hozir yo'lda.
+	InDelivery []SentDelivery `json:"yetkazilmoqda,omitempty"`
+	// Kuryerga berilganiga DeliveryDays dan oshgan — holati noaniq,
+	// xodim tekshirishi kerak.
+	NeedCheck []SentDelivery `json:"tekshirish_kerak,omitempty"`
 	// Umuman yozuv yo'q.
 	Empty bool `json:"yozuv_yoq,omitempty"`
 }
 
-// BriefDelivery - yetkazma yozuvlarini ikkiga ajratadi:
-//   - olinmagan: qaysi filialda turgani (mijozga shuni aytamiz);
-//   - oxirgi PickupDays kun ichida olinganlar: sana va o'sha kuni nechta
-//     buyurtma kelgani (mijozdan "oldingizmi?" deb so'rash uchun).
+// MaxDeliveryRows - har bir ro'yxatdan modelga ketadigan eng ko'p yozuv.
+// Mijozda o'nlab eski yetkazma bo'lishi mumkin — hammasi javobga kerak
+// emas, faqat token yeydi.
+const MaxDeliveryRows = 5
+
+// BriefDelivery - yetkazma yozuvlarini UCHGA ajratadi:
 //
-// Eski olingan buyurtmalar modelga umuman yuborilmaydi — ular javobga
-// ta'sir qilmaydi, faqat token yeydi.
+//   - olinmagan (delivered = false): filialda kutmoqda;
+//   - yetkazilmoqda (delivered = true, DeliveryDays ichida): kuryerga
+//     berilgan, hozir yo'lda;
+//   - tekshirish_kerak (delivered = true, DeliveryDays dan oshgan):
+//     holati NOANIQ — mijoz olgan bo'lishi ham, telefoni o'chiq bo'lgani
+//     uchun kuryer qaytargan bo'lishi ham mumkin.
+//
+// `delivered = true` "mijoz qo'liga tegdi" degani EMAS: u faqat
+// yetkazmaga berilganini bildiradi. Shuning uchun muddati o'tganini
+// "yetkazildi" deb aytib bo'lmaydi — tekshirish kerak.
+//
+// Ikkala ro'yxat ham yangisidan eskisiga saralanadi va MaxDeliveryRows
+// tadan oshmaydi.
 func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 	var out DeliveryBrief
-	byDay := map[string]*PickedUpDay{}
-	cutoff := time.Now().AddDate(0, 0, -PickupDays)
+	now := time.Now()
 
 	for _, o := range orders {
 		if !o.Delivered {
@@ -130,30 +152,56 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 		}
 
 		t, ok := parseAnyTime(o.DeliveredAt)
-		if !ok || t.Before(cutoff) {
-			continue // eski — modelga kerak emas
-		}
-		key := t.Format("2006-01-02")
-		d, ok := byDay[key]
 		if !ok {
-			d = &PickedUpDay{Date: sanaMatnISO(o.DeliveredAt),
-				Branch: firstNonEmpty(o.BranchName, o.LocationNumber, o.City)}
-			byDay[key] = d
+			// Sanasi o'qilmadi — "yetkazildi" deb ayta olmaymiz,
+			// tekshiriladiganlar qatoriga tushadi.
+			out.NeedCheck = append(out.NeedCheck, SentDelivery{
+				ExpressNum: o.ExpressNum,
+				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+			})
+			continue
 		}
-		d.Count++
+
+		row := SentDelivery{
+			ExpressNum: o.ExpressNum,
+			Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+			SentAt:     sanaMatnISO(o.DeliveredAt),
+			Days:       int(now.Sub(t).Hours() / 24),
+		}
+		if row.Days < 0 {
+			row.Days = 0 // sana kelajakda — 0 kun deb hisoblaymiz
+		}
+		if row.Days <= DeliveryDays {
+			out.InDelivery = append(out.InDelivery, row)
+		} else {
+			out.NeedCheck = append(out.NeedCheck, row)
+		}
 	}
 
-	keys := make([]string, 0, len(byDay))
-	for k := range byDay {
-		keys = append(keys, k)
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
-	for _, k := range keys {
-		out.RecentPickups = append(out.RecentPickups, *byDay[k])
-	}
+	// Yangisi birinchi: mijoz odatda oxirgi buyurtmasini so'raydi.
+	// Sanasi o'qilmagan yozuv (SentAt bo'sh) eng oxirida turadi — uning
+	// "0 kun" i haqiqiy emas.
+	sort.SliceStable(out.InDelivery, func(i, j int) bool { return out.InDelivery[i].Days < out.InDelivery[j].Days })
+	sort.SliceStable(out.NeedCheck, func(i, j int) bool {
+		a, b := out.NeedCheck[i], out.NeedCheck[j]
+		if (a.SentAt == "") != (b.SentAt == "") {
+			return b.SentAt == ""
+		}
+		return a.Days < b.Days
+	})
+	out.InDelivery = capRows(out.InDelivery)
+	out.NeedCheck = capRows(out.NeedCheck)
 
-	out.Empty = len(out.Pending) == 0 && len(out.RecentPickups) == 0
+	out.Empty = len(out.Pending) == 0 && len(out.InDelivery) == 0 && len(out.NeedCheck) == 0
 	return out
+}
+
+// capRows - ro'yxatni MaxDeliveryRows tagacha qisqartiradi.
+func capRows(rows []SentDelivery) []SentDelivery {
+	if len(rows) > MaxDeliveryRows {
+		return rows[:MaxDeliveryRows]
+	}
+	return rows
 }
 
 // parseAnyTime - adminka ("2026-08-21 10:00:00") va ISO ko'rinishlarini

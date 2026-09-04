@@ -2,7 +2,15 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api, fmt, STATUS } from '../api'
 
+// imageLinks - rasm bosqichining kontekstidan ko'rilgan rasmlarni oladi
+// ("1-rasm: https://…"). Xodim rasmni panelning o'zida ko'rsin.
+function imageLinks(ctx) {
+  return [...(ctx || '').matchAll(/^\d+-rasm:\s*(\S+)$/gm)].map((m) => m[1])
+}
+
 // Zanjirning bitta bosqichi: modelga nima ketdi va nima qaytdi.
+// Rasm bosqichida promt bo'lmaydi (promt_id = 0) — u zanjirdan oldin,
+// alohida ko'ruvchi model bilan bajariladi.
 function Step({ s }) {
   const [open, setOpen] = useState(false)
   let pretty = s.raw_response
@@ -10,10 +18,15 @@ function Step({ s }) {
     pretty = JSON.stringify(JSON.parse(s.raw_response), null, 2)
   } catch { /* JSON emas — asl matn ko'rsatiladi */ }
 
+  const label = s.promt_id
+    ? `promt #${s.promt_id}${s.promt_title ? ` — ${s.promt_title}` : ''}`
+    : (s.promt_title || 'model chaqirilmadi')
+  const rasmlar = s.promt_id ? [] : imageLinks(s.request_context)
+
   return (
     <div className="card" style={{ marginBottom: 10 }}>
       <div className="spread">
-        <strong>{s.step_no}-bosqich · promt #{s.promt_id} {s.promt_title && `— ${s.promt_title}`}</strong>
+        <strong>{s.step_no}-bosqich · {label}</strong>
         <span className="muted" style={{ fontSize: 13 }}>
           {fmt.num(s.prompt_tokens)} kirish · {fmt.num(s.completion_tokens)} chiqish · {(s.duration_ms / 1000).toFixed(1)}s
         </span>
@@ -24,7 +37,23 @@ function Step({ s }) {
         </button>
       </div>
       {open && <pre className="raw" style={{ marginTop: 8 }}>{s.request_context}</pre>}
-      <label>Model javobi</label>
+      {rasmlar.length > 0 && (
+        <>
+          <label>Mijoz yuborgan rasm{rasmlar.length > 1 ? `lar (${rasmlar.length} ta)` : ''}</label>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+            {rasmlar.map((url) => (
+              <a key={url} href={url} target="_blank" rel="noreferrer">
+                <img
+                  src={url}
+                  alt="mijoz rasmi"
+                  style={{ maxHeight: 180, maxWidth: 260, borderRadius: 6, border: '1px solid #ddd' }}
+                />
+              </a>
+            ))}
+          </div>
+        </>
+      )}
+      <label>{s.promt_id ? 'Model javobi' : 'Rasmdan nima o\'qildi'}</label>
       <pre className="raw">{pretty}</pre>
     </div>
   )

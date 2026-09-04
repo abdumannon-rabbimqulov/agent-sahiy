@@ -152,9 +152,15 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 
 Har bosqichdagi promt oxirida bitta qator salomlashish ko'rsatmasi ketadi
 (`support/greeting.go`). Kod suhbat tarixiga qaraydi: **bugun** biz tomondan
-(agent yoki xodim) hech narsa yozilmagan bo'lsa — modelga javobni
-"Assalomu alaykum" bilan boshlash aytiladi, aks holda "salomlashma, mavzuga
-o't" deyiladi. Shu bilan yangi kun salom bilan boshlanadi, kun davomidagi
+(agent yoki xodim) hech narsa yozilmagan bo'lsa — modelga javobni salom
+bilan boshlash aytiladi, aks holda "salomlashma, mavzuga o't" deyiladi.
+
+Salom matni **bitta emas**: ko'rsatmada uchala variant birga beriladi
+("Assalomu alaykum" / "Ассалому алайкум" / "Здравствуйте") va qaysi birini
+olishni model mijozning tiliga qarab o'zi tanlaydi. Kod tilni aniqlamaydi —
+ilgari faqat o'zbekcha lotin salom ketardi va ruscha yozgan mijozga ham
+javob o'zbekchaga burilib ketardi. "Sizga qanday yordam bera olaman?"
+savoli ham xuddi shunday uch tilda beriladi. Shu bilan yangi kun salom bilan boshlanadi, kun davomidagi
 keyingi javoblarda esa salom takrorlanmaydi.
 
 Salom — javobning **boshi**, o'zi emas: ko'rsatmada model salomdan keyin
@@ -212,7 +218,14 @@ tejaladi, model ham chalkashmaydi:
       { "express_num": "JT3172404674793", "filial": "Chirchiq",
         "manzil": "Toshkent viloyati, Chirchiq shahri…", "kelgan": "17-avgust" }
     ],
-    "oxirgi_kunlarda_olingan": [ { "sana": "28-avgust", "soni": 2, "filial": "SAHIY JIZZAX" } ]
+    "yetkazilmoqda": [
+      { "express_num": "JT3172404674793", "filial": "SAHIY JIZZAX",
+        "berilgan": "2-sentabr", "kun": 1 }
+    ],
+    "tekshirish_kerak": [
+      { "express_num": "JT7639647959095", "filial": "SAHIY JIZZAX",
+        "berilgan": "26-iyul", "kun": 40 }
+    ]
   }
 }
 ```
@@ -221,11 +234,32 @@ tejaladi, model ham chalkashmaydi:
 |---|---|---|
 | `mijoz_turi` | `skus[0].sku_info.B2C_percentage` (noldan katta → B2C, nol → B2B, buyurtma yo'q → noma'lum) | Yetkazish tarifini to'g'ri tushuntirish (promt #4) |
 | `olinmagan` | yetkazmada `delivered: false` | Mijozga qaysi filialda ekanini aytish |
-| `oxirgi_kunlarda_olingan` | `delivered: true`, oxirgi 3 kun | "Olib ketdingizmi?" deb so'rash |
+| `yetkazilmoqda` | `delivered: true`, **3 kungacha** | "Yo'lda, kuryer bog'lanadi" deb aytish |
+| `tekshirish_kerak` | `delivered: true`, **3 kundan oshgan** | Holati noaniq — mijozdan so'rash va xodimga topshirish |
 
-Sanalar odam o'qiydigan ko'rinishga o'tkaziladi ("21-avgust"), 3 kundan
-eski olib ketishlar va manzil/ism/summa kabi maydonlar umuman
-yuborilmaydi.
+Sanalar odam o'qiydigan ko'rinishga o'tkaziladi ("21-avgust"), manzil,
+ism va summa kabi maydonlar umuman yuborilmaydi. Har ro'yxatdan eng
+ko'pi 5 ta yozuv ketadi (`MaxDeliveryRows`), yangisidan eskisiga.
+
+### `delivered: true` — "yetkazildi" DEGANI EMAS
+
+Bu maydon buyurtma **yetkazmaga berilganini** bildiradi, mijozning
+qo'liga tekkanini emas. Shuning uchun (`support/context.go`, `DeliveryDays = 3`):
+
+- **3 kungacha** — buyurtma yo'lda, `yetkazilmoqda` ga tushadi;
+- **3 kundan oshsa** — holat noaniq: mijoz olgan bo'lishi ham, telefoni
+  o'chiq bo'lgani uchun kuryer qaytargan bo'lishi ham mumkin. Bunday
+  yozuv `tekshirish_kerak` ga tushadi, promt #3 esa mijozdan qo'liga
+  tegdimi deb so'raydi va `help` orqali xodimga topshiradi;
+- `delivered_at` **o'qilmasa** ham `tekshirish_kerak` ga tushadi —
+  bilmaganni "yetkazildi" deb aytmaymiz.
+
+Ilgari 3 kundan eski yozuvlar modelga **umuman ko'rsatilmasdi** (yashirilardi),
+3 kun ichidagilari esa "topshirilgan" deb ko'rsatilardi — ikkalasi ham
+noto'g'ri edi.
+
+Uchala ro'yxat ham "mijoz hali qo'liga olmagan" hisoblanadi: model
+"tushunmadim" deganda kod shu buyurtmalarni topib, unga qaytadan beradi.
 
 `type` qiymatlari: **`client`** — mijoz yozgan, **`agent`** — biz tomondan
 (AI yoki xodim) yuborilgan. Bo'sh matnli xabarlar tashlanadi. Modelga
@@ -236,13 +270,118 @@ Mijoz rasm yuborsa (xabar matni — havola), modelga `[rasm yuborildi]`
 bo'lib ketadi: model rasmni ko'ra olmaydi, uzun havola esa token yeydi.
 Promt #2 shu belgini ko'rsa rasmni qayta so'ramaydi.
 
+### Xayrlashish ("rahmat", "hop")
+
+Mijozning oxirgi so'zi minnatdorchilik yoki rozilik bo'lsa
+(`support/farewell.go`), zanjir **umuman yurmaydi**: savol yo'q, tizimdan
+ma'lumot ham kerak emas. Javob kodda tayyor va mijozning tilida beriladi:
+
+| Xabar | Javob |
+|---|---|
+| `rahmat`, `hop`, `mayli`, `ok` | `FarewellUzLat` |
+| `раҳмат`, `хоп`, `майли` | `FarewellUzCyr` |
+| `спасибо`, `хорошо`, `понял` | `FarewellRU` |
+
+Til mijoz yozgan **o'sha so'zdan** aniqlanadi — taxmin yo'q. Tili
+bilinmaydigan so'z ("ok", "👍") uchun o'zbekcha lotin, kirill yozuvda esa
+rus tili olinadi.
+
+`IsClosingMessage` qattiq: xabar **faqat** shu so'zlardan (va "katta",
+"большое" kabi to'ldiruvchilardan) iborat bo'lishi kerak. Savol belgisi,
+raqam, notanish so'z yoki 5 tadan ortiq so'z bo'lsa — bu odatdagi murojaat
+va zanjir yuradi. Ya'ni "rahmat, lekin qachon keladi?" modelga ketadi.
+Rasm ham yakunlash hisoblanmaydi.
+
+Panelda bunday murojaat 1 bosqich va **0 token** bilan ko'rinadi
+(bosqich nomi — "Xayrlashish (model chaqirilmadi)"). Yuborish odatdagi
+qoida bo'yicha: `auto_reply` yoqilgan bo'lsa darhol, aks holda tasdiq
+kutadi.
+
+### Rasmdan raqam o'qish
+
+Mijoz ko'pincha buyurtma raqamini yozmay, skrinshot yoki chek rasmini
+tashlaydi. Asosiy model rasmni ko'rmaydi, shuning uchun rasm alohida
+o'qiladi. **Ikki bosqich, shu tartibda:**
+
+1. **tesseract (OCR) — modelsiz** (`support/ocr.go`). Buyurtma (`DG…`) va
+   trek raqamlari bosma matn: OCR ularni bepul, lokal va ~0.1 soniyada
+   o'qiydi. Rasm vaqtincha faylga yuklanadi, `tesseract <fayl> stdout`
+   chaqiriladi, matndan raqamlar `numbers.go` regexp'lari bilan
+   ajratiladi, fayl o'chiriladi. **Token sarflanmaydi.**
+2. **Ko'ruvchi model — faqat OCR hech narsa topmaganda**
+   (`support/image_numbers.go`). Qo'lda yozilgan, qiyshiq yoki sifatsiz
+   rasmlar uchun zaxira.
+
+`OCR_ENABLED=false` bo'lsa 1-bosqich o'tkazib yuboriladi. tesseract
+o'rnatilmagan bo'lsa (`ErrNoOCR`) ham zanjir to'xtamaydi — 2-bosqichga
+o'tiladi. Docker image'da tesseract bor (`Dockerfile`).
+
+Funksiyalar:
+
+| Funksiya | Nima qiladi |
+|---|---|
+| `ReadImageOCR(ctx, url)` | Rasmni yuklab, tesseract bilan o'qiydi (modelsiz) |
+| `OCRAvailable()` | tesseract shu mashinada bormi |
+
+| Funksiya | Nima qiladi |
+|---|---|
+| `ClientImageLinks(msgs)` | Mijoz yuborgan rasm havolalari, eng oxirgisi birinchi |
+| `HasClientImage(msgs)` | Mijoz rasm yuborganmi |
+| `ReadImageNumbers(ctx, groq, url)` | Bitta rasmdan `DG…` va trek raqamlari |
+| `ReadNumbersFromMessages(ctx, msgs)` | Suhbatdagi rasmlarni ko'radi, birinchi raqam topilganda to'xtaydi |
+
+Modeldan javob matni **so'ralmaydi** — u faqat raqamlarni ko'chiradi,
+mijozga yoziladigan javobni baribir asosiy zanjir yozadi. Model qaytargan
+ro'yxat ustiga rasmdagi xom matn `numbers.go` regexp'lari bilan ham
+tekshiriladi: model raqamni tashlab ketsa yoki `ДГ` ni o'girmasa ham raqam
+yo'qolmaydi.
+
+Zanjirda (`agent.go`) rasm **faqat mijoz matnda raqam yozmaganda** ochiladi
+— matnda raqam bo'lsa rasm ortiqcha token. Natija:
+
+- raqam topildi → u `chatSN`/`chatEx` ga qo'shiladi va "Tizimdagi ma'lumot"
+  blokiga "rasmdan o'qilgan raqamlar" qatori tushadi (model raqamni qayta
+  so'ramaydi);
+- raqam yo'q (`ErrNoNumbersInImage`) → blokka "RASMDA BUYURTMA RAQAMI YO'Q"
+  ko'rsatmasi tushadi, model rasm mazmuniga tayanmaydi va raqamni mijozdan
+  so'raydi;
+- rasm o'qilmadi (tarmoq/model xatosi) → logga yoziladi, zanjir odatdagidek
+  davom etadi.
+
+Har bir rasm o'qish **suhbat tafsilotida alohida bosqich** bo'lib ko'rinadi
+(promt raqamisiz, nomi — "Rasmni o'qish — <model>"): ko'rilgan rasmning
+o'zi, ko'ruvchi modelga ketgan ko'rsatma, modelning xom javobi va natija
+("TOPILDI: DG…", "RASMDA BUYURTMA RAQAMI YO'Q" yoki "RASM O'QILMADI: …").
+Tokenlari umumiy `Usage` ga qo'shiladi.
+
+Sozlamalar: `GROQ_VISION_MODEL` (default `meta-llama/llama-4-scout-17b-16e-instruct`),
+`GROQ_VISION_MAX_TOKENS`, `MAX_IMAGES` (default 2). Rasmni boshqa
+provayderga yuborish kerak bo'lsa — `VISION_BASE_URL` va `VISION_API_KEY`
+(asosiy zanjir Groq'da qoladi).
+
+**Ko'ruvchi model hisobda ochiq bo'lishi shart.** Tekshirish:
+
+```
+curl -s https://api.groq.com/openai/v1/models \
+  -H "Authorization: Bearer $GROQ_API_KEY" | grep -i scout
+```
+
+Model ro'yxatda bo'lmasa ("does not exist or you do not have access") yoki
+"blocked at the organization level" desa — console.groq.com dan ochiladi.
+Ochilmagunicha rasm o'qilmaydi: zanjir to'xtamaydi, lekin panelda
+"RASM O'QILMADI" bosqichi ko'rinadi va raqam mijozdan so'raladi.
+
 Xabar **sanasi yuborilmaydi**: tartib yetarli, sana esa token sarflaydi va
 model javobida chalkashlik keltiradi. Haqiqiy sanalar (buyurtma yaratilgan,
 jo'natilgan) "Tizimdagi ma'lumot" blokida keladi.
 
 Til haqidagi ko'rsatma modelga **kod tomonidan qo'shilmaydi** — uni
 promtning o'zi aytadi (har bir promtning eng boshida "TIL QOIDASI" bloki
-turadi). Ilgari kod alifboni o'zi aniqlab qo'shardi, lekin mijozning
+turadi). Blok ikki maydonni ajratib aytadi: **`chat` — mijozning tilida**,
+**`help` — har doim o'zbekcha** (u xodimlar guruhiga ketadi). Ilgari bu
+ajratilmagandi va "ikki tilni aralashtirma" qoidasi `help` ning o'zbekchasi
+bilan qo'shilib, ruscha mijozga o'zbekcha javob yozilib qolardi — ayniqsa
+2-promtda, chunki u yerda `help` HAR DOIM to'ldiriladi. Ilgari kod alifboni o'zi aniqlab qo'shardi, lekin mijozning
 oxirgi xabari rasm bo'lganda (`[rasm yuborildi]`) noto'g'ri til
 tanlanardi.
 

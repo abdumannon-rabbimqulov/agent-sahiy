@@ -94,12 +94,19 @@ func (a AgentJSON) NeedsData() bool { return a.Dashboard || a.Adminka }
 //
 // Ikki yo'l bilan aniqlanadi: `"tushunmadim": true` kaliti (promt shuni
 // yozishga o'rgatadi) yoki javobning o'zi "sizga qanday yordam bera
-// olaman" savoli bo'lsa — promt eski bo'lsa ham fallback ishlasin.
+// olaman" savoli bo'lsa (mijozning har qaysi tilidagi ko'rinishida) —
+// promt eski bo'lsa ham fallback ishlasin.
 func (a AgentJSON) IsUnclear() bool {
 	if a.NotUnderstood {
 		return true
 	}
-	return strings.Contains(strings.ToLower(a.Chat), strings.ToLower(AskHelpText))
+	chat := strings.ToLower(a.Chat)
+	for _, v := range AskHelpVariants() {
+		if strings.Contains(chat, strings.ToLower(v)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Numbers - modeldan kelgan buyurtma/trek raqamlari (bo'shlari tashlanadi).

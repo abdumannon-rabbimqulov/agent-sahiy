@@ -35,11 +35,13 @@ func TestBriefDelivery(t *testing.T) {
 		// Olinmagan — filialda kutmoqda.
 		{ExpressNum: "JT1", Delivered: false, BranchName: "Chirchiq",
 			BranchAddress: "Toshkent viloyati, Chirchiq", CreatedAt: iso(12)},
-		// Oxirgi 3 kunda olingan — ikkitasi bir kunda.
+		// Kuryerga berilgan, 3 kun ichida — yo'lda.
 		{ExpressNum: "JT2", Delivered: true, DeliveredAt: iso(1), BranchName: "SAHIY JIZZAX"},
-		{ExpressNum: "JT3", Delivered: true, DeliveredAt: iso(1), BranchName: "SAHIY JIZZAX"},
-		// Eski olingan — modelga kerak emas.
+		{ExpressNum: "JT3", Delivered: true, DeliveredAt: iso(3), BranchName: "SAHIY JIZZAX"},
+		// Muddati o'tgan — holati noaniq, tekshirish kerak.
 		{ExpressNum: "JT4", Delivered: true, DeliveredAt: iso(40), BranchName: "SAHIY JIZZAX"},
+		// Sanasi o'qilmadi — u ham tekshiriladi.
+		{ExpressNum: "JT5", Delivered: true, DeliveredAt: "", BranchName: "SAHIY JIZZAX"},
 	}
 
 	b := BriefDelivery(rows)
@@ -49,8 +51,33 @@ func TestBriefDelivery(t *testing.T) {
 	if b.Pending[0].ArrivedAt == "" {
 		t.Error("kelgan sanasi bo'sh")
 	}
-	if len(b.RecentPickups) != 1 || b.RecentPickups[0].Count != 2 {
-		t.Fatalf("oxirgi kunlarda olingan: %+v", b.RecentPickups)
+	if len(b.InDelivery) != 2 {
+		t.Fatalf("yetkazilmoqda: %+v", b.InDelivery)
+	}
+	// Yangisi birinchi.
+	if b.InDelivery[0].ExpressNum != "JT2" || b.InDelivery[0].Days != 1 {
+		t.Errorf("yetkazilmoqda tartibi/kuni: %+v", b.InDelivery)
+	}
+	if b.InDelivery[0].SentAt == "" {
+		t.Error("berilgan sanasi bo'sh")
+	}
+	if len(b.NeedCheck) != 2 {
+		t.Fatalf("tekshirish kerak: %+v", b.NeedCheck)
+	}
+	if b.NeedCheck[0].ExpressNum != "JT4" || b.NeedCheck[0].Days != 40 {
+		t.Errorf("tekshiriladigan yozuv: %+v", b.NeedCheck)
+	}
+
+	// Aniq chegara: 3 kun — hali yo'lda, 4 kun — tekshirish kerak.
+	chek := BriefDelivery([]DeliveryOrder{
+		{ExpressNum: "JT6", Delivered: true, DeliveredAt: iso(DeliveryDays)},
+		{ExpressNum: "JT7", Delivered: true, DeliveredAt: iso(DeliveryDays + 1)},
+	})
+	if len(chek.InDelivery) != 1 || chek.InDelivery[0].ExpressNum != "JT6" {
+		t.Errorf("%d kun yo'lda bo'lishi kerak: %+v", DeliveryDays, chek.InDelivery)
+	}
+	if len(chek.NeedCheck) != 1 || chek.NeedCheck[0].ExpressNum != "JT7" {
+		t.Errorf("%d kun tekshirilishi kerak: %+v", DeliveryDays+1, chek.NeedCheck)
 	}
 	if b.Empty {
 		t.Error("yozuv bor edi")
@@ -60,10 +87,11 @@ func TestBriefDelivery(t *testing.T) {
 	if e := BriefDelivery(nil); !e.Empty {
 		t.Error("yozuv_yoq kutilgan")
 	}
-	// Faqat eski olinganlar ham "yozuv yo'q" hisoblanadi.
+	// Eski yozuv endi YASHIRILMAYDI: "yetkazildi" deb aytib bo'lmaydi,
+	// shuning uchun u tekshiriladiganlar ro'yxatiga tushadi.
 	old := BriefDelivery([]DeliveryOrder{{Delivered: true, DeliveredAt: iso(40)}})
-	if !old.Empty {
-		t.Error("eski olinganlar modelga ketmasligi kerak")
+	if old.Empty || len(old.NeedCheck) != 1 {
+		t.Errorf("eski yozuv tekshirishga tushishi kerak: %+v", old)
 	}
 }
 

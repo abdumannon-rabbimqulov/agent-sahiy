@@ -125,6 +125,70 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		probed bool
 	)
 
+	// Xayrlashish: mijozning oxirgi so'zi "rahmat" / "hop" bo'lsa,
+	// savol yo'q — modelga bormaymiz, tayyor matn bilan chiroyli
+	// xayrlashamiz (farewell.go). maxSteps = 0 — zanjir yurmaydi,
+	// token sarflanmaydi.
+	if reply, ok := Farewell(msgs); ok {
+		in.ChatReply = reply
+		in.Status = StatusPending // avto-javob yoqilgan bo'lsa quyida yuboriladi
+		maxSteps = 0
+		// Panelda "nega 0 bosqich" ko'rinib tursin.
+		in.Steps = append(in.Steps, AgentStep{
+			StepNo:      1,
+			PromtTitle:  "Xayrlashish (model chaqirilmadi)",
+			RawResponse: reply,
+			CreatedAt:   time.Now(),
+		})
+		log.Printf("agent: suhbat %d — mijoz minnatdorchilik bildirdi, xayrlashildi", conversationID)
+	}
+
+	// Rasm: mijoz raqamni yozmay, skrinshot yoki chek tashlagan bo'lishi
+	// mumkin. Asosiy model rasmni ko'rmaydi ("[rasm yuborildi]"), shuning
+	// uchun rasm alohida ko'ruvchi modelga beriladi (image_numbers.go).
+	//
+	// Faqat matnda raqam TOPILMAGANDA ochiladi: matnda raqam bo'lsa rasm
+	// ortiqcha token, javob baribir o'sha raqam bo'yicha yoziladi.
+	if maxSteps > 0 && len(chatSN) == 0 && len(chatEx) == 0 && HasClientImage(msgs) {
+		img, iu, err := ReadNumbersFromMessages(ctx, msgs)
+		usage = usage.Add(iu)
+
+		var natija string
+		switch {
+		case err == nil:
+			chatSN = mergeNumbers(chatSN, img.OrderSN, 10)
+			chatEx = mergeNumbers(chatEx, img.Express, 10)
+			dataCtx = append(dataCtx, "Mijoz yuborgan rasmdan o'qilgan raqamlar: "+
+				strings.Join(img.All(), ", ")+
+				". Mijoz shu buyurtma haqida yozmoqda — raqamni qaytadan so'rama.")
+			natija = "TOPILDI: " + strings.Join(img.All(), ", ")
+			log.Printf("agent: suhbat %d — rasmdan raqam topildi: %v", conversationID, img.All())
+		case errors.Is(err, ErrNoNumbersInImage):
+			// Rasm ko'rildi, raqam yo'q — model buni bilsin va
+			// raqamni mijozdan so'rasin (yoki boshqa yo'l tanlasin).
+			dataCtx = append(dataCtx, imageNoNumberHint)
+			natija = "RASMDA BUYURTMA RAQAMI YO'Q — raqam mijozdan so'raladi"
+			log.Printf("agent: suhbat %d — rasmda buyurtma raqami yo'q", conversationID)
+		default:
+			// Rasm o'qilmadi (tarmoq, model, havola) — zanjir to'xtamaydi.
+			natija = "RASM O'QILMADI: " + err.Error()
+			log.Printf("agent: suhbat %d — rasm o'qilmadi: %v", conversationID, err)
+		}
+
+		// Bosqich panelga yoziladi: suhbat tafsilotida qaysi rasm
+		// ko'rilgani, model nima qaytargani va natija ochiq tursin.
+		in.Steps = append(in.Steps, AgentStep{
+			PromtTitle:       "Rasmni o'qish — " + imageReader(img),
+			RequestContext:   imageStepContext(img),
+			RawResponse:      imageStepResult(img, natija),
+			PromptTokens:     iu.PromptTokens,
+			CachedTokens:     iu.CachedTokens,
+			CompletionTokens: iu.CompletionTokens,
+			DurationMS:       iu.DurationMS,
+			CreatedAt:        time.Now(),
+		})
+	}
+
 	for step := 1; step <= maxSteps; step++ {
 		p, err := GetPromt(DB, promtID)
 		if err != nil {
@@ -228,6 +292,11 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 	}
 
+	// Bosqich raqamlari ketma-ket bo'lsin: rasm bosqichi zanjirdan
+	// oldin turadi, shuning uchun raqamlar oxirida qo'yiladi.
+	for i := range in.Steps {
+		in.Steps[i].StepNo = i + 1
+	}
 	in.StepsCount = len(in.Steps)
 	in.Model = usage.Model
 	in.PromptTokens = usage.PromptTokens
@@ -407,7 +476,15 @@ func fetchHistory(conversationID int64) ([]Message, error) {
 const unclearHint = "Sen mijoz muammosini tushunmading, shuning uchun " +
 	"uning buyurtmalari tizimdan olindi. Yuqorida mijozning HALI KELMAGAN " +
 	"buyurtmalari bor — mijoz katta ehtimol o'shalar haqida yozgan. " +
-	"Shu ma'lumotga tayanib javob yoz; endi \"" + AskHelpText + "\" deb so'rama."
+	"Shu ma'lumotga tayanib javob yoz; endi \"" + AskHelpText + "\" deb so'rama (boshqa tilda ham)."
+
+// imageNoNumberHint - mijoz rasm yubordi, lekin rasmda buyurtma yoki trek
+// raqami topilmadi. Model buni bilmasa "rasmingizni ko'rdim" deb noto'g'ri
+// javob yozib yuborishi mumkin.
+const imageNoNumberHint = "Mijoz rasm yubordi, lekin RASMDA BUYURTMA RAQAMI YO'Q " +
+	"(rasm ko'ruvchi model bilan tekshirildi). Rasm mazmuniga tayanma — " +
+	"uni ko'ra olmaysan. Buyurtma boshqa yo'l bilan aniqlanmasa, mijozdan " +
+	"buyurtma (DG…) yoki trek raqamini yozishini xushmuomala so'ra."
 
 // TranscriptMessage - modelga ketadigan bitta xabar. `type` — xabarni kim
 // yozgani: "client" (mijoz) yoki "agent" (biz tomon: agent yoki xodim).
@@ -506,7 +583,10 @@ func buildUserMessage(transcript string, data []string, greet bool) string {
 	// hal qilishi kerak, tushunmasa esa so'rashi kerak.
 	b.WriteString("\n\n")
 	if greet {
-		b.WriteString("Bugun bu suhbatda biz hali yozmadik — chat javobini \"" + GreetingText + "\" bilan boshla (faqat shu ikki so'z, boshqa salomlashish qo'shma). ")
+		b.WriteString("Bugun bu suhbatda biz hali yozmadik — chat javobini salom bilan boshla. ")
+		b.WriteString("Salomni MIJOZNING tilida yoz: o'zbekcha lotin — \"" + GreetingText + "\", ")
+		b.WriteString("o'zbekcha kirill — \"" + GreetingUzCyr + "\", rus tilida — \"" + GreetingRU + "\". ")
+		b.WriteString("Faqat shu ikki so'z, boshqa salomlashish qo'shma. ")
 		b.WriteString("Salom — javobning boshi, o'zi emas: undan keyin mijoz muammosiga javob yoz. ")
 	} else {
 		b.WriteString("Bugun bu suhbatda allaqachon yozganmiz — javobda salomlashma, to'g'ridan-to'g'ri mavzuga o't. ")
@@ -515,9 +595,62 @@ func buildUserMessage(transcript string, data []string, greet bool) string {
 	b.WriteString("mijoz muammosini oxirgi xabarda emas, oldingi xabarlarida aytgan bo'lishi mumkin. ")
 	b.WriteString("Muammo tushunarli bo'lsa to'g'ridan-to'g'ri javob yoz. ")
 	b.WriteString("Shu xabarlarning hech biridan muammo tushunilmasa — o'zingdan to'qima, ")
-	b.WriteString(`javobingga "tushunmadim": true qo'sh va chat matnida "` + AskHelpText + `" deb so'ra. `)
+	b.WriteString(`javobingga "tushunmadim": true qo'sh va chat matnida shu savolni MIJOZNING tilida so'ra: `)
+	b.WriteString(`o'zbekcha lotin — "` + AskHelpText + `", o'zbekcha kirill — "` + AskHelpUzCyr + `", rus tilida — "` + AskHelpRU + `". `)
 	b.WriteString("Bunda kod mijozning buyurtmalarini tizimdan olib senga qaytadan beradi: ")
 	b.WriteString("kelmagan buyurtmasi bo'lsa, savol o'rniga o'sha buyurtma haqida javob yozasan.")
+	return b.String()
+}
+
+// imageReader - rasmni kim o'qigani (panel sarlavhasi uchun):
+// "tesseract eng" yoki ko'ruvchi modelning nomi.
+func imageReader(img ImageNumbers) string {
+	if img.Model != "" {
+		return img.Model
+	}
+	return VisionModel()
+}
+
+// imageStepContext - panelda "nima qilindi" bo'limi: qaysi rasmlar
+// o'qilgani va qaysi yo'l bilan.
+func imageStepContext(img ImageNumbers) string {
+	var b strings.Builder
+	b.WriteString("Mijoz rasm yubordi, matnda buyurtma raqami yo'q edi — rasm o'qildi.\n")
+	b.WriteString("O'qigan: " + imageReader(img) + "\n")
+	b.WriteString("Tartib: avval tesseract (OCR, modelsiz); u raqam topmasa ")
+	b.WriteString("ko'ruvchi model chaqiriladi.\n\n")
+	if len(img.Links) == 0 {
+		b.WriteString("Rasm: —\n")
+	}
+	for i, link := range img.Links {
+		b.WriteString(fmt.Sprintf("%d-rasm: %s\n", i+1, link))
+	}
+	if strings.HasPrefix(img.Model, "tesseract") {
+		return b.String() // OCR'da ko'rsatma yo'q
+	}
+	b.WriteString("\nModelga ketgan ko'rsatma:\n")
+	b.WriteString(visionPromt)
+	return b.String()
+}
+
+// imageStepResult - panelda "model javobi" bo'limi: xom javob va undan
+// chiqarilgan xulosa.
+func imageStepResult(img ImageNumbers, natija string) string {
+	var b strings.Builder
+	b.WriteString("Natija: " + natija + "\n")
+	b.WriteString(fmt.Sprintf("Ko'rilgan rasm: %d ta\n", img.Images))
+	if img.Text != "" {
+		b.WriteString("Rasmdagi matn: " + img.Text + "\n")
+	}
+	if len(img.OrderSN) > 0 {
+		b.WriteString("Buyurtma raqami: " + strings.Join(img.OrderSN, ", ") + "\n")
+	}
+	if len(img.Express) > 0 {
+		b.WriteString("Trek raqami: " + strings.Join(img.Express, ", ") + "\n")
+	}
+	if img.Raw != "" {
+		b.WriteString("\nXom natija (" + imageReader(img) + "):\n" + img.Raw + "\n")
+	}
 	return b.String()
 }
 
@@ -585,7 +718,10 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool)
 			}
 			brief := BriefDelivery(rows)
 			out["yetkazma"] = brief
-			if len(brief.Pending) > 0 {
+			// Mijozning qo'liga tegmagan yetkazmasi: filialda kutayotgani,
+			// yo'ldagisi va holati noaniq bo'lgani — uchalasi ham
+			// "hali olinmagan" hisoblanadi.
+			if len(brief.Pending) > 0 || len(brief.InDelivery) > 0 || len(brief.NeedCheck) > 0 {
 				pending = true
 			}
 			if len(errs) > 0 {

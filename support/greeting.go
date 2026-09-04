@@ -2,13 +2,33 @@ package support
 
 import "time"
 
-// GreetingText - kun boshidagi salom. Ikki so'z, ortiqchasi yo'q.
-const GreetingText = "Assalomu alaykum"
+// Kun boshidagi salom — har alifbo uchun. Ikki so'z, ortiqchasi yo'q.
+//
+// Uchalasi ham modelga BIRGA beriladi: kod mijozning tilini o'zi
+// aniqlamaydi (oxirgi xabar rasm bo'lsa xato tanlanardi), tilni promt
+// tanlaydi. Ilgari faqat o'zbekcha lotin variant ketardi va ruscha
+// yozgan mijozga ham o'zbekcha javob yozilib qolardi.
+const (
+	GreetingText  = "Assalomu alaykum" // o'zbekcha lotin
+	GreetingUzCyr = "Ассалому алайкум" // o'zbekcha kirill
+	GreetingRU    = "Здравствуйте"     // rus
+)
 
 // AskHelpText - oxirgi chora: suhbatning butun tarixidan ham mijoz nima
 // so'rayotgani tushunilmasa beriladigan savol. Javob yo muammoni hal
 // qiladi, yo shu savolni beradi — salom bilan cheklanib qolmaydi.
-const AskHelpText = "Sizga qanday yordam bera olaman?"
+// Salom kabi, bu ham mijozning tilida beriladi.
+const (
+	AskHelpText  = "Sizga qanday yordam bera olaman?"
+	AskHelpUzCyr = "Сизга қандай ёрдам бера оламан?"
+	AskHelpRU    = "Чем я могу вам помочь?"
+)
+
+// AskHelpVariants - "tushunmadim" savolining hamma tildagi ko'rinishi
+// (contract.go dagi zaxira aniqlash uchun).
+func AskHelpVariants() []string {
+	return []string{AskHelpText, AskHelpUzCyr, AskHelpRU}
+}
 
 // NeedsGreeting - shu suhbatda bugun biz tomondan (agent yoki xodim) hali
 // hech narsa yozilmagan bo'lsa true.
