@@ -144,15 +144,12 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 		reqBody.Reasoning = envStr("GROQ_REASONING_EFFORT", "low")
 	}
 
-	return g.chatCompletion(ctx, reqBody, g.Model, "groq")
+	return g.send(ctx, reqBody)
 }
 
-// chatCompletion - /chat/completions ga so'rov yuborib javob matnini va
-// sarflangan tokenlarni qaytaradi.
-//
-// Matnli (Generate) va rasmli (generateVision) so'rovlar bir xil yo'ldan
-// ketadi — farqi faqat body, model nomi va xato matnidagi belgi (label).
-func (g Groq) chatCompletion(ctx context.Context, body any, model, label string) (string, Usage, error) {
+// send - /chat/completions ga so'rov yuborib javob matnini va sarflangan
+// tokenlarni qaytaradi.
+func (g Groq) send(ctx context.Context, body any) (string, Usage, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return "", Usage{}, fmt.Errorf("so'rov yasash: %w", err)
@@ -181,14 +178,14 @@ func (g Groq) chatCompletion(ctx context.Context, body any, model, label string)
 	start := time.Now()
 	status, respBody, err := doWithRetry(&http.Client{Timeout: timeout}, newReq, Retries())
 	if err != nil {
-		return "", Usage{}, fmt.Errorf("%s so'rovi: %w", label, err)
+		return "", Usage{}, fmt.Errorf("groq so'rovi: %w", err)
 	}
 	ms := time.Since(start).Milliseconds()
 
 	var out groqResponse
 	if err := json.Unmarshal(respBody, &out); err != nil {
 		return "", Usage{DurationMS: ms},
-			fmt.Errorf("%s javobi JSON emas (status %d): %s", label, status, snippet(respBody))
+			fmt.Errorf("groq javobi JSON emas (status %d): %s", status, snippet(respBody))
 	}
 
 	u := Usage{
@@ -200,17 +197,17 @@ func (g Groq) chatCompletion(ctx context.Context, body any, model, label string)
 		DurationMS:       ms,
 	}
 	if u.Model == "" {
-		u.Model = model
+		u.Model = g.Model
 	}
 
 	if out.Error != nil {
-		return "", u, fmt.Errorf("%s: %s", label, out.Error.Message)
+		return "", u, fmt.Errorf("groq: %s", out.Error.Message)
 	}
 	if status < 200 || status >= 300 {
-		return "", u, fmt.Errorf("%s status %d: %s", label, status, snippet(respBody))
+		return "", u, fmt.Errorf("groq status %d: %s", status, snippet(respBody))
 	}
 	if len(out.Choices) == 0 {
-		return "", u, fmt.Errorf("%s javobi bo'sh", label)
+		return "", u, errors.New("groq javobi bo'sh")
 	}
 	return out.Choices[0].Message.Content, u, nil
 }

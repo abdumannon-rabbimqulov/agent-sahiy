@@ -2,8 +2,9 @@
 //
 // Buyurtma (DG…) va trek raqamlari — bosma, aniq shriftdagi lotin harf
 // va raqamlar. Bunday matnni o'qish uchun katta ko'ruvchi model shart
-// emas: tesseract buni bepul, lokal va bir soniyada qiladi. Model
-// faqat OCR hech narsa topmaganda ishga tushadi (image_numbers.go).
+// emas: tesseract buni bepul, lokal va bir soniyada qiladi. Rasmni
+// o'qishning boshqa yo'li yo'q — OCR raqam topmasa, mijozdan raqamni
+// matn bilan yozish so'raladi (image_numbers.go).
 //
 // Nega tashqi buyruq, kutubxona emas: gosseract kabi bog'lovchilar cgo
 // talab qiladi va build'ni og'irlashtiradi (hozir CGO_ENABLED=0). Bu
@@ -35,8 +36,8 @@ const MaxImageBytes = 10 << 20
 // ErrNoOCR - tesseract o'rnatilmagan.
 var ErrNoOCR = errors.New("tesseract topilmadi (OCR o'chirilgan)")
 
-// OCREnabled - rasmni avval OCR bilan o'qishga urinamizmi (.env: OCR_ENABLED,
-// default — ha). O'chirilsa rasm to'g'ridan-to'g'ri modelga ketadi.
+// OCREnabled - rasm umuman o'qiladimi (.env: OCR_ENABLED, default — ha).
+// O'chirilsa rasmga qaralmaydi va raqam faqat mijoz yozgan matndan olinadi.
 func OCREnabled() bool { return envStr("OCR_ENABLED", "true") != "false" }
 
 // OCRLangs - tesseract til paketlari (.env: OCR_LANGS).

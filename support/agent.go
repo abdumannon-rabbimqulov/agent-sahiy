@@ -140,17 +140,17 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 
 	// Rasm: mijoz raqamni yozmay, skrinshot yoki chek tashlagan bo'lishi
 	// mumkin. Asosiy model rasmni ko'rmaydi ("[rasm yuborildi]"), shuning
-	// uchun rasm alohida ko'ruvchi modelga beriladi (image_numbers.go).
+	// uchun rasmni tesseract OCR o'qiydi (image_numbers.go) — modelsiz,
+	// tokensiz.
 	//
 	// Faqat matnda raqam TOPILMAGANDA ochiladi: matnda raqam bo'lsa rasm
-	// ortiqcha token, javob baribir o'sha raqam bo'yicha yoziladi.
+	// ortiqcha ish, javob baribir o'sha raqam bo'yicha yoziladi.
 	if maxSteps > 0 && len(chatSN) == 0 && len(chatEx) == 0 && HasClientImage(msgs) {
-		img, iu, err := ReadNumbersFromMessages(ctx, msgs)
-		usage = usage.Add(iu)
+		img, ok := ReadNumbersFromMessages(ctx, msgs)
 
 		var natija string
-		switch {
-		case err == nil:
+		if ok {
+			// Raqam topildi — birinchi promtga shu raqamlar bilan kiramiz.
 			chatSN = mergeNumbers(chatSN, img.OrderSN, 10)
 			chatEx = mergeNumbers(chatEx, img.Express, 10)
 			dataCtx = append(dataCtx, "Mijoz yuborgan rasmdan o'qilgan raqamlar: "+
@@ -158,29 +158,21 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 				". Mijoz shu buyurtma haqida yozmoqda — raqamni qaytadan so'rama.")
 			natija = "TOPILDI: " + strings.Join(img.All(), ", ")
 			log.Printf("agent: suhbat %d — rasmdan raqam topildi: %v", conversationID, img.All())
-		case errors.Is(err, ErrNoNumbersInImage):
-			// Rasm ko'rildi, raqam yo'q — model buni bilsin va
-			// raqamni mijozdan so'rasin (yoki boshqa yo'l tanlasin).
+		} else {
+			// Raqam chiqmadi (rasmda yo'q yoki o'qilmadi) — model buni
+			// bilsin va raqamni mijozdan so'rasin. Zanjir to'xtamaydi.
 			dataCtx = append(dataCtx, imageNoNumberHint)
-			natija = "RASMDA BUYURTMA RAQAMI YO'Q — raqam mijozdan so'raladi"
-			log.Printf("agent: suhbat %d — rasmda buyurtma raqami yo'q", conversationID)
-		default:
-			// Rasm o'qilmadi (tarmoq, model, havola) — zanjir to'xtamaydi.
-			natija = "RASM O'QILMADI: " + err.Error()
-			log.Printf("agent: suhbat %d — rasm o'qilmadi: %v", conversationID, err)
+			natija = "RASMDAN BUYURTMA RAQAMI CHIQMADI — raqam mijozdan so'raladi"
+			log.Printf("agent: suhbat %d — rasmdan buyurtma raqami chiqmadi", conversationID)
 		}
 
 		// Bosqich panelga yoziladi: suhbat tafsilotida qaysi rasm
-		// ko'rilgani, model nima qaytargani va natija ochiq tursin.
+		// o'qilgani, OCR nima chiqargani va natija ochiq tursin.
 		in.Steps = append(in.Steps, AgentStep{
-			PromtTitle:       "Rasmni o'qish — " + imageReader(img),
-			RequestContext:   imageStepContext(img),
-			RawResponse:      imageStepResult(img, natija),
-			PromptTokens:     iu.PromptTokens,
-			CachedTokens:     iu.CachedTokens,
-			CompletionTokens: iu.CompletionTokens,
-			DurationMS:       iu.DurationMS,
-			CreatedAt:        time.Now(),
+			PromtTitle:     "Rasmni o'qish — " + imageReader(img),
+			RequestContext: imageStepContext(img),
+			RawResponse:    imageStepResult(img, natija),
+			CreatedAt:      time.Now(),
 		})
 	}
 
@@ -446,13 +438,13 @@ const unclearHint = "Sen mijoz muammosini tushunmading, shuning uchun " +
 	"buyurtmalari bor — mijoz katta ehtimol o'shalar haqida yozgan. " +
 	"Shu ma'lumotga tayanib javob yoz; endi \"" + AskHelpText + "\" deb so'rama (boshqa tilda ham)."
 
-// imageNoNumberHint - mijoz rasm yubordi, lekin rasmda buyurtma yoki trek
-// raqami topilmadi. Model buni bilmasa "rasmingizni ko'rdim" deb noto'g'ri
+// imageNoNumberHint - mijoz rasm yubordi, lekin undan buyurtma yoki trek
+// raqami chiqmadi. Model buni bilmasa "rasmingizni ko'rdim" deb noto'g'ri
 // javob yozib yuborishi mumkin.
-const imageNoNumberHint = "Mijoz rasm yubordi, lekin RASMDA BUYURTMA RAQAMI YO'Q " +
-	"(rasm ko'ruvchi model bilan tekshirildi). Rasm mazmuniga tayanma — " +
-	"uni ko'ra olmaysan. Buyurtma boshqa yo'l bilan aniqlanmasa, mijozdan " +
-	"buyurtma (DG…) yoki trek raqamini yozishini xushmuomala so'ra."
+const imageNoNumberHint = "Mijoz rasm yubordi, lekin RASMDAN BUYURTMA RAQAMI CHIQMADI " +
+	"(rasm OCR bilan o'qildi). Rasm mazmuniga tayanma — uni ko'ra olmaysan. " +
+	"Buyurtma boshqa yo'l bilan aniqlanmasa, mijozdan buyurtma (DG…) yoki " +
+	"trek raqamini yozishini xushmuomala so'ra."
 
 // TranscriptMessage - modelga ketadigan bitta xabar. `type` — xabarni kim
 // yozgani: "client" (mijoz) yoki "agent" (biz tomon: agent yoki xodim).
@@ -570,43 +562,35 @@ func buildUserMessage(transcript string, data []string, greet bool) string {
 	return b.String()
 }
 
-// imageReader - rasmni kim o'qigani (panel sarlavhasi uchun):
-// "tesseract eng" yoki ko'ruvchi modelning nomi.
+// imageReader - rasmni nima o'qigani (panel sarlavhasi uchun).
 func imageReader(img ImageNumbers) string {
 	if img.Model != "" {
 		return img.Model
 	}
-	return VisionModel()
+	return "tesseract " + OCRLangs()
 }
 
 // imageStepContext - panelda "nima qilindi" bo'limi: qaysi rasmlar
-// o'qilgani va qaysi yo'l bilan.
+// o'qilgani va nima bilan.
 func imageStepContext(img ImageNumbers) string {
 	var b strings.Builder
 	b.WriteString("Mijoz rasm yubordi, matnda buyurtma raqami yo'q edi — rasm o'qildi.\n")
-	b.WriteString("O'qigan: " + imageReader(img) + "\n")
-	b.WriteString("Tartib: avval tesseract (OCR, modelsiz); u raqam topmasa ")
-	b.WriteString("ko'ruvchi model chaqiriladi.\n\n")
+	b.WriteString("O'qigan: " + imageReader(img) + " (OCR, modelsiz — token sarflanmaydi)\n\n")
 	if len(img.Links) == 0 {
 		b.WriteString("Rasm: —\n")
 	}
 	for i, link := range img.Links {
 		b.WriteString(fmt.Sprintf("%d-rasm: %s\n", i+1, link))
 	}
-	if strings.HasPrefix(img.Model, "tesseract") {
-		return b.String() // OCR'da ko'rsatma yo'q
-	}
-	b.WriteString("\nModelga ketgan ko'rsatma:\n")
-	b.WriteString(visionPromt)
 	return b.String()
 }
 
-// imageStepResult - panelda "model javobi" bo'limi: xom javob va undan
-// chiqarilgan xulosa.
+// imageStepResult - panelda "natija" bo'limi: OCR ning xom matni va
+// undan chiqarilgan xulosa.
 func imageStepResult(img ImageNumbers, natija string) string {
 	var b strings.Builder
 	b.WriteString("Natija: " + natija + "\n")
-	b.WriteString(fmt.Sprintf("Ko'rilgan rasm: %d ta\n", img.Images))
+	b.WriteString(fmt.Sprintf("O'qilgan rasm: %d ta\n", img.Images))
 	if img.Text != "" {
 		b.WriteString("Rasmdagi matn: " + img.Text + "\n")
 	}

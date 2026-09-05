@@ -301,75 +301,51 @@ kutadi.
 
 Mijoz ko'pincha buyurtma raqamini yozmay, skrinshot yoki chek rasmini
 tashlaydi. Asosiy model rasmni ko'rmaydi, shuning uchun rasm alohida
-o'qiladi. **Ikki bosqich, shu tartibda:**
+o'qiladi — **tesseract (OCR) bilan, modelsiz** (`support/ocr.go`).
 
-1. **tesseract (OCR) — modelsiz** (`support/ocr.go`). Buyurtma (`DG…`) va
-   trek raqamlari bosma matn: OCR ularni bepul, lokal va ~0.1 soniyada
-   o'qiydi. Rasm vaqtincha faylga yuklanadi, `tesseract <fayl> stdout`
-   chaqiriladi, matndan raqamlar `numbers.go` regexp'lari bilan
-   ajratiladi, fayl o'chiriladi. **Token sarflanmaydi.**
-2. **Ko'ruvchi model — faqat OCR hech narsa topmaganda**
-   (`support/image_numbers.go`). Qo'lda yozilgan, qiyshiq yoki sifatsiz
-   rasmlar uchun zaxira.
+Buyurtma (`DG…`) va trek raqamlari bosma matn: OCR ularni bepul, lokal va
+~0.1 soniyada o'qiydi. Rasm vaqtincha faylga yuklanadi, `tesseract <fayl>
+stdout` chaqiriladi, matndan raqamlar `numbers.go` regexp'lari bilan
+ajratiladi, fayl o'chiriladi. **Token sarflanmaydi.**
 
-`OCR_ENABLED=false` bo'lsa 1-bosqich o'tkazib yuboriladi. tesseract
-o'rnatilmagan bo'lsa (`ErrNoOCR`) ham zanjir to'xtamaydi — 2-bosqichga
-o'tiladi. Docker image'da tesseract bor (`Dockerfile`).
+Ko'ruvchi (vision) modelga **umuman borilmaydi**: rasm hech qachon LLM ga
+yuborilmaydi. OCR raqam topmasa — raqam mijozdan matn bilan so'raladi.
+
+`OCR_ENABLED=false` bo'lsa rasmga umuman qaralmaydi. tesseract
+o'rnatilmagan bo'lsa (`ErrNoOCR`) zanjir to'xtamaydi — raqam mijozdan
+so'raladi. Docker image'da tesseract bor (`Dockerfile`).
 
 Funksiyalar:
 
 | Funksiya | Nima qiladi |
 |---|---|
-| `ReadImageOCR(ctx, url)` | Rasmni yuklab, tesseract bilan o'qiydi (modelsiz) |
+| `ReadImageOCR(ctx, url)` | Rasmni yuklab, tesseract bilan o'qiydi |
 | `OCRAvailable()` | tesseract shu mashinada bormi |
-
-| Funksiya | Nima qiladi |
-|---|---|
 | `ClientImageLinks(msgs)` | Mijoz yuborgan rasm havolalari, eng oxirgisi birinchi |
 | `HasClientImage(msgs)` | Mijoz rasm yuborganmi |
-| `ReadImageNumbers(ctx, groq, url)` | Bitta rasmdan `DG…` va trek raqamlari |
-| `ReadNumbersFromMessages(ctx, msgs)` | Suhbatdagi rasmlarni ko'radi, birinchi raqam topilganda to'xtaydi |
+| `ReadNumbersFromMessages(ctx, msgs)` | Rasmlarni o'qiydi; `(raqamlar, topildimi)` qaytaradi |
 
-Modeldan javob matni **so'ralmaydi** — u faqat raqamlarni ko'chiradi,
-mijozga yoziladigan javobni baribir asosiy zanjir yozadi. Model qaytargan
-ro'yxat ustiga rasmdagi xom matn `numbers.go` regexp'lari bilan ham
-tekshiriladi: model raqamni tashlab ketsa yoki `ДГ` ni o'girmasa ham raqam
-yo'qolmaydi.
+Zanjirda (`agent.go`) rasm **faqat mijoz matnda raqam yozmaganda**
+o'qiladi — matnda raqam bo'lsa rasm ortiqcha ish. Natija ikki xil:
 
-Zanjirda (`agent.go`) rasm **faqat mijoz matnda raqam yozmaganda** ochiladi
-— matnda raqam bo'lsa rasm ortiqcha token. Natija:
-
-- raqam topildi → u `chatSN`/`chatEx` ga qo'shiladi va "Tizimdagi ma'lumot"
-  blokiga "rasmdan o'qilgan raqamlar" qatori tushadi (model raqamni qayta
-  so'ramaydi);
-- raqam yo'q (`ErrNoNumbersInImage`) → blokka "RASMDA BUYURTMA RAQAMI YO'Q"
-  ko'rsatmasi tushadi, model rasm mazmuniga tayanmaydi va raqamni mijozdan
-  so'raydi;
-- rasm o'qilmadi (tarmoq/model xatosi) → logga yoziladi, zanjir odatdagidek
-  davom etadi.
+- **topildi** (`ok == true`) → raqamlar `chatSN`/`chatEx` ga qo'shiladi va
+  birinchi promtga "rasmdan o'qilgan raqamlar" qatori bilan kiriladi
+  (model raqamni qayta so'ramaydi);
+- **topilmadi** (`ok == false`) → "Tizimdagi ma'lumot" blokiga
+  "RASMDAN BUYURTMA RAQAMI CHIQMADI" ko'rsatmasi tushadi, model rasm
+  mazmuniga tayanmaydi va raqamni mijozdan so'raydi. Sabab uchta bo'lishi
+  mumkin (rasm yo'q, o'qilmadi, ichida raqam yo'q) — keyingi qadam
+  uchalasida bir xil, o'qish xatolari logga yoziladi.
 
 Har bir rasm o'qish **suhbat tafsilotida alohida bosqich** bo'lib ko'rinadi
-(promt raqamisiz, nomi — "Rasmni o'qish — <model>"): ko'rilgan rasmning
-o'zi, ko'ruvchi modelga ketgan ko'rsatma, modelning xom javobi va natija
-("TOPILDI: DG…", "RASMDA BUYURTMA RAQAMI YO'Q" yoki "RASM O'QILMADI: …").
-Tokenlari umumiy `Usage` ga qo'shiladi.
+(promt raqamisiz, nomi — "Rasmni o'qish — tesseract eng"): o'qilgan
+rasmning o'zi, OCR ning xom matni va natija ("TOPILDI: DG…" yoki
+"RASMDAN BUYURTMA RAQAMI CHIQMADI"). Token sarflanmagani uchun bosqichda
+token soni ko'rsatilmaydi.
 
-Sozlamalar: `GROQ_VISION_MODEL` (default `meta-llama/llama-4-scout-17b-16e-instruct`),
-`GROQ_VISION_MAX_TOKENS`, `MAX_IMAGES` (default 2). Rasmni boshqa
-provayderga yuborish kerak bo'lsa — `VISION_BASE_URL` va `VISION_API_KEY`
-(asosiy zanjir Groq'da qoladi).
-
-**Ko'ruvchi model hisobda ochiq bo'lishi shart.** Tekshirish:
-
-```
-curl -s https://api.groq.com/openai/v1/models \
-  -H "Authorization: Bearer $GROQ_API_KEY" | grep -i scout
-```
-
-Model ro'yxatda bo'lmasa ("does not exist or you do not have access") yoki
-"blocked at the organization level" desa — console.groq.com dan ochiladi.
-Ochilmagunicha rasm o'qilmaydi: zanjir to'xtamaydi, lekin panelda
-"RASM O'QILMADI" bosqichi ko'rinadi va raqam mijozdan so'raladi.
+Sozlama: `MAX_IMAGES` (default 2) — bitta suhbatda nechta rasm o'qiladi,
+eng oxirgisidan boshlab. Qolganlari: `OCR_ENABLED`, `OCR_LANGS`,
+`OCR_TIMEOUT_SEC`, `OCR_FETCH_TIMEOUT_SEC`, `TESSERACT_BIN`.
 
 Xabar **sanasi yuborilmaydi**: tartib yetarli, sana esa token sarflaydi va
 model javobida chalkashlik keltiradi. Haqiqiy sanalar (buyurtma yaratilgan,
