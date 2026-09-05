@@ -1,3 +1,5 @@
+// Panelga kirish: JWT tokenini yasash, imzosini tekshirish va so'rovdan
+// o'qish. RequireAuth — himoyalangan endpointlar uchun o'ram.
 package support
 
 import (

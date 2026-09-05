@@ -1,3 +1,8 @@
+// Fon sikli: javobsiz suhbatlarni topib, har biri uchun agent zanjirini
+// yuritadi. Panel orqali o'chirib qo'yiladi.
+//
+// ScanOnce — paneldan qo'lda ishga tushiriladigan to'liq skanerlash:
+// filtr va chegarasiz, hamma suhbat ko'riladi.
 package support
 
 import (
@@ -71,21 +76,10 @@ func PollOnce(ctx context.Context) error {
 	if !AgentEnabled() {
 		return ErrAgentDisabled
 	}
-	creds := CredentialsFromEnv()
-	token, err := Token(creds, TokenFile)
-	if err != nil {
-		return err
-	}
-
 	pages := envInt("CHATS_PAGES", DefaultChatsPages)
 	limit := envInt("CHATS_LIMIT", DefaultChatsLimit)
 
-	chats, err := FetchAllChats(creds.BaseURL, token, pages, limit)
-	if err == ErrUnauthorized {
-		if token, err = Refresh(creds, TokenFile); err == nil {
-			chats, err = FetchAllChats(creds.BaseURL, token, pages, limit)
-		}
-	}
+	chats, err := fetchChats(pages, limit)
 	if err != nil {
 		return err
 	}
@@ -276,11 +270,6 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 	}
 	defer scanning.Store(false)
 
-	creds := CredentialsFromEnv()
-	token, err := Token(creds, TokenFile)
-	if err != nil {
-		return res, err
-	}
 	if pages < 1 {
 		pages = envInt("CHATS_PAGES", DefaultChatsPages)
 	}
@@ -288,12 +277,7 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 		limit = envInt("CHATS_LIMIT", DefaultChatsLimit)
 	}
 
-	chats, err := FetchAllChats(creds.BaseURL, token, pages, limit)
-	if err == ErrUnauthorized {
-		if token, err = Refresh(creds, TokenFile); err == nil {
-			chats, err = FetchAllChats(creds.BaseURL, token, pages, limit)
-		}
-	}
+	chats, err := fetchChats(pages, limit)
 	if err != nil {
 		return res, err
 	}
@@ -345,4 +329,11 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 	log.Printf("skaner: tugadi — %d zanjir, %d javob berilgan, %d xato (jami %d)",
 		res.Ran, res.Answered, res.Failed, res.Chats)
 	return res, nil
+}
+
+// fetchChats - bir necha sahifa suhbatni oladi (token eskirsa yangilanadi).
+func fetchChats(pages, limit int) ([]Chat, error) {
+	return withToken(func(baseURL, token string) ([]Chat, error) {
+		return FetchAllChats(baseURL, token, pages, limit)
+	})
 }

@@ -1,3 +1,5 @@
+// Token keshi: olingan token muddati bilan birga diskda saqlanadi —
+// har so'rovda qaytadan login qilinmasin.
 package support
 
 import (

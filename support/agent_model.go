@@ -1,3 +1,6 @@
+// Bazadagi agent modellari: mijoz murojaati va unga tayyorlangan javob
+// (Interaction), zanjirning har bosqichi (AgentStep), suhbatning
+// ishlanganlik holati va global sozlama yozuvi.
 package support
 
 import (
@@ -6,13 +9,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// Interaction statuslari.
 // Interaction manbalari.
 const (
 	SourceAgent    = "agent"    // AI zanjiri o'zi tayyorlagan
 	SourceTelegram = "telegram" // xodimning guruhdagi javobidan
 )
 
+// Interaction statuslari.
 const (
 	StatusPending  = "pending"  // admin tasdig'ini kutmoqda
 	StatusSent     = "sent"     // avtomatik yuborildi
@@ -147,4 +150,23 @@ func ListInteractions(db *gorm.DB, status string, page, limit int) ([]Interactio
 	var list []Interaction
 	err := q.Order("id desc").Offset((page - 1) * limit).Limit(limit).Find(&list).Error
 	return list, total, err
+}
+
+// applyUsage - sarflangan tokenlar va hisoblangan narxni interaksiyaga
+// ko'chiradi.
+func (in *Interaction) applyUsage(u Usage) {
+	in.Model = u.Model
+	in.PromptTokens = u.PromptTokens
+	in.CachedTokens = u.CachedTokens
+	in.CompletionTokens = u.CompletionTokens
+	in.Calls = u.Calls
+	in.CostUSD = u.Cost()
+}
+
+// markSent - javob mijozga ketdi deb belgilaydi.
+func (in *Interaction) markSent(by string) {
+	in.Status = StatusSent
+	in.HandledBy = by
+	now := time.Now()
+	in.SentAt = &now
 }

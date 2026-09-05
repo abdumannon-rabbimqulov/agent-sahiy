@@ -1,3 +1,5 @@
+// Xabarlarni "o'qilgan" deb belgilash va javobsiz qolgan mijoz
+// xabarlarini ajratish (ID'lari bilan ishlash).
 package support
 
 import (
@@ -52,18 +54,9 @@ func MarkReadCached(ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	creds := CredentialsFromEnv()
-	token, err := Token(creds, TokenFile)
-	if err != nil {
-		return err
-	}
-	err = MarkRead(creds.BaseURL, token, ids)
-	if err == ErrUnauthorized {
-		if token, err = Refresh(creds, TokenFile); err == nil {
-			err = MarkRead(creds.BaseURL, token, ids)
-		}
-	}
-	return err
+	return withTokenErr(func(baseURL, token string) error {
+		return MarkRead(baseURL, token, ids)
+	})
 }
 
 // UnansweredClientIDs - oxirgi xodim javobidan keyin kelgan mijoz

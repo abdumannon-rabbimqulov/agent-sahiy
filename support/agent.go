@@ -92,12 +92,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	if !force && !msgs[len(msgs)-1].FromClient() {
 		return nil, ErrAlreadyAnswered
 	}
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].FromClient() {
-			in.ClientMessage = msgs[i].Message
-			break
-		}
-	}
+	in.ClientMessage = lastClientMessage(msgs)
 	// Aynan shu murojaatda javob berilayotgan (javobsiz qolgan) mijoz
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
@@ -298,12 +293,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		in.Steps[i].StepNo = i + 1
 	}
 	in.StepsCount = len(in.Steps)
-	in.Model = usage.Model
-	in.PromptTokens = usage.PromptTokens
-	in.CachedTokens = usage.CachedTokens
-	in.CompletionTokens = usage.CompletionTokens
-	in.Calls = usage.Calls
-	in.CostUSD = usage.Cost()
+	in.applyUsage(usage)
 
 	if in.Error != "" {
 		in.Status = StatusFailed
@@ -332,17 +322,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// zanjir xatosi — hech narsa yuborilmaydi
 
 	case in.ChatReply != "":
-		if AutoReplyOn() {
-			if err := DeliverChat(in); err != nil {
-				in.Status = StatusFailed
-				in.Error = err.Error()
-			} else {
-				in.Status = StatusSent
-				in.HandledBy = "avto"
-				now := time.Now()
-				in.SentAt = &now
-			}
-		} else {
+		if !sendIfAuto(in, "avto") {
 			in.Status = StatusPending
 		}
 
@@ -350,10 +330,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// Faqat help bor edi — mijozga yoziladigan narsa yo'q, ya'ni
 		// tasdiqlashga ham hojat yo'q.
 		if in.HelpSent {
-			in.Status = StatusSent
-			in.HandledBy = "avto"
-			now := time.Now()
-			in.SentAt = &now
+			in.markSent("avto")
 		} else {
 			in.Status = StatusFailed
 			if in.Error == "" {
@@ -456,18 +433,9 @@ func saveFlag(in *Interaction, field string, val bool) {
 
 // fetchHistory suhbatning oxirgi xabarlarini oladi (token eskirsa yangilaydi).
 func fetchHistory(conversationID int64) ([]Message, error) {
-	creds := CredentialsFromEnv()
-	token, err := Token(creds, TokenFile)
-	if err != nil {
-		return nil, err
-	}
-	msgs, err := FetchMessages(creds.BaseURL, token, conversationID, HistoryLimit())
-	if err == ErrUnauthorized {
-		if token, err = Refresh(creds, TokenFile); err == nil {
-			msgs, err = FetchMessages(creds.BaseURL, token, conversationID, HistoryLimit())
-		}
-	}
-	return msgs, err
+	return withToken(func(baseURL, token string) ([]Message, error) {
+		return FetchMessages(baseURL, token, conversationID, HistoryLimit())
+	})
 }
 
 // unclearHint - "tushunmadim" fallback'ida ma'lumot bilan birga
@@ -710,11 +678,11 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool)
 			var errs []string
 			if len(tracks) == 0 {
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{UserID: clientID, Size: DefaultOrdersPerCall})
-				rows, errs = appendDelivery(rows, errs, r, err)
+				rows, errs = appendResult(rows, errs, r, err)
 			}
 			for _, n := range tracks {
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
-				rows, errs = appendDelivery(rows, errs, r, err)
+				rows, errs = appendResult(rows, errs, r, err)
 			}
 			brief := BriefDelivery(rows)
 			out["yetkazma"] = brief
@@ -810,14 +778,10 @@ func trimAll(in []string) []string {
 	return out
 }
 
-func appendResult(rows []AdminkaOrder, errs []string, r []AdminkaOrder, err error) ([]AdminkaOrder, []string) {
-	if err != nil {
-		return rows, append(errs, err.Error())
-	}
-	return append(rows, r...), errs
-}
-
-func appendDelivery(rows []DeliveryOrder, errs []string, r []DeliveryOrder, err error) ([]DeliveryOrder, []string) {
+// appendResult - so'rov natijasini yig'ib boradi: xato bo'lsa matni
+// errs ro'yxatiga tushadi, aks holda satrlar qo'shiladi. Bitta manba
+// ishlamasa ham qolganlari modelga yetib borsin.
+func appendResult[T any](rows []T, errs []string, r []T, err error) ([]T, []string) {
 	if err != nil {
 		return rows, append(errs, err.Error())
 	}
@@ -832,4 +796,30 @@ func saveOrLog(in *Interaction) {
 	if err := SaveInteraction(DB, in); err != nil {
 		log.Printf("agent: interaksiyani saqlab bo'lmadi: %v", err)
 	}
+}
+
+// lastClientMessage - suhbatdagi eng oxirgi mijoz xabari matni.
+func lastClientMessage(msgs []Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].FromClient() {
+			return msgs[i].Message
+		}
+	}
+	return ""
+}
+
+// sendIfAuto - avto-javob yoqiq bo'lsa javobni darhol mijozga yuboradi
+// va holatni yangilaydi. O'chiq bo'lsa false qaytaradi: javob admin
+// tasdig'ini kutadi.
+func sendIfAuto(in *Interaction, handledBy string) bool {
+	if !AutoReplyOn() {
+		return false
+	}
+	if err := DeliverChat(in); err != nil {
+		in.Status = StatusFailed
+		in.Error = err.Error()
+	} else {
+		in.markSent(handledBy)
+	}
+	return true
 }

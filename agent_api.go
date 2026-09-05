@@ -1,3 +1,6 @@
+// Panel API'si: statistika, AI javoblari navbati (ko'rish, tahrirlash,
+// tasdiqlash yoki rad etish), muammoli buyurtmalar, sozlamalar va
+// agentni qo'lda ishga tushirish.
 package main
 
 import (
@@ -26,6 +29,53 @@ func queryInt(r *http.Request, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// requireID - yo'ldagi {id}; noto'g'ri bo'lsa javobni o'zi yozadi.
+func requireID(w http.ResponseWriter, r *http.Request) (uint, bool) {
+	id, ok := pathID(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
+	}
+	return id, ok
+}
+
+// requireClaims - so'rovdagi token egasi; xato bo'lsa javobni o'zi yozadi.
+func requireClaims(w http.ResponseWriter, r *http.Request) (*support.Claims, bool) {
+	claims, err := support.ClaimsFromRequest(r)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return nil, false
+	}
+	return claims, true
+}
+
+// loadInteraction - {id} bo'yicha interaksiyani topadi. Topilmasa yoki
+// xato bo'lsa javobni o'zi yozib false qaytaradi.
+func loadInteraction(w http.ResponseWriter, r *http.Request) (*support.Interaction, bool) {
+	id, ok := requireID(w, r)
+	if !ok {
+		return nil, false
+	}
+	in, err := support.GetInteraction(support.DB, id)
+	if !handleFindErr(w, err, "topilmadi") {
+		return nil, false
+	}
+	return in, true
+}
+
+// handleFindErr - baza qidiruvining xatosini javobga aylantiradi.
+// Xato bo'lmasa true qaytaradi.
+func handleFindErr(w http.ResponseWriter, err error, notFound string) bool {
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		writeErr(w, http.StatusNotFound, notFound)
+		return false
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	return true
 }
 
 // statsHandler: GET /api/stats — umumiy hisob.
@@ -75,18 +125,8 @@ func interactionsHandler(w http.ResponseWriter, r *http.Request) {
 
 // interactionGetHandler: GET /api/interactions/{id} — bosqichlari bilan.
 func interactionGetHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	in, ok := loadInteraction(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
-		return
-	}
-	in, err := support.GetInteraction(support.DB, id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, in)
@@ -95,11 +135,6 @@ func interactionGetHandler(w http.ResponseWriter, r *http.Request) {
 // interactionPatchHandler: PATCH /api/interactions/{id}
 // Tasdiqdan oldin chat/help matnini tahrirlash.
 func interactionPatchHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
-	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
-		return
-	}
 	var body struct {
 		ChatReply *string `json:"chat_reply"`
 		HelpText  *string `json:"help_text"`
@@ -108,13 +143,8 @@ func interactionPatchHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "body JSON emas")
 		return
 	}
-	in, err := support.GetInteraction(support.DB, id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	in, ok := loadInteraction(w, r)
+	if !ok {
 		return
 	}
 	if in.Status != support.StatusPending && in.Status != support.StatusFailed {
@@ -139,23 +169,12 @@ func interactionPatchHandler(w http.ResponseWriter, r *http.Request) {
 // approveHandler: POST /api/interactions/{id}/approve
 // chat -> mijozga, help -> Telegram guruhga.
 func approveHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	claims, ok := requireClaims(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
-	claims, err := support.ClaimsFromRequest(r)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err.Error())
-		return
-	}
-	in, err := support.GetInteraction(support.DB, id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	in, ok := loadInteraction(w, r)
+	if !ok {
 		return
 	}
 	if in.Status == support.StatusSent || in.Status == support.StatusApproved {
@@ -188,14 +207,12 @@ func approveHandler(w http.ResponseWriter, r *http.Request) {
 
 // rejectHandler: POST /api/interactions/{id}/reject
 func rejectHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	id, ok := requireID(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
-	claims, err := support.ClaimsFromRequest(r)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err.Error())
+	claims, ok := requireClaims(w, r)
+	if !ok {
 		return
 	}
 	res := support.DB.Model(&support.Interaction{}).
@@ -384,19 +401,12 @@ func issuesHandler(w http.ResponseWriter, r *http.Request) {
 
 // issueGetHandler: GET /api/issues/{id}
 func issueGetHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	id, ok := requireID(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
 	var is support.OrderIssue
-	err := support.DB.First(&is, id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "muammo topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !handleFindErr(w, support.DB.First(&is, id).Error, "muammo topilmadi") {
 		return
 	}
 	writeJSON(w, http.StatusOK, is)
@@ -405,14 +415,12 @@ func issueGetHandler(w http.ResponseWriter, r *http.Request) {
 // issueResolveHandler: POST /api/issues/{id}/resolve {"resolution":"..."}
 // Paneldan qo'lda yopish (odatda yechim Telegram guruhdagi reply orqali keladi).
 func issueResolveHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	id, ok := requireID(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
-	claims, err := support.ClaimsFromRequest(r)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err.Error())
+	claims, ok := requireClaims(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -428,13 +436,7 @@ func issueResolveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var is support.OrderIssue
-	err = support.DB.First(&is, id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "muammo topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !handleFindErr(w, support.DB.First(&is, id).Error, "muammo topilmadi") {
 		return
 	}
 	if is.State == support.IssueResolved {

@@ -1,3 +1,5 @@
+// Mijozga javob yuborish va javobdan keyin suhbatni "hal qilindi" deb
+// yopish.
 package support
 
 import (
@@ -139,33 +141,15 @@ func ResolveChat(conversationID int64) error {
 	if conversationID <= 0 {
 		return fmt.Errorf("conversation_id berilmagan")
 	}
-	creds := CredentialsFromEnv()
-	token, err := Token(creds, TokenFile)
-	if err != nil {
-		return fmt.Errorf("support login: %w", err)
-	}
-	err = ResolveConversation(creds.BaseURL, token, conversationID, ResolutionResolved, "")
-	if err == ErrUnauthorized {
-		if token, err = Refresh(creds, TokenFile); err == nil {
-			err = ResolveConversation(creds.BaseURL, token, conversationID, ResolutionResolved, "")
-		}
-	}
-	return err
+	return withTokenErr(func(baseURL, token string) error {
+		return ResolveConversation(baseURL, token, conversationID, ResolutionResolved, "")
+	})
 }
 
 // SendToClient token keshidan foydalanib xabar yuboradi; token eskirgan
 // bo'lsa bir marta yangilab qayta uriniladi.
 func SendToClient(conversationID int64, text string) error {
-	creds := CredentialsFromEnv()
-	token, err := Token(creds, TokenFile)
-	if err != nil {
-		return fmt.Errorf("support login: %w", err)
-	}
-	err = SendMessage(creds.BaseURL, token, AgentSenderID(), conversationID, text)
-	if err == ErrUnauthorized {
-		if token, err = Refresh(creds, TokenFile); err == nil {
-			err = SendMessage(creds.BaseURL, token, AgentSenderID(), conversationID, text)
-		}
-	}
-	return err
+	return withTokenErr(func(baseURL, token string) error {
+		return SendMessage(baseURL, token, AgentSenderID(), conversationID, text)
+	})
 }

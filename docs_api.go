@@ -1,3 +1,5 @@
+// Avtomatik hujjat (FastAPI'dagi /docs kabi): openapi.json va uni
+// ko'rsatadigan sahifalar — /docs (Swagger UI) va /redoc (ReDoc).
 package main
 
 import (

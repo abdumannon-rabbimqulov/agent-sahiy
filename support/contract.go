@@ -111,13 +111,7 @@ func (a AgentJSON) IsUnclear() bool {
 
 // Numbers - modeldan kelgan buyurtma/trek raqamlari (bo'shlari tashlanadi).
 func (a AgentJSON) Numbers() []string {
-	var out []string
-	for _, s := range append(append([]string{}, a.OrderSN...), a.ExpressNum...) {
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
+	return trimAll(append(append([]string{}, a.OrderSN...), a.ExpressNum...))
 }
 
 // ParseAgentJSON model javobini o'qiydi. Model matn ichiga JSON qo'yib

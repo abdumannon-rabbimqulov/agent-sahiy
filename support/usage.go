@@ -1,3 +1,5 @@
+// Modelga sarflangan tokenlar hisobi va ularning USD'dagi narxi
+// (.env: GROQ_PRICE_IN / GROQ_PRICE_OUT).
 package support
 
 import (

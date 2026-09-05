@@ -1,13 +1,13 @@
+// Support tizimidagi suhbatlar ro'yxati: sahifalab olish va javobsiz
+// qolganlarini ajratish (operator_unseen_count).
 package support
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // ChatsPath — suhbatlar ro'yxati. Server buni GET bilan bermaydi (405),
@@ -74,27 +74,10 @@ func FetchChats(baseURL, token string, f ChatFilter) ([]Chat, error) {
 		return nil, fmt.Errorf("body marshal: %w", err)
 	}
 
-	newReq := func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("so'rov yaratish: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		return req, nil
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	status, raw, err := doWithRetry(client, newReq, Retries())
+	raw, err := apiCall{Method: http.MethodPost, URL: url, Token: token,
+		Body: body, What: "suhbatlar ro'yxati"}.do()
 	if err != nil {
-		return nil, fmt.Errorf("so'rov yuborish: %w", err)
-	}
-	if status == http.StatusUnauthorized {
-		return nil, ErrUnauthorized
-	}
-	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("suhbatlar ro'yxati (status %d): %s", status, snippet(raw))
+		return nil, err
 	}
 
 	var out struct {

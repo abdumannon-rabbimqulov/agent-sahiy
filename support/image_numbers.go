@@ -16,16 +16,13 @@
 package support
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // DefaultVisionModel - GROQ_VISION_MODEL bo'sh bo'lsa shu ishlatiladi.
@@ -378,61 +375,5 @@ func (g Groq) generateVision(ctx context.Context, promt, imageURL string) (strin
 		ResponseFormat: &groqFormat{Type: "json_object"},
 	}
 
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return "", Usage{}, fmt.Errorf("so'rov yasash: %w", err)
-	}
-
-	timeout := g.Timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	url := strings.TrimRight(g.BaseURL, "/") + "/chat/completions"
-	newReq := func() (*http.Request, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-		if err != nil {
-			return nil, fmt.Errorf("so'rov yaratish: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+g.APIKey)
-		return req, nil
-	}
-
-	start := time.Now()
-	status, respBody, err := doWithRetry(&http.Client{Timeout: timeout}, newReq, Retries())
-	if err != nil {
-		return "", Usage{}, fmt.Errorf("groq vision so'rovi: %w", err)
-	}
-	ms := time.Since(start).Milliseconds()
-
-	var out groqResponse
-	if err := json.Unmarshal(respBody, &out); err != nil {
-		return "", Usage{DurationMS: ms}, fmt.Errorf("vision javobi JSON emas (status %d): %s", status, snippet(respBody))
-	}
-
-	u := Usage{
-		Model:            out.Model,
-		PromptTokens:     out.Usage.PromptTokens,
-		CachedTokens:     out.Usage.PromptDetails.CachedTokens,
-		CompletionTokens: out.Usage.CompletionTokens,
-		Calls:            1,
-		DurationMS:       ms,
-	}
-	if u.Model == "" {
-		u.Model = VisionModel()
-	}
-
-	if out.Error != nil {
-		return "", u, fmt.Errorf("groq vision: %s", out.Error.Message)
-	}
-	if status < 200 || status >= 300 {
-		return "", u, fmt.Errorf("groq vision status %d: %s", status, snippet(respBody))
-	}
-	if len(out.Choices) == 0 {
-		return "", u, errors.New("groq vision javobi bo'sh")
-	}
-	return out.Choices[0].Message.Content, u, nil
+	return g.chatCompletion(ctx, body, VisionModel(), "groq vision")
 }

@@ -2,6 +2,8 @@
 package support
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -109,3 +111,56 @@ func retryAfter(resp *http.Response) (time.Duration, bool) {
 
 // Retries - .env dagi HTTP_RETRIES (default 2).
 func Retries() int { return envInt("HTTP_RETRIES", DefaultRetries) + 1 }
+
+// apiCall - Bearer token bilan tashqi API'ga so'rov: vaqtinchalik
+// xatolarda qayta uriniladi, auth xatosi ErrUnauthorized bo'lib keladi,
+// 2xx bo'lmasa `What` nomi bilan tushunarli xato qaytadi.
+//
+// Shu bilan har endpointda takrorlanadigan "so'rov yasash → doWithRetry →
+// status tekshirish" bloki bitta joyda turadi.
+type apiCall struct {
+	Method string
+	URL    string
+	Token  string
+	// Body - JSON tanasi (nil bo'lsa GET kabi tanasiz so'rov).
+	Body []byte
+	// What - xato matnida ko'rinadigan nom ("xabarlar", "yetkazma
+	// buyurtmalari").
+	What string
+	// AuthForbidden - bu API token eskirganda 401 emas, 403 qaytaradi
+	// (yetkazma API'si shunday).
+	AuthForbidden bool
+}
+
+// do so'rovni yuborib javob tanasini qaytaradi.
+func (c apiCall) do() ([]byte, error) {
+	newReq := func() (*http.Request, error) {
+		var body io.Reader
+		if c.Body != nil {
+			body = bytes.NewReader(c.Body)
+		}
+		req, err := http.NewRequest(c.Method, c.URL, body)
+		if err != nil {
+			return nil, fmt.Errorf("so'rov yaratish: %w", err)
+		}
+		if c.Body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		return req, nil
+	}
+
+	status, raw, err := doWithRetry(&http.Client{Timeout: 30 * time.Second}, newReq, Retries())
+	if err != nil {
+		return nil, fmt.Errorf("so'rov yuborish: %w", err)
+	}
+	if status == http.StatusUnauthorized ||
+		(c.AuthForbidden && status == http.StatusForbidden) {
+		return nil, ErrUnauthorized
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("%s (status %d): %s", c.What, status, snippet(raw))
+	}
+	return raw, nil
+}

@@ -1,3 +1,6 @@
+// Paneldan boshqariladigan sozlamalar (avto-javob, sikl oralig'i,
+// suhbatlar orasidagi tanaffus...): bazadan o'qiladi va bir necha
+// soniyaga keshlanadi — har chaqiruvda so'rov ketmasin.
 package support
 
 import (

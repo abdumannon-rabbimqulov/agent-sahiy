@@ -1,3 +1,8 @@
+// Dastur kirish nuqtasi: .env o'qiladi, baza ochiladi, HTTP marshrutlar
+// ulanadi va fon sikllari ishga tushadi.
+//
+// Shu fayldagi handlerlar — tashqi API'lar uchun proksi: suhbatlar,
+// xabarlar, adminka buyurtmalari, yetkazma va muammoli buyurtmalar.
 package main
 
 import (
@@ -41,57 +46,105 @@ func loadEnv(path string) {
 	}
 }
 
+// writeRaw tashqi API'dan kelgan tayyor JSON'ni o'zgartirmasdan uzatadi.
+func writeRaw(w http.ResponseWriter, out []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(out)
+}
+
+// requireMethod ruxsat etilmagan metodda 405 qaytaradi.
+func requireMethod(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
+	for _, m := range allowed {
+		if r.Method == m {
+			return true
+		}
+	}
+	writeErr(w, http.StatusMethodNotAllowed, "faqat "+strings.Join(allowed, " yoki "))
+	return false
+}
+
+// withSupportToken support tizimiga so'rov yuboradi. Token eskirgan bo'lsa
+// (ErrUnauthorized) bir marta yangilab qayta uriniladi.
+func withSupportToken(fn func(baseURL, token string) ([]byte, error)) ([]byte, error) {
+	creds := support.CredentialsFromEnv()
+	token, err := support.Token(creds, support.TokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	out, err := fn(creds.BaseURL, token)
+	if errors.Is(err, support.ErrUnauthorized) {
+		if token, err = support.Refresh(creds, support.TokenFile); err == nil {
+			out, err = fn(creds.BaseURL, token)
+		}
+	}
+	return out, err
+}
+
+// withServiceToken yetkazma (service) API'siga so'rov yuboradi — token
+// eskirsa bir marta yangilab qayta uriniladi.
+//
+// Adminka 401 i bu yerga tushmaydi: u support.ErrAdminkaUnauthorized bo'lib
+// keladi (.env qo'lda yangilanadi), ya'ni behuda takrorlanmaydi.
+func withServiceToken(fn func(svc support.Service, token string) ([]byte, error)) ([]byte, error) {
+	svc := support.ServiceFromEnv()
+	token, err := support.ServiceToken(svc, support.ServiceTokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("service login: %w", err)
+	}
+	out, err := fn(svc, token)
+	if errors.Is(err, support.ErrUnauthorized) {
+		if token, err = support.ServiceRefresh(svc, support.ServiceTokenFile); err == nil {
+			out, err = fn(svc, token)
+		}
+	}
+	return out, err
+}
+
+// decodeBody bo'sh bo'lmagan body'ni JSON deb o'qiydi.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.ContentLength == 0 {
+		return true
+	}
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("body JSON emas: %v", err))
+		return false
+	}
+	return true
+}
+
 // chatsHandler: bizga POST kelsa, orqada support serveriga POST yuborib
 // suhbatlarni qaytaradi. Body: {"client_id":8198749,"page":1,"limit":10}
 // client_id berilsa faqat o'sha mijozning suhbatlari keladi.
 func chatsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"faqat POST"}`, http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
 	var f support.ChatFilter
-	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"body JSON emas: %v"}`, err), http.StatusBadRequest)
-			return
-		}
-	}
-
-	creds := support.CredentialsFromEnv()
-	token, err := support.Token(creds, support.TokenFile)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"login: %v"}`, err), http.StatusBadGateway)
+	if !decodeBody(w, r, &f) {
 		return
 	}
 
-	out, err := support.ChatsJSON(creds.BaseURL, token, f)
-	if errors.Is(err, support.ErrUnauthorized) {
-		// Token eskirgan — yangilab bir marta qayta urinamiz.
-		if token, err = support.Refresh(creds, support.TokenFile); err == nil {
-			out, err = support.ChatsJSON(creds.BaseURL, token, f)
-		}
-	}
+	out, err := withSupportToken(func(baseURL, token string) ([]byte, error) {
+		return support.ChatsJSON(baseURL, token, f)
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out)
+	writeRaw(w, out)
 }
 
 // messagesHandler: GET /api/messages?conversation_id=54030&limit=10
 // Suhbatning oxirgi xabarlarini (agent ham, client ham) qaytaradi.
 func messagesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"faqat GET"}`, http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	convID, err := strconv.ParseInt(r.URL.Query().Get("conversation_id"), 10, 64)
 	if err != nil || convID <= 0 {
-		http.Error(w, `{"error":"conversation_id berilmagan"}`, http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "conversation_id berilmagan")
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -99,34 +152,20 @@ func messagesHandler(w http.ResponseWriter, r *http.Request) {
 		limit = support.DefaultMessageLimit
 	}
 
-	creds := support.CredentialsFromEnv()
-	token, err := support.Token(creds, support.TokenFile)
+	out, err := withSupportToken(func(baseURL, token string) ([]byte, error) {
+		return support.MessagesJSON(baseURL, token, convID, limit)
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"login: %v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-
-	out, err := support.MessagesJSON(creds.BaseURL, token, convID, limit)
-	if errors.Is(err, support.ErrUnauthorized) {
-		// Token eskirgan — yangilab bir marta qayta urinamiz.
-		if token, err = support.Refresh(creds, support.TokenFile); err == nil {
-			out, err = support.MessagesJSON(creds.BaseURL, token, convID, limit)
-		}
-	}
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out)
+	writeRaw(w, out)
 }
 
 // ordersHandler: GET /api/orders?user_id=7988331&order_sn=DG..&express_num=..&page=1&size=10
 // Adminka (daigou) buyurtmalarini qaytaradi — har buyurtmada 17 ta maydon.
 func ordersHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"faqat GET"}`, http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -143,25 +182,22 @@ func ordersHandler(w http.ResponseWriter, r *http.Request) {
 	f.Size, _ = strconv.Atoi(q.Get("size"))
 
 	if f.UserID == 0 && f.OrderSN == "" && f.ExpressNum == "" && f.Keyword == "" {
-		http.Error(w, `{"error":"user_id, order_sn yoki express_num berilmagan"}`, http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "user_id, order_sn yoki express_num berilmagan")
 		return
 	}
 
 	out, err := support.OrdersJSON(support.AdminkaFromEnv(), f)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out)
+	writeRaw(w, out)
 }
 
 // dashboardHandler: GET /api/dashboard?user_id=8231476  yoki  ?track=YT75...
 // Yetkazma buyurtmalarini qaytaradi — har buyurtmada 8 ta maydon.
 func dashboardHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"faqat GET"}`, http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -172,34 +208,21 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 		track = q.Get("track_number")
 	}
 	if userID == 0 && track == "" {
-		http.Error(w, `{"error":"user_id yoki track berilmagan"}`, http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "user_id yoki track berilmagan")
 		return
 	}
 	f := support.DeliveryFilter{TrackNumber: track, UserID: userID}
 	f.Page, _ = strconv.Atoi(q.Get("page"))
 	f.Size, _ = strconv.Atoi(q.Get("size"))
 
-	svc := support.ServiceFromEnv()
-	token, err := support.ServiceToken(svc, support.ServiceTokenFile)
+	out, err := withServiceToken(func(svc support.Service, token string) ([]byte, error) {
+		return support.DeliveryJSON(svc, token, f)
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"service login: %v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-
-	out, err := support.DeliveryJSON(svc, token, f)
-	if errors.Is(err, support.ErrUnauthorized) {
-		// Token eskirgan — yangilab bir marta qayta urinamiz.
-		if token, err = support.ServiceRefresh(svc, support.ServiceTokenFile); err == nil {
-			out, err = support.DeliveryJSON(svc, token, f)
-		}
-	}
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out)
+	writeRaw(w, out)
 }
 
 // problemHandler: GET yoki POST /api/problem
@@ -208,64 +231,37 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 // GET  /api/problem?user_id=7903808  |  ?order_sn=DG..  |  ?express_num=..
 // POST /api/problem  {"user_id":7903808,"size":50}
 func problemHandler(w http.ResponseWriter, r *http.Request) {
-	var f support.ProblemFilter
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
 
-	switch r.Method {
-	case http.MethodGet:
+	var f support.ProblemFilter
+	if r.Method == http.MethodGet {
 		q := r.URL.Query()
 		f.UserID, _ = strconv.ParseInt(q.Get("user_id"), 10, 64)
 		f.OrderSN = q.Get("order_sn")
-		f.ExpressNum = q.Get("express_num")
 		// dashboard endpointidagi kabi track/track_number ham qabul qilinadi.
-		if f.ExpressNum == "" {
-			f.ExpressNum = q.Get("track")
-		}
-		if f.ExpressNum == "" {
-			f.ExpressNum = q.Get("track_number")
-		}
+		f.ExpressNum = firstNonEmpty(q.Get("express_num"), q.Get("track"), q.Get("track_number"))
 		f.Size, _ = strconv.Atoi(q.Get("size"))
 		f.MaxPages, _ = strconv.Atoi(q.Get("max_pages"))
-	case http.MethodPost:
-		if r.ContentLength != 0 {
-			if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"body JSON emas: %v"}`, err), http.StatusBadRequest)
-				return
-			}
-		}
-	default:
-		http.Error(w, `{"error":"faqat GET yoki POST"}`, http.StatusMethodNotAllowed)
+	} else if !decodeBody(w, r, &f) {
 		return
 	}
 
 	if f.UserID == 0 && f.OrderSN == "" && f.ExpressNum == "" {
-		http.Error(w, `{"error":"user_id, order_sn yoki express_num berilmagan"}`, http.StatusBadRequest)
-		return
-	}
-
-	svc := support.ServiceFromEnv()
-	token, err := support.ServiceToken(svc, support.ServiceTokenFile)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"service login: %v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadRequest, "user_id, order_sn yoki express_num berilmagan")
 		return
 	}
 
 	adm := support.AdminkaFromEnv()
-	out, err := support.ProblemJSON(adm, svc, token, f)
-	if errors.Is(err, support.ErrUnauthorized) {
-		// Faqat yetkazma tokeni eskirganda shu yerga tushamiz — yangilab bir
-		// marta qayta urinamiz. Adminka 401 i support.ErrAdminkaUnauthorized
-		// bo'lib keladi (.env qo'lda yangilanadi), ya'ni behuda takrorlanmaydi.
-		if token, err = support.ServiceRefresh(svc, support.ServiceTokenFile); err == nil {
-			out, err = support.ProblemJSON(adm, svc, token, f)
-		}
-	}
+	out, err := withServiceToken(func(svc support.Service, token string) ([]byte, error) {
+		return support.ProblemJSON(adm, svc, token, f)
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out)
+	writeRaw(w, out)
 }
 
 // orderHandler: GET yoki POST /api/order
@@ -274,19 +270,17 @@ func problemHandler(w http.ResponseWriter, r *http.Request) {
 // GET  /api/order?q=DG60597226  |  ?order_sn=DG..  |  ?express_num=..
 // POST /api/order  {"q":"DG60597226"}
 func orderHandler(w http.ResponseWriter, r *http.Request) {
-	var query string
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
 
-	switch r.Method {
-	case http.MethodGet:
+	var query string
+	// dashboard endpointidagi kabi track/track_number ham qabul qilinadi.
+	if r.Method == http.MethodGet {
 		q := r.URL.Query()
-		// dashboard endpointidagi kabi track/track_number ham qabul qilinadi.
-		for _, k := range []string{"q", "order_sn", "express_num", "track", "track_number"} {
-			if v := q.Get(k); v != "" {
-				query = v
-				break
-			}
-		}
-	case http.MethodPost:
+		query = firstNonEmpty(q.Get("q"), q.Get("order_sn"), q.Get("express_num"),
+			q.Get("track"), q.Get("track_number"))
+	} else {
 		var body struct {
 			Query       string `json:"q"`
 			OrderSN     string `json:"order_sn"`
@@ -294,51 +288,38 @@ func orderHandler(w http.ResponseWriter, r *http.Request) {
 			Track       string `json:"track"`
 			TrackNumber string `json:"track_number"`
 		}
-		if r.ContentLength != 0 {
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":"body JSON emas: %v"}`, err), http.StatusBadRequest)
-				return
-			}
+		if !decodeBody(w, r, &body) {
+			return
 		}
-		for _, v := range []string{body.Query, body.OrderSN, body.ExpressNum, body.Track, body.TrackNumber} {
-			if v != "" {
-				query = v
-				break
-			}
-		}
-	default:
-		http.Error(w, `{"error":"faqat GET yoki POST"}`, http.StatusMethodNotAllowed)
-		return
+		query = firstNonEmpty(body.Query, body.OrderSN, body.ExpressNum,
+			body.Track, body.TrackNumber)
 	}
 
 	if query == "" {
-		http.Error(w, `{"error":"order_sn yoki express_num berilmagan"}`, http.StatusBadRequest)
-		return
-	}
-
-	svc := support.ServiceFromEnv()
-	token, err := support.ServiceToken(svc, support.ServiceTokenFile)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"service login: %v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadRequest, "order_sn yoki express_num berilmagan")
 		return
 	}
 
 	adm := support.AdminkaFromEnv()
-	out, err := support.OrderCardJSON(adm, svc, token, query)
-	if errors.Is(err, support.ErrUnauthorized) {
-		// Faqat yetkazma tokeni eskirganda shu yerga tushamiz (adminka 401 i
-		// support.ErrAdminkaUnauthorized bo'lib keladi).
-		if token, err = support.ServiceRefresh(svc, support.ServiceTokenFile); err == nil {
-			out, err = support.OrderCardJSON(adm, svc, token, query)
-		}
-	}
+	out, err := withServiceToken(func(svc support.Service, token string) ([]byte, error) {
+		return support.OrderCardJSON(adm, svc, token, query)
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadGateway)
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	writeRaw(w, out)
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(out)
+// firstNonEmpty - bir necha nomdan kelgan qiymatlardan birinchi bo'sh
+// bo'lmaganini qaytaradi.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func main() {

@@ -1,3 +1,5 @@
+// Salomlashish va "tushunmadim" matnlari (o'zbekcha lotin, kirill va
+// rus tilida) hamda qaror: bugun bu suhbatda salom kerakmi.
 package support
 
 import "time"

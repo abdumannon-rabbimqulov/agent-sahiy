@@ -1,3 +1,5 @@
+// Promtlar: baza modeli va CRUD amallari. Promt matnini admin panelning
+// /prompts bo'limida yozadi, kod uni faqat o'qiydi.
 package support
 
 import (

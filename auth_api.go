@@ -1,3 +1,7 @@
+// Panelga kirish (JWT) va promtlar CRUD'i.
+//
+// HTTP javob yozishning umumiy yordamchilari ham shu yerda:
+// writeJSON, writeErr va yo'ldagi {id} ni o'qiydigan pathID.
 package main
 
 import (
@@ -7,8 +11,6 @@ import (
 	"strconv"
 
 	"sahiy/support"
-
-	"gorm.io/gorm"
 )
 
 // writeJSON javobni JSON qilib yozadi.
@@ -106,18 +108,12 @@ func promtCreateHandler(w http.ResponseWriter, r *http.Request) {
 
 // promtGetHandler: GET /api/promts/{id}
 func promtGetHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	id, ok := requireID(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
 	p, err := support.GetPromt(support.DB, id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "promt topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !handleFindErr(w, err, "promt topilmadi") {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
@@ -125,9 +121,8 @@ func promtGetHandler(w http.ResponseWriter, r *http.Request) {
 
 // promtUpdateHandler: PUT /api/promts/{id}  {"title":"...","promt":"..."}
 func promtUpdateHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	id, ok := requireID(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
 	var body struct {
@@ -143,12 +138,7 @@ func promtUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := support.UpdatePromt(support.DB, id, body.Title, body.Promt)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "promt topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !handleFindErr(w, err, "promt topilmadi") {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
@@ -156,18 +146,12 @@ func promtUpdateHandler(w http.ResponseWriter, r *http.Request) {
 
 // promtDeleteHandler: DELETE /api/promts/{id}
 func promtDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(r)
+	id, ok := requireID(w, r)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "id noto'g'ri")
 		return
 	}
 	err := support.DeletePromt(support.DB, id)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		writeErr(w, http.StatusNotFound, "promt topilmadi")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !handleFindErr(w, err, "promt topilmadi") {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "o'chirildi"})

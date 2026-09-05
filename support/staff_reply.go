@@ -55,12 +55,7 @@ func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who s
 	if err != nil {
 		log.Printf("xodim javobi: suhbat %d tarixini olib bo'lmadi: %v", is.ConversationID, err)
 	}
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].FromClient() {
-			in.ClientMessage = msgs[i].Message
-			break
-		}
-	}
+	in.ClientMessage = lastClientMessage(msgs)
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 
 	// LLM bilan mijoz tiliga moslab yozamiz.
@@ -68,27 +63,12 @@ func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who s
 		in.Error = fmt.Sprintf("xodim javobini qayta yozib bo'lmadi: %v", err)
 		log.Printf("xodim javobi: %v — xodim matni qoralama bo'lib qoldi", err)
 	} else {
-		in.Model = usage.Model
-		in.PromptTokens = usage.PromptTokens
-		in.CachedTokens = usage.CachedTokens
-		in.CompletionTokens = usage.CompletionTokens
-		in.Calls = usage.Calls
-		in.CostUSD = usage.Cost()
+		in.applyUsage(usage)
 		in.StepsCount = len(in.Steps)
 	}
 
 	// Avto-javob yoqiq bo'lsa darhol mijozga.
-	if AutoReplyOn() {
-		if err := DeliverChat(in); err != nil {
-			in.Status = StatusFailed
-			in.Error = err.Error()
-		} else {
-			in.Status = StatusSent
-			in.HandledBy = who
-			now := time.Now()
-			in.SentAt = &now
-		}
-	}
+	sendIfAuto(in, who)
 
 	if err := SaveInteraction(DB, in); err != nil {
 		return in, fmt.Errorf("bazaga yozish: %w", err)

@@ -1,3 +1,9 @@
+// Adminka (daigou) buyurtmalari: Xitoy tomonidagi holat, yo'lga chiqqan
+// sana va trek raqami. "Buyurtmam qachon keladi?" savoliga shu manba
+// ishlatiladi.
+//
+// Javob shakli barqaror emas — xom map sifatida o'qib, maydonlar yo'l
+// bo'yicha olinadi.
 package support
 
 import (
@@ -8,7 +14,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // AdminkaPath — Xitoy tomonidagi (daigou) buyurtmalar ro'yxati.
@@ -108,27 +113,12 @@ func FetchOrders(a Adminka, f OrderFilter) ([]AdminkaOrder, error) {
 	q.Set("end_date", "")
 
 	url := strings.TrimRight(base, "/") + AdminkaPath + "?" + q.Encode()
-	newReq := func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("so'rov yaratish: %w", err)
-		}
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("Authorization", "Bearer "+a.Token)
-		return req, nil
-	}
-
-	// Adminka Cloudflare orqasida: 522/5xx vaqtinchalik bo'lishi mumkin.
-	client := &http.Client{Timeout: 30 * time.Second}
-	status, raw, err := doWithRetry(client, newReq, Retries())
+	// Adminka Cloudflare orqasida: 522/5xx vaqtinchalik bo'lishi mumkin —
+	// apiCall shunday xatolarda qayta uriniladi.
+	raw, err := apiCall{Method: http.MethodGet, URL: url, Token: a.Token,
+		What: "adminka buyurtmalari"}.do()
 	if err != nil {
-		return nil, fmt.Errorf("so'rov yuborish: %w", err)
-	}
-	if status == http.StatusUnauthorized {
-		return nil, ErrUnauthorized
-	}
-	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("adminka buyurtmalari (status %d): %s", status, snippet(raw))
+		return nil, err
 	}
 
 	// Javob shakli barqaror emas — xom map sifatida o'qib, maydonlar

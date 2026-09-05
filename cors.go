@@ -1,3 +1,5 @@
+// Brauzerdagi frontend uchun CORS: ruxsat etilgan manzillar
+// (.env: CORS_ORIGIN) va preflight (OPTIONS) javobi.
 package main
 
 import (

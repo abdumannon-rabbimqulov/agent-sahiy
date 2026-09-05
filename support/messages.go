@@ -1,3 +1,5 @@
+// Suhbatning xabarlari: oxirgilarini olish va kim yozganini aniqlash
+// (mijozmi yoki biz).
 package support
 
 import (
@@ -6,7 +8,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 )
 
 // MessagesPath — suhbat ichidagi xabarlar. Bu endpoint GET qabul qiladi.
@@ -43,26 +44,10 @@ func FetchMessages(baseURL, token string, conversationID int64, limit int) ([]Me
 	}
 	url := fmt.Sprintf("%s%s%d?page=1&limit=%d", strings.TrimRight(base, "/"), MessagesPath, conversationID, limit)
 
-	newReq := func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("so'rov yaratish: %w", err)
-		}
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		return req, nil
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	status, raw, err := doWithRetry(client, newReq, Retries())
+	raw, err := apiCall{Method: http.MethodGet, URL: url, Token: token,
+		What: "xabarlar"}.do()
 	if err != nil {
-		return nil, fmt.Errorf("so'rov yuborish: %w", err)
-	}
-	if status == http.StatusUnauthorized {
-		return nil, ErrUnauthorized
-	}
-	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("xabarlar (status %d): %s", status, snippet(raw))
+		return nil, err
 	}
 
 	var out struct {

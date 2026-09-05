@@ -1,3 +1,5 @@
+// Tizim foydalanuvchisi: rollar, parolni bcrypt bilan saqlash/tekshirish
+// va bazadagi amallar.
 package support
 
 import (

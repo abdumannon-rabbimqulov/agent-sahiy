@@ -1,3 +1,5 @@
+// Bitta buyurtma kartasi: DG yoki trek raqami bo'yicha adminka va
+// yetkazma ma'lumoti birga qaytariladi.
 package support
 
 import (

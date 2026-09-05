@@ -1,3 +1,5 @@
+// Postgres ulanishi: DSN yig'ish, jadvallarni yaratish (migratsiya) va
+// boshlang'ich ma'lumot — admin foydalanuvchi hamda sozlamalar.
 package support
 
 import (

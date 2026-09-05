@@ -1,3 +1,7 @@
+// Support tizimiga kirish: login, tokenni keshdan olish va yangilash.
+//
+// withToken — support API'siga so'rov yuborishning yagona yo'li: token
+// eskirsa bir marta o'zi yangilab qayta uriniladi.
 package support
 
 import (
@@ -168,4 +172,32 @@ func tokenTTL(token string) time.Duration {
 		return FallbackTTL
 	}
 	return d
+}
+
+// withToken - support tizimiga so'rov yuborishning yagona yo'li: token
+// keshidan olinadi, ErrUnauthorized qaytsa bir marta yangilab qayta
+// uriniladi. Shu bilan har chaqiruvda takrorlanadigan login/refresh
+// bloki bitta joyda turadi.
+func withToken[T any](fn func(baseURL, token string) (T, error)) (T, error) {
+	var zero T
+	creds := CredentialsFromEnv()
+	token, err := Token(creds, TokenFile)
+	if err != nil {
+		return zero, fmt.Errorf("support login: %w", err)
+	}
+	out, err := fn(creds.BaseURL, token)
+	if err == ErrUnauthorized {
+		if token, err = Refresh(creds, TokenFile); err == nil {
+			out, err = fn(creds.BaseURL, token)
+		}
+	}
+	return out, err
+}
+
+// withTokenErr - withToken'ning natija qaytarmaydigan ko'rinishi.
+func withTokenErr(fn func(baseURL, token string) error) error {
+	_, err := withToken(func(baseURL, token string) (struct{}, error) {
+		return struct{}{}, fn(baseURL, token)
+	})
+	return err
 }

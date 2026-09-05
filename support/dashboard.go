@@ -1,3 +1,6 @@
+// Ikkinchi sayt — yetkazma (service) API'si: login va mijozning
+// yetkazmalari. Buyurtma yo'ldami, filialga keldimi, olib ketilganmi —
+// shu manbadan ma'lum bo'ladi.
 package support
 
 import (
@@ -220,26 +223,10 @@ func fetchDeliveryPage(s Service, token string, f DeliveryFilter, delivered stri
 	}
 
 	deliveryURL := strings.TrimRight(base, "/") + DeliveryPath + "?" + q.Encode()
-	newReq := func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodGet, deliveryURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("so'rov yaratish: %w", err)
-		}
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		return req, nil
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	status, raw, err := doWithRetry(client, newReq, Retries())
+	raw, err := apiCall{Method: http.MethodGet, URL: deliveryURL, Token: token,
+		What: "yetkazma buyurtmalari", AuthForbidden: true}.do()
 	if err != nil {
-		return nil, fmt.Errorf("so'rov yuborish: %w", err)
-	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return nil, ErrUnauthorized
-	}
-	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("yetkazma buyurtmalari (status %d): %s", status, snippet(raw))
+		return nil, err
 	}
 
 	// Buyurtma topilmasa `data` obyekt emas, bo'sh massiv `[]` bo'lib keladi.

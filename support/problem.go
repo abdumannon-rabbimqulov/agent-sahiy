@@ -1,3 +1,6 @@
+// Kelmagan buyurtmalarni topish: adminkadagi TO'LANGAN buyurtmalar
+// yetkazmadagi KELGAN posilkalar bilan trek raqami orqali solishtiriladi
+// — mos kelmagani muammoli hisoblanadi.
 package support
 
 import (

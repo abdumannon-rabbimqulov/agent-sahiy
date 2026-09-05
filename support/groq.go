@@ -1,3 +1,8 @@
+// Groq (LLM) mijozi: /chat/completions ga so'rov, model sozlamalari va
+// javobni o'qish.
+//
+// .env qiymatlarini o'qiydigan kichik yordamchilar (envStr, envInt) va
+// xato matnini qisqartiruvchi snippet ham shu yerda.
 package support
 
 import (
@@ -139,7 +144,16 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 		reqBody.Reasoning = envStr("GROQ_REASONING_EFFORT", "low")
 	}
 
-	raw, err := json.Marshal(reqBody)
+	return g.chatCompletion(ctx, reqBody, g.Model, "groq")
+}
+
+// chatCompletion - /chat/completions ga so'rov yuborib javob matnini va
+// sarflangan tokenlarni qaytaradi.
+//
+// Matnli (Generate) va rasmli (generateVision) so'rovlar bir xil yo'ldan
+// ketadi — farqi faqat body, model nomi va xato matnidagi belgi (label).
+func (g Groq) chatCompletion(ctx context.Context, body any, model, label string) (string, Usage, error) {
+	raw, err := json.Marshal(body)
 	if err != nil {
 		return "", Usage{}, fmt.Errorf("so'rov yasash: %w", err)
 	}
@@ -165,15 +179,16 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 	// Groq bepul tarifda tez-tez 429 (tezlik chegarasi) qaytaradi —
 	// bir necha soniya kutib qayta uriniladi.
 	start := time.Now()
-	status, body, err := doWithRetry(&http.Client{Timeout: timeout}, newReq, Retries())
+	status, respBody, err := doWithRetry(&http.Client{Timeout: timeout}, newReq, Retries())
 	if err != nil {
-		return "", Usage{}, fmt.Errorf("groq so'rovi: %w", err)
+		return "", Usage{}, fmt.Errorf("%s so'rovi: %w", label, err)
 	}
 	ms := time.Since(start).Milliseconds()
 
 	var out groqResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", Usage{DurationMS: ms}, fmt.Errorf("javob JSON emas (status %d): %s", status, snippet(body))
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return "", Usage{DurationMS: ms},
+			fmt.Errorf("%s javobi JSON emas (status %d): %s", label, status, snippet(respBody))
 	}
 
 	u := Usage{
@@ -185,17 +200,17 @@ func (g Groq) Generate(ctx context.Context, system, user string) (string, Usage,
 		DurationMS:       ms,
 	}
 	if u.Model == "" {
-		u.Model = g.Model
+		u.Model = model
 	}
 
 	if out.Error != nil {
-		return "", u, fmt.Errorf("groq: %s", out.Error.Message)
+		return "", u, fmt.Errorf("%s: %s", label, out.Error.Message)
 	}
 	if status < 200 || status >= 300 {
-		return "", u, fmt.Errorf("groq status %d: %s", status, snippet(body))
+		return "", u, fmt.Errorf("%s status %d: %s", label, status, snippet(respBody))
 	}
 	if len(out.Choices) == 0 {
-		return "", u, errors.New("groq javobi bo'sh")
+		return "", u, fmt.Errorf("%s javobi bo'sh", label)
 	}
 	return out.Choices[0].Message.Content, u, nil
 }

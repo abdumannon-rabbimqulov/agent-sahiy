@@ -1,3 +1,5 @@
+// Panel uchun hisob-kitob: umumiy ko'rsatkichlar, kunlik dinamika,
+// mijozlar kesimi va muammoli buyurtmalar statistikasi.
 package support
 
 import (

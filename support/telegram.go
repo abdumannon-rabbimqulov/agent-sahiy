@@ -1,3 +1,5 @@
+// Xodimlar guruhiga (Telegram bot) xabar yuborish: help kaliti va
+// muammoli buyurtmalar haqidagi xabarlar shu yerdan ketadi.
 package support
 
 import (
@@ -16,11 +18,6 @@ const DefaultTelegramAPI = "https://api.telegram.org"
 
 // TelegramAPI - .env dagi TELEGRAM_API_URL (sinov uchun almashtiriladi).
 func TelegramAPI() string { return envStr("TELEGRAM_API_URL", DefaultTelegramAPI) }
-
-// TelegramReady - bot tokeni va guruh id'si berilganmi.
-func TelegramReady() bool {
-	return os.Getenv("TELEGRAM_BOT_TOKEN") != "" && os.Getenv("TELEGRAM_GROUP_ID") != ""
-}
 
 // SendTelegram xodimlar guruhiga xabar yuboradi (help kaliti shu yerga ketadi).
 func SendTelegram(text string) error {
