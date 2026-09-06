@@ -16,10 +16,11 @@ import (
 
 // Zanjir sozlamalari (.env).
 const (
-	DefaultStartPromtID  = 1
-	DefaultMaxSteps      = 5
-	DefaultHistoryLimit  = 10
-	DefaultOrdersPerCall = 20
+	DefaultStartPromtID   = 1
+	DefaultMaxSteps       = 5
+	DefaultHistoryLimit   = 10
+	DefaultOrdersPerCall  = 20
+	DefaultClientQuietSec = 20
 )
 
 // StartPromtID - zanjir qaysi promtdan boshlanadi.
@@ -27,6 +28,15 @@ func StartPromtID() uint { return uint(envInt("START_PROMPT_ID", DefaultStartPro
 
 // MaxSteps - eng ko'p necha bosqich.
 func MaxSteps() int { return envInt("AGENT_MAX_STEPS", DefaultMaxSteps) }
+
+// ClientQuietSec - mijozning oxirgi xabaridan beri kamida shuncha soniya
+// o'tmaguncha zanjir ishga tushmaydi (.env: CLIENT_QUIET_SEC).
+//
+// Sabab: mijoz ko'pincha bir fikrni bir necha qisqa xabarga bo'lib yozadi
+// (har gap — alohida xabar). Shu tekshiruvsiz har bir xabar alohida to'liq
+// zanjirni (bir necha Groq chaqiruvi) ishga tushirar edi — mijoz yozib
+// bo'lmasdanoq. 0 — o'chirilgan (tekshiruv qilinmaydi).
+func ClientQuietSec() int { return envInt("CLIENT_QUIET_SEC", DefaultClientQuietSec) }
 
 // HistoryLimit - modelga ko'rsatiladigan oxirgi xabarlar soni.
 // Modelga eng ko'pi 10 ta xabar ketadi: uzun tarix na foyda beradi, na
@@ -45,6 +55,12 @@ var ErrAgentDisabled = errors.New("AI agent o'chirilgan (sozlamalar: agent_enabl
 // ErrAlreadyAnswered - suhbatdagi oxirgi so'z biz tomondan aytilgan,
 // ya'ni mijoz javobsiz qolmagan.
 var ErrAlreadyAnswered = errors.New("suhbatga javob berilgan — yangi mijoz xabari yo'q")
+
+// ErrClientStillTyping - mijozning oxirgi xabaridan beri hali
+// CLIENT_QUIET_SEC soniya o'tmagan — u ketma-ket yana yozayotgan bo'lishi
+// mumkin. Zanjir hozircha ishga tushmaydi (keyingi poll siklida qayta
+// tekshiriladi), token behuda ketmasin.
+var ErrClientStillTyping = errors.New("mijoz hali yozib tugatmagan bo'lishi mumkin — kutilmoqda")
 
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
@@ -91,6 +107,20 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// (hatto muammo sifatida qayta ko'tarilishi) demakdir.
 	if !force && !msgs[len(msgs)-1].FromClient() {
 		return nil, ErrAlreadyAnswered
+	}
+	// Mijoz ketma-ket bir necha qisqa xabar yozishi odatiy holat (har gap
+	// alohida xabar). Oxirgi xabardan beri hali "jim turish oralig'i"
+	// o'tmagan bo'lsa — u hali yozib tugatmagan bo'lishi mumkin, zanjirni
+	// shu daqiqada ishga tushirib, keyingi xabari uchun yana bir marta
+	// (yana AGENT_MAX_STEPS gacha Groq chaqiruvi bilan) qaytadan ishlashdan
+	// qochamiz. `force` bu tekshiruvni chetlab o'tadi — qo'lda ishga
+	// tushirish har doim darhol ishlashi kerak.
+	if !force {
+		if t, ok := parseAnyTime(msgs[len(msgs)-1].CreatedAt); ok {
+			if quiet := ClientQuietSec(); quiet > 0 && time.Since(t) < time.Duration(quiet)*time.Second {
+				return nil, ErrClientStillTyping
+			}
+		}
 	}
 	// Mijoz yana yozgan bo'lsa, shu suhbat uchun hali tasdiqlanmagan
 	// (pending) eski javoblar ENDI ESKIRGAN — ular yangi xabarni hisobga

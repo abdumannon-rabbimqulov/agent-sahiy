@@ -119,8 +119,15 @@ func PollOnce(ctx context.Context) error {
 		}
 
 		if _, err := RunChain(ctx, c.ID, c.ClientID); err != nil {
-			// Oxirgi so'z biz tomondan bo'lsa — normal holat, log shart emas.
-			if !errors.Is(err, ErrAlreadyAnswered) {
+			switch {
+			case errors.Is(err, ErrClientStillTyping):
+				// Mijoz hali yozayotgan bo'lishi mumkin — holatni
+				// YANGILAMAYMIZ, shu suhbat keyingi siklda xabar
+				// o'zgarmagan holda yana tekshiriladi.
+				continue
+			case errors.Is(err, ErrAlreadyAnswered):
+				// Oxirgi so'z biz tomondan bo'lsa — normal holat, log shart emas.
+			default:
 				log.Printf("poller: suhbat %d zanjiri: %v", c.ID, err)
 			}
 		}
@@ -249,6 +256,7 @@ type ScanResult struct {
 	Chats    int `json:"chats"`    // ro'yxatdan olingan suhbatlar
 	Ran      int `json:"ran"`      // zanjir yurgan (modelga borgan)
 	Answered int `json:"answered"` // oxirgi so'z bizniki — o'tkazib yuborilgan
+	Waiting  int `json:"waiting"`  // mijoz hali yozayotgan bo'lishi mumkin — keyinroq qayta ko'riladi
 	Failed   int `json:"failed"`   // xato bilan tugagan
 }
 
@@ -311,6 +319,8 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 
 		in, err := RunChain(ctx, c.ID, c.ClientID)
 		switch {
+		case errors.Is(err, ErrClientStillTyping):
+			res.Waiting++
 		case errors.Is(err, ErrAlreadyAnswered):
 			res.Answered++
 		case err != nil:
@@ -336,8 +346,8 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 		}
 	}
 
-	log.Printf("skaner: tugadi — %d zanjir, %d javob berilgan, %d xato (jami %d)",
-		res.Ran, res.Answered, res.Failed, res.Chats)
+	log.Printf("skaner: tugadi — %d zanjir, %d javob berilgan, %d kutilmoqda, %d xato (jami %d)",
+		res.Ran, res.Answered, res.Waiting, res.Failed, res.Chats)
 	return res, nil
 }
 
