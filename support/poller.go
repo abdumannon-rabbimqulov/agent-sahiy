@@ -70,8 +70,9 @@ func StartPoller(ctx context.Context) {
 //     — ya'ni biz o'qimagan mijoz xabari bor.
 //  3. Allaqachon ishlanganlari tashlanadi (oxirgi xabar vaqti bo'yicha) —
 //     bu har suhbat uchun alohida so'rovni tejaydi.
-//  4. ENG YANGISIDAN boshlab `batch_size` tasi ishlanadi. Qolganlari
-//     yo'qolmaydi — keyingi siklda navbat bilan olinadi.
+//  4. ENG ESKISIDAN (eng ko'p kutgan mijozdan) boshlab `batch_size` tasi
+//     ishlanadi. Qolganlari yo'qolmaydi — keyingi siklda navbat bilan
+//     olinadi.
 func PollOnce(ctx context.Context) error {
 	if !AgentEnabled() {
 		return ErrAgentDisabled
@@ -149,8 +150,14 @@ func PollOnce(ctx context.Context) error {
 	return nil
 }
 
-// pendingChats — javobsiz va hali ishlanmagan suhbatlar, eng yangisidan
-// eskisiga qarab saralangan.
+// pendingChats — javobsiz va hali ishlanmagan suhbatlar, ENG ESKISIDAN
+// yangisiga qarab saralangan (FIFO).
+//
+// Muhim: batch_size bilan cheklangani uchun tartib katta ahamiyatga ega.
+// Eng yangisi birinchi bo'lsa, doimiy oqib turgan yangi xabarlar eski,
+// uzoq kutgan mijozlarni navbatning oxiriga surib, ular hech qachon
+// ishlanmay qolib ketaveradi. Shu sababli eng uzoq kutgan (eng eski
+// oxirgi xabarli) suhbat birinchi navbatda ishlanadi.
 func pendingChats(chats []Chat) []Chat {
 	// Ishlangan suhbatlar holati (bitta so'rovda).
 	handled := map[int64]ConversationState{}
@@ -181,8 +188,9 @@ func pendingChats(chats []Chat) []Chat {
 		out = append(out, c)
 	}
 
-	// Eng yangi xabar birinchi bo'lsin: kutib qolgan mijoz tezroq javob olsin.
-	sort.Slice(out, func(i, j int) bool { return out[i].MsCreatedAt > out[j].MsCreatedAt })
+	// Eng eski xabar birinchi bo'lsin: eng ko'p kutgan mijoz navbatning
+	// boshida turadi, batch_size tugab qolsa ham u shu siklda ishlanadi.
+	sort.Slice(out, func(i, j int) bool { return out[i].MsCreatedAt < out[j].MsCreatedAt })
 	return out
 }
 
@@ -282,8 +290,10 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 		return res, err
 	}
 
-	// Eng yangi xabar birinchi: kutib qolgan mijoz tezroq javob olsin.
-	sort.Slice(chats, func(i, j int) bool { return chats[i].MsCreatedAt > chats[j].MsCreatedAt })
+	// Eng eski xabar birinchi: eng ko'p kutgan mijoz `max` cheklangan
+	// bo'lganda ham navbatning boshida turadi (pendingChats bilan bir xil
+	// mantiq — qarang: yuqoridagi izoh).
+	sort.Slice(chats, func(i, j int) bool { return chats[i].MsCreatedAt < chats[j].MsCreatedAt })
 	res.Chats = len(chats)
 	if max > 0 && max < len(chats) {
 		chats = chats[:max]

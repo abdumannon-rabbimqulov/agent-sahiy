@@ -92,6 +92,12 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	if !force && !msgs[len(msgs)-1].FromClient() {
 		return nil, ErrAlreadyAnswered
 	}
+	// Mijoz yana yozgan bo'lsa, shu suhbat uchun hali tasdiqlanmagan
+	// (pending) eski javoblar ENDI ESKIRGAN — ular yangi xabarni hisobga
+	// olmagan holda yozilgan edi. Admin ularni tasodifan tasdiqlab
+	// yubormasligi uchun bekor qilamiz; hozir tayyorlanayotgan yangi
+	// javob ularning o'rnini bosadi.
+	supersedePending(conversationID)
 	in.ClientMessage = lastClientMessage(msgs)
 	// Aynan shu murojaatda javob berilayotgan (javobsiz qolgan) mijoz
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
@@ -779,6 +785,32 @@ func saveOrLog(in *Interaction) {
 	}
 	if err := SaveInteraction(DB, in); err != nil {
 		log.Printf("agent: interaksiyani saqlab bo'lmadi: %v", err)
+	}
+}
+
+// supersedePending - shu suhbat uchun hali tasdiqlanmagan (pending)
+// eski javoblarni "rejected" deb belgilaydi. Mijoz yangi xabar yozgach
+// eski javob suhbat holatini aks ettirmay qoladi — admin panelda
+// tasdiqlash navbatida qolib, keyin tasodifan (eskirgan holda)
+// yuborilishining oldi olinadi. Yozuv o'chirilmaydi — tarixda
+// "rejected" bo'lib ko'rinib turadi, faqat navbatdan chiqadi.
+func supersedePending(conversationID int64) {
+	if DB == nil {
+		return
+	}
+	res := DB.Model(&Interaction{}).
+		Where("conversation_id = ? AND status = ?", conversationID, StatusPending).
+		Updates(map[string]any{
+			"status": StatusRejected,
+			"error":  "mijoz yangi xabar yozdi — eski javob eskirdi",
+		})
+	if res.Error != nil {
+		log.Printf("agent: suhbat %d — eski javoblarni bekor qilish: %v", conversationID, res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("agent: suhbat %d — %d ta eski (tasdiqlanmagan) javob bekor qilindi",
+			conversationID, res.RowsAffected)
 	}
 }
 
