@@ -33,11 +33,6 @@ type AgentJSON struct {
 	// Help - Telegram guruhga (xodimlarga) yuboriladigan matn.
 	Help string `json:"help"`
 
-	// NotUnderstood - model mijozning muammosini tushunmadi
-	// ("tushunmadim": true). Kod bunda savol berishdan oldin adminka va
-	// dashboarddan mijozning kelmagan buyurtmalarini o'zi tekshiradi.
-	NotUnderstood bool `json:"tushunmadim"`
-
 	// Promt - keyingi promt id'si. null, false yoki 0 => zanjir tugadi.
 	// Model son o'rniga satr ("2") yoki bool qaytarsa ham o'qiladi.
 	Promt PromtRef `json:"promt"`
@@ -89,25 +84,6 @@ func (a AgentJSON) NextPromt() (uint, bool) {
 
 // NeedsData - kodning tashqi API'ga borishi kerakmi.
 func (a AgentJSON) NeedsData() bool { return a.Dashboard || a.Adminka }
-
-// IsUnclear - model mijoz nima so'rayotganini tushunmadimi.
-//
-// Ikki yo'l bilan aniqlanadi: `"tushunmadim": true` kaliti (promt shuni
-// yozishga o'rgatadi) yoki javobning o'zi "sizga qanday yordam bera
-// olaman" savoli bo'lsa (mijozning har qaysi tilidagi ko'rinishida) —
-// promt eski bo'lsa ham fallback ishlasin.
-func (a AgentJSON) IsUnclear() bool {
-	if a.NotUnderstood {
-		return true
-	}
-	chat := strings.ToLower(a.Chat)
-	for _, v := range AskHelpVariants() {
-		if strings.Contains(chat, strings.ToLower(v)) {
-			return true
-		}
-	}
-	return false
-}
 
 // Numbers - modeldan kelgan buyurtma/trek raqamlari (bo'shlari tashlanadi).
 func (a AgentJSON) Numbers() []string {

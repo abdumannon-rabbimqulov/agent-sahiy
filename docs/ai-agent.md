@@ -107,7 +107,6 @@ Kod quyidagi kalitlarni tushunadi, qolganlari e'tiborsiz qoladi:
 | `express_num` | massiv | Yetkazma qidiruvi uchun trek raqamlari. Bo'sh bo'lsa mijozning barcha yetkazmalari |
 | `chat` | satr | **Mijozga** yuboriladigan javob |
 | `help` | satr | **Telegram guruhga** yuboriladigan matn (xodim aralashuvi kerak) |
-| `tushunmadim` | bool | `true` → model mijoz muammosini tushunmadi. Kod savol berishdan oldin buyurtmalarni o'zi tekshiradi (pastga qarang) |
 | `promt` | son yoki `null` | Keyingi promt `id`. `null` — zanjir tugadi |
 
 Namuna:
@@ -150,53 +149,25 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 
 ### Salom kuniga bir marta
 
-Har bosqichdagi promt oxirida bitta qator salomlashish ko'rsatmasi ketadi
-(`support/greeting.go`). Kod suhbat tarixiga qaraydi: **bugun** biz tomondan
-(agent yoki xodim) hech narsa yozilmagan bo'lsa — modelga javobni salom
-bilan boshlash aytiladi, aks holda "salomlashma, mavzuga o't" deyiladi.
+Har bosqichdagi promt oxiriga **faqat salom kerak bo'lganda** bitta qator
+ko'rsatma qo'shiladi (`support/greeting.go`, `buildUserMessage`). Kod
+suhbat tarixiga qaraydi: **bugun** biz tomondan (agent yoki xodim) hech
+narsa yozilmagan bo'lsa — modelga javobni salom bilan boshlash aytiladi.
+Bugun allaqachon yozilgan bo'lsa, ko'rsatma umuman qo'shilmaydi — promt
+o'zi javob yozadi.
 
 Salom matni **bitta emas**: ko'rsatmada uchala variant birga beriladi
 ("Assalomu alaykum" / "Ассалому алайкум" / "Здравствуйте") va qaysi birini
 olishni model mijozning tiliga qarab o'zi tanlaydi. Kod tilni aniqlamaydi —
 ilgari faqat o'zbekcha lotin salom ketardi va ruscha yozgan mijozga ham
-javob o'zbekchaga burilib ketardi. "Sizga qanday yordam bera olaman?"
-savoli ham xuddi shunday uch tilda beriladi. Shu bilan yangi kun salom bilan boshlanadi, kun davomidagi
-keyingi javoblarda esa salom takrorlanmaydi.
+javob o'zbekchaga burilib ketardi. Shu bilan yangi kun salom bilan
+boshlanadi, kun davomidagi keyingi javoblarda esa salom takrorlanmaydi.
 
 Salom — javobning **boshi**, o'zi emas: ko'rsatmada model salomdan keyin
 mijoz muammosiga javob yozishi kerakligi ham aytiladi.
 
 Xabar sanasi o'qib bo'lmasa u hisobga olinmaydi — shubhali holatda salom
 beriladi (ortiqcha salom, tushib qolganidan yaxshiroq).
-
-### Model tushunmasa — avval kod tekshiradi
-
-Model mijoz nima so'rayotganini tushunmasa, darhol "buyurtma raqamingizni
-yuboring" demaydi. Tartib shunday (`agent.go`, `runChain`):
-
-1. Model javobiga `"tushunmadim": true` qo'yadi (eski promtlar uchun
-   zaxira: chat matnining o'zi "Sizga qanday yordam bera olaman?" bo'lsa
-   ham shu deb tushuniladi — `AgentJSON.IsUnclear`).
-2. **Kod o'zi** adminka va dashboardni ko'radi — mijozning barcha
-   buyurtmalari (suhbatdan topilgan raqamlar bilan birga).
-3. **Kelmagan buyurtma bor bo'lsa** (to'langan, lekin yakunlanmagan
-   adminka buyurtmasi yoki filialda olinmagan yetkazma —
-   `HasPendingOrders`) o'sha ma'lumot **modelga qaytadan** beriladi:
-   xuddi shu promt, endi buyurtmalar bilan. Mijoz katta ehtimol aynan
-   o'sha buyurtma haqida yozgan bo'ladi.
-4. **Kelmagan buyurtma yo'q bo'lsa** javob o'z holicha qoladi — ya'ni
-   mijozdan buyurtma raqami so'raladi.
-
-Fallback bir marta ishlaydi (`probed`) va oxirgi bosqichda umuman
-ishlamaydi — qayta so'rashga bosqich qolmasligi kerak. Logda ko'rinadi:
-
-```
-agent: suhbat 60307 — model tushunmadi, kelmagan buyurtma topildi: qayta so'raldi
-agent: suhbat 60307 — model tushunmadi, kelmagan buyurtma yo'q: buyurtma raqami so'raladi
-```
-
-Model shu bosqichda allaqachon `adminka`/`dashboard` so'ragan bo'lsa,
-ma'lumot ikkinchi marta olinmaydi — o'sha natija ishlatiladi.
 
 ### Tizimdagi ma'lumot — saralangan
 
@@ -258,8 +229,7 @@ Ilgari 3 kundan eski yozuvlar modelga **umuman ko'rsatilmasdi** (yashirilardi),
 3 kun ichidagilari esa "topshirilgan" deb ko'rsatilardi — ikkalasi ham
 noto'g'ri edi.
 
-Uchala ro'yxat ham "mijoz hali qo'liga olmagan" hisoblanadi: model
-"tushunmadim" deganda kod shu buyurtmalarni topib, unga qaytadan beradi.
+Uchala ro'yxat ham "mijoz hali qo'liga olmagan" hisoblanadi.
 
 `type` qiymatlari: **`client`** — mijoz yozgan, **`agent`** — biz tomondan
 (AI yoki xodim) yuborilgan. Bo'sh matnli xabarlar tashlanadi. Modelga

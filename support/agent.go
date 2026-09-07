@@ -152,8 +152,6 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		dataCtx  []string // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
-		// probed - "tushunmadim" fallback'i bir marta ishlagan.
-		probed bool
 	)
 
 	// Xayrlashish: mijozning oxirgi so'zi "rahmat" / "hop" bo'lsa,
@@ -256,46 +254,13 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
-		// `pending` — mijozning hali kelmagan buyurtmasi topildimi.
-		fetched, pending := false, false
 		if a.NeedsData() {
 			// Model qaytargan raqamlarga suhbatdan topilganlarini
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
 			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
-			data, p := fetchSystemData(a, clientID, conversationID)
+			data, _ := fetchSystemData(a, clientID, conversationID)
 			dataCtx = append(dataCtx, data)
-			fetched, pending = true, p
-		}
-
-		// Model mijoz muammosini tushunmadi. Darhol "buyurtma raqamini
-		// bering" deb so'ramaymiz: avval KOD adminka va dashboardni o'zi
-		// ko'radi. Kelmagan buyurtma bo'lsa — o'sha ma'lumot bilan model
-		// qaytadan chaqiriladi (mijoz katta ehtimol o'sha buyurtma
-		// haqida yozgan). Bo'lmasa — javob o'z holicha qoladi, ya'ni
-		// mijozdan buyurtma raqami so'raladi.
-		//
-		// Bir marta qilinadi: ikkinchi marta ham tushunmasa, so'rash eng
-		// to'g'ri yo'l. Oxirgi bosqichda ham qilinmaydi — qayta so'rashga
-		// bosqich qolmaydi.
-		if a.IsUnclear() && !probed && step < maxSteps {
-			probed = true
-			if !fetched {
-				// Raqamsiz so'rov — mijozning hamma buyurtmasi olinadi.
-				probe := AgentJSON{Adminka: true, Dashboard: true,
-					OrderSN: chatSN, ExpressNum: chatEx}
-				data, p := fetchSystemData(probe, clientID, conversationID)
-				pending = p
-				if pending {
-					dataCtx = append(dataCtx, data)
-				}
-			}
-			if pending {
-				dataCtx = append(dataCtx, unclearHint)
-				log.Printf("agent: suhbat %d — model tushunmadi, kelmagan buyurtma topildi: qayta so'raldi", conversationID)
-				continue // xuddi shu promt, endi ma'lumot bilan
-			}
-			log.Printf("agent: suhbat %d — model tushunmadi, kelmagan buyurtma yo'q: buyurtma raqami so'raladi", conversationID)
 		}
 
 		next, more := a.NextPromt()
@@ -466,14 +431,6 @@ func fetchHistory(conversationID int64) ([]Message, error) {
 	})
 }
 
-// unclearHint - "tushunmadim" fallback'ida ma'lumot bilan birga
-// ketadigan ko'rsatma: mijoz aynan shu buyurtmalar haqida yozgan
-// bo'lishi ehtimoli katta.
-const unclearHint = "Sen mijoz muammosini tushunmading, shuning uchun " +
-	"uning buyurtmalari tizimdan olindi. Yuqorida mijozning HALI KELMAGAN " +
-	"buyurtmalari bor — mijoz katta ehtimol o'shalar haqida yozgan. " +
-	"Shu ma'lumotga tayanib javob yoz; endi \"" + AskHelpText + "\" deb so'rama (boshqa tilda ham)."
-
 // imageNoNumberHint - mijoz rasm yubordi, lekin undan buyurtma yoki trek
 // raqami chiqmadi. Model buni bilmasa "rasmingizni ko'rdim" deb noto'g'ri
 // javob yozib yuborishi mumkin.
@@ -577,24 +534,14 @@ func buildUserMessage(transcript string, data []string, greet bool) string {
 	//
 	// Salom — javobning BOSHI, o'zi emas: model baribir mijoz muammosini
 	// hal qilishi kerak, tushunmasa esa so'rashi kerak.
-	b.WriteString("\n\n")
 	if greet {
+		b.WriteString("\n\n")
 		b.WriteString("Bugun bu suhbatda biz hali yozmadik — chat javobini salom bilan boshla. ")
 		b.WriteString("Salomni MIJOZNING tilida yoz: o'zbekcha lotin — \"" + GreetingText + "\", ")
 		b.WriteString("o'zbekcha kirill — \"" + GreetingUzCyr + "\", rus tilida — \"" + GreetingRU + "\". ")
 		b.WriteString("Faqat shu ikki so'z, boshqa salomlashish qo'shma. ")
-		b.WriteString("Salom — javobning boshi, o'zi emas: undan keyin mijoz muammosiga javob yoz. ")
-	} else {
-		b.WriteString("Bugun bu suhbatda allaqachon yozganmiz — javobda salomlashma, to'g'ridan-to'g'ri mavzuga o't. ")
+		b.WriteString("Salom — javobning boshi, o'zi emas: undan keyin mijoz muammosiga javob yoz.")
 	}
-	b.WriteString("Avval yuqoridagi xabarlarning HAMMASINI o'qib, mijozning muammosini o'zing aniqla: ")
-	b.WriteString("mijoz muammosini oxirgi xabarda emas, oldingi xabarlarida aytgan bo'lishi mumkin. ")
-	b.WriteString("Muammo tushunarli bo'lsa to'g'ridan-to'g'ri javob yoz. ")
-	b.WriteString("Shu xabarlarning hech biridan muammo tushunilmasa — o'zingdan to'qima, ")
-	b.WriteString(`javobingga "tushunmadim": true qo'sh va chat matnida shu savolni MIJOZNING tilida so'ra: `)
-	b.WriteString(`o'zbekcha lotin — "` + AskHelpText + `", o'zbekcha kirill — "` + AskHelpUzCyr + `", rus tilida — "` + AskHelpRU + `". `)
-	b.WriteString("Bunda kod mijozning buyurtmalarini tizimdan olib senga qaytadan beradi: ")
-	b.WriteString("kelmagan buyurtmasi bo'lsa, savol o'rniga o'sha buyurtma haqida javob yozasan.")
 	return b.String()
 }
 
