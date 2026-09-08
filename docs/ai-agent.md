@@ -147,27 +147,14 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 { "adminka": [ … ], "dashboard": [ … ] }
 ```
 
-### Salom kuniga bir marta
+### Kod hech qanday qo'shimcha ko'rsatma bermaydi
 
-Har bosqichdagi promt oxiriga **faqat salom kerak bo'lganda** bitta qator
-ko'rsatma qo'shiladi (`support/greeting.go`, `buildUserMessage`). Kod
-suhbat tarixiga qaraydi: **bugun** biz tomondan (agent yoki xodim) hech
-narsa yozilmagan bo'lsa — modelga javobni salom bilan boshlash aytiladi.
-Bugun allaqachon yozilgan bo'lsa, ko'rsatma umuman qo'shilmaydi — promt
-o'zi javob yozadi.
-
-Salom matni **bitta emas**: ko'rsatmada uchala variant birga beriladi
-("Assalomu alaykum" / "Ассалому алайкум" / "Здравствуйте") va qaysi birini
-olishni model mijozning tiliga qarab o'zi tanlaydi. Kod tilni aniqlamaydi —
-ilgari faqat o'zbekcha lotin salom ketardi va ruscha yozgan mijozga ham
-javob o'zbekchaga burilib ketardi. Shu bilan yangi kun salom bilan
-boshlanadi, kun davomidagi keyingi javoblarda esa salom takrorlanmaydi.
-
-Salom — javobning **boshi**, o'zi emas: ko'rsatmada model salomdan keyin
-mijoz muammosiga javob yozishi kerakligi ham aytiladi.
-
-Xabar sanasi o'qib bo'lmasa u hisobga olinmaydi — shubhali holatda salom
-beriladi (ortiqcha salom, tushib qolganidan yaxshiroq).
+`buildUserMessage` modelga faqat suhbat tarixi va "Tizimdagi ma'lumot"ni
+yuboradi — boshqa hech narsa. Salom, til va shu kabi barcha qoidalarni
+har bir promtning o'zi (DB, `promts` jadvali) belgilaydi. Ilgari kod
+salom uchun alohida ko'rsatma qo'shib yuborardi, lekin bu promtlarning
+o'z qoidalari bilan chalkashib ketishi mumkin edi — shuning uchun olib
+tashlandi.
 
 ### Tizimdagi ma'lumot — saralangan
 

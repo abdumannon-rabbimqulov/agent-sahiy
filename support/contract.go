@@ -33,6 +33,11 @@ type AgentJSON struct {
 	// Help - Telegram guruhga (xodimlarga) yuboriladigan matn.
 	Help string `json:"help"`
 
+	// Uzb/Rus - mijoz yozgan tilni birinchi promt aniqlaydi. Keyingi
+	// bosqichlarga shu qiymat dataCtx orqali uzatiladi (agent.go).
+	Uzb bool `json:"uzb"`
+	Rus bool `json:"rus"`
+
 	// Promt - keyingi promt id'si. null, false yoki 0 => zanjir tugadi.
 	// Model son o'rniga satr ("2") yoki bool qaytarsa ham o'qiladi.
 	Promt PromtRef `json:"promt"`
@@ -84,6 +89,9 @@ func (a AgentJSON) NextPromt() (uint, bool) {
 
 // NeedsData - kodning tashqi API'ga borishi kerakmi.
 func (a AgentJSON) NeedsData() bool { return a.Dashboard || a.Adminka }
+
+// HasLanguage - birinchi promt mijoz tilini aniqladimi ("uzb"/"rus").
+func (a AgentJSON) HasLanguage() bool { return a.Uzb || a.Rus }
 
 // Numbers - modeldan kelgan buyurtma/trek raqamlari (bo'shlari tashlanadi).
 func (a AgentJSON) Numbers() []string {

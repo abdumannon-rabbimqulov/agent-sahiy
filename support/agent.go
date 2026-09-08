@@ -133,8 +133,6 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 	transcript := formatTranscript(msgs)
-	// Bugun bu suhbatda biz hali yozmaganmiz — javob salom bilan boshlanadi.
-	greet := NeedsGreeting(msgs)
 	// Mijoz yozgan raqamlar — model ularni tashlab ketsa ham qidiruv
 	// baribir shu raqamlar bo'yicha ketadi.
 	chatSN, chatEx := ExtractNumbers(msgs)
@@ -150,6 +148,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	var (
 		usage    Usage
 		dataCtx  []string // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
+		langCtx  string   // birinchi promtdan chiqqan til ("uzb"/"rus"), bir marta uzatiladi
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
 	)
@@ -217,7 +216,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			break
 		}
 
-		userMsg := buildUserMessage(transcript, dataCtx, greet)
+		userMsg := buildUserMessage(transcript, dataCtx)
 		raw, u, err := groq.Generate(ctx, p.Promt, userMsg)
 		usage = usage.Add(u)
 
@@ -251,6 +250,14 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 		if a.Help != "" {
 			in.HelpText = a.Help
+		}
+
+		// Til birinchi promtdan chiqadi ("uzb"/"rus") — bir marta olinib,
+		// keyingi HAMMA bosqichga dataCtx orqali uzatiladi.
+		if langCtx == "" && a.HasLanguage() {
+			lang, _ := json.Marshal(map[string]bool{"uzb": a.Uzb, "rus": a.Rus})
+			langCtx = string(lang)
+			dataCtx = append(dataCtx, "Til: "+langCtx)
 		}
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
@@ -513,14 +520,9 @@ func isImageLink(s string) bool {
 }
 
 // buildUserMessage modelga ketadigan matn: suhbat + tizimdan olingan
-// ma'lumot + salomlashish ko'rsatmasi.
-//
-// Til haqida ko'rsatma bu yerda QO'SHILMAYDI: uni promtning o'zi
-// aytadi. Ilgari kod alifboni o'zi aniqlab qo'shib yuborardi, lekin
-// oxirgi xabar rasm bo'lsa ("[rasm yuborildi]") noto'g'ri til
-// tanlanardi — masalan ruscha yozgan mijozga "lotin alifboda yoz"
-// degan ko'rsatma ketardi.
-func buildUserMessage(transcript string, data []string, greet bool) string {
+// ma'lumot. Boshqa hech qanday ko'rsatma qo'shilmaydi — til, salom va
+// hokazo qoidalarning barchasini promtning o'zi (DB) belgilaydi.
+func buildUserMessage(transcript string, data []string) string {
 	var b strings.Builder
 	b.WriteString("Suhbatning oxirgi xabarlari (eskisidan yangisiga). ")
 	b.WriteString(`"type": "client" — mijoz yozgan, "type": "agent" — biz yozgan javob:` + "\n")
@@ -528,19 +530,6 @@ func buildUserMessage(transcript string, data []string, greet bool) string {
 	if len(data) > 0 {
 		b.WriteString("\n\nTizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):\n")
 		b.WriteString(strings.Join(data, "\n"))
-	}
-	// Salom kuniga bir marta: yangi kunning birinchi javobi salom bilan
-	// boshlanadi, kun davomidagi keyingi javoblarda takrorlanmaydi.
-	//
-	// Salom — javobning BOSHI, o'zi emas: model baribir mijoz muammosini
-	// hal qilishi kerak, tushunmasa esa so'rashi kerak.
-	if greet {
-		b.WriteString("\n\n")
-		b.WriteString("Bugun bu suhbatda biz hali yozmadik — chat javobini salom bilan boshla. ")
-		b.WriteString("Salomni MIJOZNING tilida yoz: o'zbekcha lotin — \"" + GreetingText + "\", ")
-		b.WriteString("o'zbekcha kirill — \"" + GreetingUzCyr + "\", rus tilida — \"" + GreetingRU + "\". ")
-		b.WriteString("Faqat shu ikki so'z, boshqa salomlashish qo'shma. ")
-		b.WriteString("Salom — javobning boshi, o'zi emas: undan keyin mijoz muammosiga javob yoz.")
 	}
 	return b.String()
 }
