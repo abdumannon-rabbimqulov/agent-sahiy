@@ -112,8 +112,35 @@ type DeliveryBrief struct {
 	// Kuryerga berilganiga DeliveryDays dan oshgan — holati noaniq,
 	// xodim tekshirishi kerak.
 	NeedCheck []SentDelivery `json:"tekshirish_kerak,omitempty"`
+	// O'zi-olib-ketish turida (express_line "Pickup"), mijoz
+	// allaqachon filialdan olib ketgan (status=2, delivered=true).
+	PickedUp []PickupDone `json:"olib_ketilgan,omitempty"`
 	// Umuman yozuv yo'q.
 	Empty bool `json:"yozuv_yoq,omitempty"`
+}
+
+// PickupDone - o'zi-olib-ketish turidagi jo'natma, mijoz allaqachon
+// filialdan olib ketgan (express_line "Pickup", status=2,
+// delivered=true).
+type PickupDone struct {
+	ExpressNum string `json:"express_num,omitempty"`
+	Branch     string `json:"filial,omitempty"`
+	PickedAt   string `json:"olingan,omitempty"`
+}
+
+// expressLineKind - express_line matnidan jo'natma turini aniqlaydi:
+// "pickup" (mijoz o'zi olib ketadi) yoki "delivery" (kuryer olib
+// boradi). Noma'lum bo'lsa "" qaytaradi.
+func expressLineKind(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "pickup"):
+		return "pickup"
+	case strings.Contains(lower, "delivery"):
+		return "delivery"
+	default:
+		return ""
+	}
 }
 
 // MaxDeliveryRows - har bir ro'yxatdan modelga ketadigan eng ko'p yozuv.
@@ -141,6 +168,18 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 	now := time.Now()
 
 	for _, o := range orders {
+		// O'zi-olib-ketish turi + status=2 + delivered=true — mijoz
+		// buyurtmani ALLAQACHON o'zi olib ketgan. Boshqa bucketlarga
+		// (ayniqsa "tekshirish_kerak"ga) tushmasin — yakunlangan holat.
+		if o.Delivered && o.Status == 2 && expressLineKind(o.ExpressLine) == "pickup" {
+			out.PickedUp = append(out.PickedUp, PickupDone{
+				ExpressNum: o.ExpressNum,
+				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+				PickedAt:   sanaMatnISO(o.DeliveredAt),
+			})
+			continue
+		}
+
 		if !o.Delivered {
 			out.Pending = append(out.Pending, PendingPickup{
 				ExpressNum: o.ExpressNum,
@@ -192,7 +231,8 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 	out.InDelivery = capRows(out.InDelivery)
 	out.NeedCheck = capRows(out.NeedCheck)
 
-	out.Empty = len(out.Pending) == 0 && len(out.InDelivery) == 0 && len(out.NeedCheck) == 0
+	out.Empty = len(out.Pending) == 0 && len(out.InDelivery) == 0 &&
+		len(out.NeedCheck) == 0 && len(out.PickedUp) == 0
 	return out
 }
 

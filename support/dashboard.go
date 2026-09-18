@@ -180,6 +180,13 @@ type DeliveryOrder struct {
 	// City, BranchAddress — qaysi filialda ekanini aytish uchun.
 	City          string `json:"city,omitempty"`
 	BranchAddress string `json:"branch_address,omitempty"`
+
+	// Status — yetkazma holati raqami (masalan 2 — o'zi olib ketish
+	// yakunlangan, 7 — kuryer olgan).
+	Status int `json:"status,omitempty"`
+	// ExpressLine — jo'natma turi: "...Pickup" (o'zi olib ketish) yoki
+	// "...Delivery" (kuryer olib boradi). Qarang: expressLineKind.
+	ExpressLine string `json:"express_line,omitempty"`
 }
 
 // FetchDelivery yetkazma buyurtmalarini oladi.
@@ -265,9 +272,37 @@ func fetchDeliveryPage(s Service, token string, f DeliveryFilter, delivered stri
 				"station.address",
 				"address_info.address",
 			)),
+
+			Status:      int(num64(get(m, "status"))),
+			ExpressLine: expressLineText(get(m, "express_line")),
 		})
 	}
 	return orders, nil
+}
+
+// expressLineText - express_line ba'zan JSON matn ko'rinishida keladi
+// ({"zh_CN": "Auto cargo-Pickup"}) — shuni ochib, ichidagi matnni
+// qaytaradi. Oddiy satr bo'lsa o'zini qaytaradi.
+func expressLineText(v any) string {
+	s := str(v)
+	if s == "" || s[0] != '{' {
+		return s
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return s
+	}
+	for _, key := range []string{"en", "zh_CN", "ru", "uz"} {
+		if val := m[key]; val != "" {
+			return val
+		}
+	}
+	for _, val := range m {
+		if val != "" {
+			return val
+		}
+	}
+	return s
 }
 
 // truthy — bool, son yoki matn ko'rinishidagi "ha" ni tushunadi.
