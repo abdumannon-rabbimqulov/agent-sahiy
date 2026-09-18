@@ -31,6 +31,31 @@ function Number_({ name, value, onSave, title, desc, unit, min, max }) {
   )
 }
 
+// Bir nechta variantdan bittasini tanlash (masalan AI provayder).
+function Choice({ name, value, options, onChange, title, desc }) {
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="spread">
+        <div>
+          <strong>{title}</strong>
+          <div className="muted" style={{ fontSize: 13 }}>{desc}</div>
+        </div>
+        <div className="row">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              className={value === o.value ? '' : 'ghost'}
+              onClick={() => onChange(name, o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Bitta yoqib-o'chiriladigan sozlama.
 function Toggle({ name, value, onChange, title, desc }) {
   return (
@@ -120,6 +145,17 @@ export default function Settings() {
         name="chat_delay_sec" value={s.chat_delay_sec} onSave={change}
         title="Suhbatlar orasidagi tanaffus" unit="sekund" min={0} max={600}
         desc="Har suhbatdan keyin shuncha kutiladi. 0 — kutmasdan ketma-ket ishlaydi."
+      />
+
+      <h2>AI provayder</h2>
+      <Choice
+        name="ai_provider" value={s.ai_provider} onChange={change}
+        title="Qaysi model ishlatiladi"
+        desc="Agent javob tayyorlashda qaysi AI provayderga so'rov yuboradi. Ikkalasi ham .env da o'z API kaliti bilan sozlangan bo'lishi kerak (GROQ_API_KEY / DEEPSEEK_API_KEY)."
+        options={[
+          { value: 'groq', label: 'Groq' },
+          { value: 'deepseek', label: 'DeepSeek' },
+        ]}
       />
 
       <h2>Boshqa</h2>

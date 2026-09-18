@@ -168,10 +168,10 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 	now := time.Now()
 
 	for _, o := range orders {
-		// O'zi-olib-ketish turi + status=2 + delivered=true — mijoz
+		// O'zi-olib-ketish turi + status=7 + delivered=true — mijoz
 		// buyurtmani ALLAQACHON o'zi olib ketgan. Boshqa bucketlarga
 		// (ayniqsa "tekshirish_kerak"ga) tushmasin — yakunlangan holat.
-		if o.Delivered && o.Status == 2 && expressLineKind(o.ExpressLine) == "pickup" {
+		if o.Delivered && o.Status == 7 && expressLineKind(o.ExpressLine) == "pickup" {
 			out.PickedUp = append(out.PickedUp, PickupDone{
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
@@ -180,7 +180,13 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 			continue
 		}
 
-		if !o.Delivered {
+		// Kuryerga yetkazish turida `delivered` maydoni har doim ham
+		// o'z vaqtida yangilanmaydi — status=8 kuryer buyurtmani
+		// olganini (yo'lda ekanini) alohida bildiradi.
+		givenToCourier := o.Delivered ||
+			(o.Status == 8 && expressLineKind(o.ExpressLine) == "delivery")
+
+		if !givenToCourier {
 			out.Pending = append(out.Pending, PendingPickup{
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),

@@ -85,9 +85,9 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 	if !AgentEnabled() {
 		return Usage{}, fmt.Errorf("AI agent o'chirilgan")
 	}
-	groq := GroqFromEnv()
-	if !groq.Ready() {
-		return Usage{}, ErrNoGroqKey
+	llm := ActiveLLM()
+	if !llm.Ready() {
+		return Usage{}, ErrNoLLMKey
 	}
 
 	p, err := GetPromt(DB, StaffPromtID())
@@ -116,7 +116,7 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 	b.WriteString("mijoz javob qaysi buyurtmasi haqida ekanini bilsin.")
 	userMsg := b.String()
 
-	out, usage, err := groq.Generate(ctx, p.Promt, userMsg)
+	out, usage, err := llm.Generate(ctx, p.Promt, userMsg)
 
 	in.Steps = append(in.Steps, AgentStep{
 		StepNo:           1,

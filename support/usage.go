@@ -8,9 +8,16 @@ import (
 	"strconv"
 )
 
+// AI provayderlari (qarang: llm.go).
+const (
+	ProviderGroq     = "groq"
+	ProviderDeepSeek = "deepseek"
+)
+
 // Usage - AI so'rov(lar)iga sarflangan tokenlar. Raqamlar provayder
 // javobidan olinadi, taxmin qilinmaydi.
 type Usage struct {
+	Provider         string `json:"provider,omitempty"`
 	Model            string `json:"model"`
 	PromptTokens     int    `json:"prompt_tokens"`     // kirish
 	CachedTokens     int    `json:"cached_tokens"`     // kirishning kesh'dan olingan qismi
@@ -26,6 +33,9 @@ func (u Usage) Total() int { return u.PromptTokens + u.CompletionTokens }
 func (u Usage) Add(o Usage) Usage {
 	if u.Model == "" {
 		u.Model = o.Model
+	}
+	if u.Provider == "" {
+		u.Provider = o.Provider
 	}
 	u.PromptTokens += o.PromptTokens
 	u.CachedTokens += o.CachedTokens
@@ -55,11 +65,15 @@ func envFloat(key string) float64 {
 	return f
 }
 
-// Cost - sarflangan pul (USD). Narxlar 1 mln token uchun:
-// GROQ_PRICE_IN / GROQ_PRICE_OUT. Berilmagan bo'lsa 0 qaytadi —
-// panelda faqat token soni ko'rinadi.
+// Cost - sarflangan pul (USD). Narxlar 1 mln token uchun, provayderga
+// qarab: GROQ_PRICE_IN/OUT yoki DEEPSEEK_PRICE_IN/OUT. Berilmagan
+// bo'lsa 0 qaytadi — panelda faqat token soni ko'rinadi.
 func (u Usage) Cost() float64 {
-	in, out := envFloat("GROQ_PRICE_IN"), envFloat("GROQ_PRICE_OUT")
+	priceIn, priceOut := "GROQ_PRICE_IN", "GROQ_PRICE_OUT"
+	if u.Provider == ProviderDeepSeek {
+		priceIn, priceOut = "DEEPSEEK_PRICE_IN", "DEEPSEEK_PRICE_OUT"
+	}
+	in, out := envFloat(priceIn), envFloat(priceOut)
 	if in == 0 && out == 0 {
 		return 0
 	}

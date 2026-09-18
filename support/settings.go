@@ -121,6 +121,7 @@ func AllSettings() map[string]any {
 		SettingPollInterval: PollInterval(),
 		SettingBatchSize:    BatchSize(),
 		SettingChatDelay:    ChatDelay(),
+		SettingAIProvider:   AIProvider(),
 	}
 }
 
@@ -169,6 +170,7 @@ func seedSettings(db *gorm.DB) error {
 		SettingPollInterval: strconv.Itoa(envInt("POLL_INTERVAL_SEC", DefaultPollInterval)),
 		SettingBatchSize:    strconv.Itoa(envInt("RATE_LIMIT_COUNT", 5)),
 		SettingChatDelay:    strconv.Itoa(envInt("CHAT_DELAY_SEC", 0)),
+		SettingAIProvider:   ProviderGroq,
 	}
 	for k, v := range defs {
 		var n int64

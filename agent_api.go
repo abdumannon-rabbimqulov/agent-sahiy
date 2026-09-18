@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"sahiy/support"
@@ -258,6 +260,10 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		support.SettingPollEnabled:  true,
 		support.SettingAutoResolve:  true,
 	}
+	// Qat'iy ro'yxatdan tanlanadigan matn sozlamalari.
+	enums := map[string][]string{
+		support.SettingAIProvider: {support.ProviderGroq, support.ProviderDeepSeek},
+	}
 
 	for k, v := range body {
 		switch {
@@ -268,6 +274,18 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := support.SetSetting(support.DB, k, strconv.FormatBool(b)); err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+		case enums[k] != nil:
+			s, ok := v.(string)
+			if !ok || !slices.Contains(enums[k], s) {
+				writeErr(w, http.StatusBadRequest,
+					fmt.Sprintf("%s: quyidagilardan biri bo'lishi kerak: %s", k, strings.Join(enums[k], ", ")))
+				return
+			}
+			if err := support.SetSetting(support.DB, k, s); err != nil {
 				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}

@@ -189,6 +189,7 @@ func (g Groq) send(ctx context.Context, body any) (string, Usage, error) {
 	}
 
 	u := Usage{
+		Provider:         ProviderGroq,
 		Model:            out.Model,
 		PromptTokens:     out.Usage.PromptTokens,
 		CachedTokens:     out.Usage.PromptDetails.CachedTokens,

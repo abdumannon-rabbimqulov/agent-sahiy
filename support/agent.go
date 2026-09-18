@@ -138,11 +138,11 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	chatSN, chatEx := ExtractNumbers(msgs)
 
 	// 2. Zanjir.
-	groq := GroqFromEnv()
-	if !groq.Ready() {
-		in.Error = ErrNoGroqKey.Error()
+	llm := ActiveLLM()
+	if !llm.Ready() {
+		in.Error = ErrNoLLMKey.Error()
 		saveOrLog(in)
-		return in, ErrNoGroqKey
+		return in, ErrNoLLMKey
 	}
 
 	var (
@@ -217,7 +217,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 
 		userMsg := buildUserMessage(transcript, dataCtx)
-		raw, u, err := groq.Generate(ctx, p.Promt, userMsg)
+		raw, u, err := llm.Generate(ctx, p.Promt, userMsg)
 		usage = usage.Add(u)
 
 		in.Steps = append(in.Steps, AgentStep{
