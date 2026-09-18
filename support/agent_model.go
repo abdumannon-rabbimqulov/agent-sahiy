@@ -4,6 +4,8 @@
 package support
 
 import (
+	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -75,6 +77,11 @@ type Interaction struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 
 	Steps []AgentStep `gorm:"foreignKey:InteractionID" json:"steps,omitempty"`
+
+	// Overdue - "pending" holatida PendingOverdueHours dan ko'p vaqt
+	// turgan (mijoz qayta yozmagan, admin ham tasdiqlamagan). Bazada
+	// saqlanmaydi — ro'yxat chiqarilganda hisoblanadi.
+	Overdue bool `gorm:"-" json:"overdue,omitempty"`
 }
 
 // AgentStep - zanjirning bitta bosqichi (panelda "AI qanday o'yladi").
@@ -131,7 +138,82 @@ func GetInteraction(db *gorm.DB, id uint) (*Interaction, error) {
 	return &in, nil
 }
 
+// PendingOverdueHours - shuncha soatdan ko'p "pending" turgan (admin
+// tasdiqlamagan, mijoz ham qayta yozmagan) javob "yana ko'rib chiqish"
+// uchun ro'yxat boshiga chiqariladi. .env: PENDING_OVERDUE_HOURS
+// (standart 3).
+const DefaultPendingOverdueHours = 3
+
+func PendingOverdueHours() int { return envInt("PENDING_OVERDUE_HOURS", DefaultPendingOverdueHours) }
+
+// DefaultStalePendingHours - shuncha soatdan ko'p tasdiqlanmagan
+// "pending" javob endi dolzarb emas deb hisoblanadi va avtomatik bekor
+// qilinadi. .env: STALE_PENDING_HOURS (0 — o'chirilgan).
+const DefaultStalePendingHours = 24
+
+func StalePendingHours() int { return envInt("STALE_PENDING_HOURS", DefaultStalePendingHours) }
+
+// RejectStalePending - StalePendingHours dan ko'p vaqt tasdiqlanmagan
+// "pending" javoblarni bekor qiladi. Mijoz uzoq vaqt kutgan, admin
+// ulgurmagan javob endi dolzarb emas deb hisoblanadi (mijoz vaziyati
+// o'zgargan yoki boshqa yo'l bilan javob olgan bo'lishi mumkin) —
+// bunday yozuvlar navbatda cheksiz to'planib, yangi, hali dolzarb
+// javoblarni ko'zdan yashirmasin.
+//
+// Eski javob bekor qilingani bilan mijoz javob olganicha yo'q —
+// shuning uchun tegishli suhbatning ConversationState'i ham tozalanadi
+// (qo'lda o'chirilgan — Skip — suhbatlar bundan mustasno): keyingi
+// poller siklida bu suhbat "hali javob berilmagan" deb qayta ko'riladi
+// va AGENT uni qaytadan o'rganib, yangi javob tayyorlaydi.
+func RejectStalePending(db *gorm.DB) (int64, error) {
+	hours := StalePendingHours()
+	if hours <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var stale []Interaction
+	if err := db.Where("status = ? AND created_at < ?", StatusPending, cutoff).
+		Find(&stale).Error; err != nil {
+		return 0, err
+	}
+	if len(stale) == 0 {
+		return 0, nil
+	}
+
+	ids := make([]uint, 0, len(stale))
+	convIDs := make([]int64, 0, len(stale))
+	seen := map[int64]bool{}
+	for _, in := range stale {
+		ids = append(ids, in.ID)
+		if !seen[in.ConversationID] {
+			seen[in.ConversationID] = true
+			convIDs = append(convIDs, in.ConversationID)
+		}
+	}
+
+	res := db.Model(&Interaction{}).Where("id IN ?", ids).Updates(map[string]any{
+		"status": StatusRejected,
+		"error":  fmt.Sprintf("%d soatdan ko'p tasdiqlanmadi — avtomatik eskirgan deb bekor qilindi", hours),
+	})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+
+	if err := db.Model(&ConversationState{}).
+		Where("conversation_id IN ? AND skip = ?", convIDs, false).
+		Updates(map[string]any{"last_message_id": 0, "last_message_at": ""}).Error; err != nil {
+		log.Printf("eskirgan javoblar: suhbat holatini tozalash: %v", err)
+	}
+
+	return res.RowsAffected, nil
+}
+
 // ListInteractions ro'yxat (status bo'yicha filtr, sahifalash).
+// Har doim eng yangisidan eskisiga qarab chiqadi ("id desc").
+// "pending" uchun har bir yozuvga Overdue belgisi ham hisoblanadi
+// (qarang: PendingOverdueHours) — uzoq kutganini panelda ajratib
+// ko'rsatish uchun, tartibga tegmaydi.
 func ListInteractions(db *gorm.DB, status string, page, limit int) ([]Interaction, int64, error) {
 	if page < 1 {
 		page = 1
@@ -149,6 +231,15 @@ func ListInteractions(db *gorm.DB, status string, page, limit int) ([]Interactio
 	}
 	var list []Interaction
 	err := q.Order("id desc").Offset((page - 1) * limit).Limit(limit).Find(&list).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	if status == StatusPending {
+		cutoff := time.Now().Add(-time.Duration(PendingOverdueHours()) * time.Hour)
+		for i := range list {
+			list[i].Overdue = list[i].CreatedAt.Before(cutoff)
+		}
+	}
 	return list, total, err
 }
 

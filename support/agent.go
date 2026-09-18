@@ -607,6 +607,15 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool)
 		}
 
 		rows = dedupOrders(rows)
+		// Mijoz order_sn yoki trek raqamini aniq yozmagan bo'lsa (butun
+		// ro'yxat so'ralgan bo'ladi) — to'lanmagan buyurtmalar modelga
+		// yuborilmaydi: ular hali muammo emas, faqat token yeydi va
+		// modelni chalkashtiradi. Mijoz aniq raqam yozgan bo'lsa, o'sha
+		// buyurtma to'lanmagan bo'lsa ham ko'rsatiladi — savol aynan shu
+		// haqida.
+		if len(numbers) == 0 {
+			rows = onlyPaidOrders(rows)
+		}
 		// Mijoz turi (B2C/B2B) — yetkazish tarifini tushuntirish uchun.
 		out["mijoz_turi"] = CustomerType(rows)
 		// Muammoli buyurtmalarni aniqlash (kerak bo'lsa guruhga xabar ketadi).

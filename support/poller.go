@@ -154,6 +154,14 @@ func PollOnce(ctx context.Context) error {
 	if err := ReviewOpenIssues(DB); err != nil {
 		log.Printf("poller: muammolarni ko'rib chiqish: %v", err)
 	}
+
+	// Uzoq vaqt tasdiqlanmagan "pending" javoblar endi dolzarb emas —
+	// avtomatik bekor qilinadi (STALE_PENDING_HOURS).
+	if n, err := RejectStalePending(DB); err != nil {
+		log.Printf("poller: eskirgan javoblarni bekor qilish: %v", err)
+	} else if n > 0 {
+		log.Printf("poller: %d ta eskirgan (pending) javob avtomatik bekor qilindi", n)
+	}
 	return nil
 }
 

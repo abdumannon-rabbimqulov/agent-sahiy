@@ -138,6 +138,20 @@ func parseAdminkaTime(s string) (time.Time, bool) {
 // IsPaid - buyurtma to'langanmi (pay_status: 1 — to'langan, 0 — yo'q).
 func IsPaid(o AdminkaOrder) bool { return o.PayStatus == 1 }
 
+// onlyPaidOrders - to'lanmagan buyurtmalarni chiqarib tashlaydi. Mijoz
+// aniq order_sn/trek raqami yozmagan, "buyurtmalarim qani" kabi umumiy
+// so'ragan holatlarda ishlatiladi: to'lanmagan buyurtma hali muammo
+// emas, modelga ko'rsatilishi shart emas.
+func onlyPaidOrders(rows []AdminkaOrder) []AdminkaOrder {
+	out := make([]AdminkaOrder, 0, len(rows))
+	for _, o := range rows {
+		if IsPaid(o) {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
 // PaidTime - to'lov vaqti. Adminka `paid_at` bermasa buyurtma yaratilgan
 // vaqtga qaytiladi (eski yozuvlarda `paid_at` bo'sh bo'lishi mumkin).
 func PaidTime(o AdminkaOrder) (time.Time, bool) {
