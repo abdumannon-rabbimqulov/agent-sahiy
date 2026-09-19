@@ -125,7 +125,7 @@ func issuesText(list []*OrderIssue) string {
 	} else {
 		fmt.Fprintf(&b, "⚠️ Muammoli buyurtmalar — %d ta\n", len(list))
 	}
-	fmt.Fprintf(&b, "Mijoz: %d · suhbat #%d\n", first.ClientID, first.ConversationID)
+	fmt.Fprintf(&b, "Mijoz: %d\n", first.ClientID)
 
 	for i, is := range list {
 		b.WriteString("\n")
@@ -172,7 +172,7 @@ func remindText(items []remindItem) string {
 	} else {
 		fmt.Fprintf(&b, "🔁 Hali hal bo'lmagan — %d ta buyurtma\n", len(items))
 	}
-	fmt.Fprintf(&b, "Mijoz: %d · suhbat #%d\n", first.ClientID, first.ConversationID)
+	fmt.Fprintf(&b, "Mijoz: %d\n", first.ClientID)
 	// Mijozga javob berilgani suhbatga tegishli — hamma buyurtma uchun bir xil.
 	if items[0].Answered {
 		fmt.Fprintf(&b, "Mijozga javob: berilgan (%s)\n", vaqtMatn(items[0].LastAt))

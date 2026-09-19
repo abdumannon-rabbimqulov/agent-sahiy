@@ -102,6 +102,11 @@ export default function Detail() {
 
       <h2>Mijozga javob (chat)</h2>
       <div className="card">
+        {item.numbers_from_image && (
+          <div className="badge" style={{ marginBottom: 8 }}>
+            🖼 Buyurtma/trek raqami rasmdan (OCR) olindi
+          </div>
+        )}
         {item.chat_reply || <span className="muted">—</span>}
         <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
           {item.read_marked

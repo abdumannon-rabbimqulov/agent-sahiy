@@ -46,6 +46,11 @@ function Item({ item, onDone }) {
               qo'lda
             </span>
           )}
+          {item.numbers_from_image && (
+            <span className="badge" style={{ marginLeft: 8 }} title="Buyurtma/trek raqami rasmdan (OCR) olindi">
+              🖼 rasmdan
+            </span>
+          )}
         </div>
         <div className="row">
           <span className={`badge ${st.cls}`}>{st.label}</span>

@@ -22,10 +22,12 @@ import (
 	"strings"
 )
 
-// DefaultMaxImages - bitta suhbatda nechta rasm o'qiladi. Mijoz 5 ta rasm
-// tashlasa ham hammasini o'qish shart emas; eng oxirgilari odatda o'sha
-// murojaatga tegishli bo'ladi.
-const DefaultMaxImages = 2
+// DefaultMaxImages - bitta suhbatda nechta rasm o'qiladi. Modelga ketadigan
+// tarix `HistoryLimit` bilan oxirgi 10 xabarga cheklangan — demak shu oyna
+// ichida ko'pi bilan 10 ta rasm bo'lishi mumkin, hammasi o'qiladi (mijoz
+// bir nechta chek/skrinshot yuborgan bo'lishi mumkin, har birida boshqa
+// buyurtma bo'lishi mumkin).
+const DefaultMaxImages = 10
 
 // MaxImages - bir suhbatda o'qiladigan rasm soni (.env: MAX_IMAGES).
 func MaxImages() int { return envInt("MAX_IMAGES", DefaultMaxImages) }
@@ -78,15 +80,19 @@ func HasClientImage(msgs []Message) bool { return len(ClientImageLinks(msgs)) > 
 // ReadNumbersFromMessages - suhbatdagi mijoz rasmlarini tesseract bilan
 // o'qib, ichidagi buyurtma va trek raqamlarini qaytaradi.
 //
-// Eng oxirgi rasmdan boshlanadi va BIRINCHI raqam topilgan rasmda
-// to'xtaydi. O'qiladigan rasm soni `MAX_IMAGES` bilan cheklangan.
+// Topilgan BIRINCHI rasmda to'xtamaydi: mijoz bir nechta chek yoki
+// skrinshot yuborgan bo'lishi mumkin (masalan, ikkita buyurtma haqida
+// bir vaqtda yozganda) va har birida boshqa raqam bo'lishi mumkin —
+// shuning uchun (MAX_IMAGES bilan cheklangan, lekin oxirgi 10 xabar
+// ichida shuncha rasm bor bo'lsa) HAMMA rasm o'qiladi, raqamlar esa
+// birlashtiriladi (mergeNumbers — takrorlanmaydi).
 //
-// Ikkinchi qiymat — raqam topildimi. false bo'lsa sabab uchta bo'lishi
-// mumkin va uchalasida ham keyingi qadam bir xil: mijozdan raqamni matn
-// bilan yozish so'raladi.
+// Ikkinchi qiymat — hech bo'lmasa bitta raqam topildimi. false bo'lsa
+// sabab uchta bo'lishi mumkin va uchalasida ham keyingi qadam bir xil:
+// mijozdan raqamni matn bilan yozish so'raladi.
 //   - mijoz rasm yubormagan;
 //   - rasm o'qilmadi (tesseract yo'q, havola ishlamadi) — logga yoziladi;
-//   - rasm o'qildi, lekin ichida buyurtma yoki trek raqami yo'q.
+//   - rasm(lar) o'qildi, lekin ichida buyurtma yoki trek raqami yo'q.
 func ReadNumbersFromMessages(ctx context.Context, msgs []Message) (ImageNumbers, bool) {
 	links := ClientImageLinks(msgs)
 	if len(links) == 0 {
@@ -122,13 +128,11 @@ func ReadNumbersFromMessages(ctx context.Context, msgs []Message) (ImageNumbers,
 		res.OrderSN = mergeNumbers(res.OrderSN, one.OrderSN, 10)
 		res.Express = mergeNumbers(res.Express, one.Express, 10)
 		if one.Text != "" {
-			res.Text = one.Text
+			res.Text = appendRaw(res.Text, one.Text)
 		}
-		if !res.Empty() {
-			return res, true // topildi — qolgan rasmlar shart emas
-		}
+		// Davom etadi: keyingi rasmda ham boshqa raqam bo'lishi mumkin.
 	}
-	return res, false
+	return res, !res.Empty()
 }
 
 // appendRaw - bir necha rasm natijasini bitta matnga qo'shadi (panel uchun).

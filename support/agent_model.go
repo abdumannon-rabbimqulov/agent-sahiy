@@ -37,6 +37,12 @@ type Interaction struct {
 	ChatReply string `gorm:"type:text" json:"chat_reply"`
 	HelpText  string `gorm:"type:text" json:"help_text"`
 
+	// NumbersFromImage - javobdagi buyurtma/trek raqami mijoz yozgan
+	// matndan emas, rasmdan (OCR) olinganmi. Dashboardda "Mijozga javob"
+	// bo'limida belgi sifatida ko'rsatiladi — xodim javob qayerdan kelib
+	// chiqqanini bilsin.
+	NumbersFromImage bool `gorm:"not null;default:false" json:"numbers_from_image"`
+
 	// MessageIDs - shu murojaatda javob berilayotgan mijoz xabarlari
 	// ("1,2,3"). Javob mijozga yetib borgandan keyin shular o'qilgan
 	// deb belgilanadi.

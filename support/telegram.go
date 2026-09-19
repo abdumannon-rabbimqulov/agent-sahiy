@@ -76,3 +76,43 @@ func SendTelegramMessage(text string, replyTo int64) (int64, error) {
 	}
 	return out.Result.MessageID, nil
 }
+
+// SendTelegramPhoto guruhga rasmni havola orqali yuboradi (Telegram
+// o'zi havoladan yuklab oladi — fayl bu yerga tushirilmaydi). caption
+// bo'sh bo'lishi mumkin.
+func SendTelegramPhoto(photoURL, caption string) error {
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chatID := os.Getenv("TELEGRAM_GROUP_ID")
+	if token == "" || chatID == "" {
+		return fmt.Errorf("TELEGRAM_BOT_TOKEN yoki TELEGRAM_GROUP_ID berilmagan")
+	}
+	if strings.TrimSpace(photoURL) == "" {
+		return fmt.Errorf("bo'sh rasm havolasi")
+	}
+
+	payload := map[string]any{
+		"chat_id": chatID,
+		"photo":   photoURL,
+	}
+	if caption != "" {
+		payload["caption"] = caption
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/bot%s/sendPhoto", TelegramAPI(), token)
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).
+		Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("telegram: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("telegram (status %d): %s", resp.StatusCode, snippet(raw))
+	}
+	return nil
+}

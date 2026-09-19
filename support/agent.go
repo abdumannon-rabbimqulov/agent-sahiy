@@ -1,7 +1,3 @@
-// Agent zanjiri: promt -> Groq -> JSON -> kod harakat qiladi -> keyingi promt.
-//
-// Promt matnini admin yozadi; kod faqat javobdagi kalitlarga qarab
-// yo'naltiradi (contract.go dagi AgentJSON).
 package support
 
 import (
@@ -186,6 +182,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// Raqam topildi — birinchi promtga shu raqamlar bilan kiramiz.
 			chatSN = mergeNumbers(chatSN, img.OrderSN, 10)
 			chatEx = mergeNumbers(chatEx, img.Express, 10)
+			in.NumbersFromImage = true
 			dataCtx = append(dataCtx, "Mijoz yuborgan rasmdan o'qilgan raqamlar: "+
 				strings.Join(img.All(), ", ")+
 				". Mijoz shu buyurtma haqida yozmoqda — raqamni qaytadan so'rama.")
@@ -197,6 +194,11 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			dataCtx = append(dataCtx, imageNoNumberHint)
 			natija = "RASMDAN BUYURTMA RAQAMI CHIQMADI — raqam mijozdan so'raladi"
 			log.Printf("agent: suhbat %d — rasmdan buyurtma raqami chiqmadi", conversationID)
+
+			// OCR tushunmadi (past sifat, burchak, boshqa format va h.k.) —
+			// rasmni xodim o'z ko'zi bilan ko'rsin. Eng oxirgi (ko'pi bilan
+			// 3 ta) rasm guruhga yuboriladi.
+			sendUnreadableImages(clientID, img)
 		}
 
 		// Bosqich panelga yoziladi: suhbat tafsilotida qaysi rasm
@@ -394,7 +396,7 @@ func DeliverHelp(in *Interaction) error {
 	if in.HelpText == "" || in.HelpSent {
 		return nil
 	}
-	text := fmt.Sprintf("🆘 Suhbat #%d (mijoz %d)\n\n%s", in.ConversationID, in.ClientID, in.HelpText)
+	text := fmt.Sprintf("🆘 Mijoz #%d\n\n%s", in.ClientID, in.HelpText)
 	if in.ClientMessage != "" {
 		text += "\n\nMijoz xabari: " + in.ClientMessage
 	}
@@ -532,6 +534,34 @@ func buildUserMessage(transcript string, data []string) string {
 		b.WriteString(strings.Join(data, "\n"))
 	}
 	return b.String()
+}
+
+// MaxUnreadableImagesToGroup - OCR raqam topa olmaganda guruhga ko'pi
+// bilan nechta rasm yuboriladi.
+const MaxUnreadableImagesToGroup = 3
+
+// sendUnreadableImages - OCR rasmdan hech qanday buyurtma/trek raqami topa
+// olmasa (past sifat, burchak, tanish bo'lmagan chek formati va h.k.),
+// mijoz yuborgan eng oxirgi rasmlarni (ko'pi bilan
+// MaxUnreadableImagesToGroup ta) xodimlar guruhiga yuboradi — xodim o'z
+// ko'zi bilan ko'rib buyurtma raqamini aniqlay oladi. Xatolik bo'lsa
+// (masalan Telegram sozlanmagan) faqat logga yoziladi, zanjirni to'xtatmaydi.
+func sendUnreadableImages(clientID int64, img ImageNumbers) {
+	links := img.Links
+	if len(links) > MaxUnreadableImagesToGroup {
+		links = links[:MaxUnreadableImagesToGroup]
+	}
+	for i, link := range links {
+		var caption string
+		if i == 0 {
+			caption = fmt.Sprintf(
+				"🖼 Mijoz #%d — rasm yubordi, lekin undan buyurtma/trek "+
+					"raqami avtomatik o'qilmadi. Xodim tekshirsin.", clientID)
+		}
+		if err := SendTelegramPhoto(link, caption); err != nil {
+			log.Printf("agent: mijoz %d — rasm guruhga yuborilmadi: %v", clientID, err)
+		}
+	}
 }
 
 // imageReader - rasmni nima o'qigani (panel sarlavhasi uchun).
