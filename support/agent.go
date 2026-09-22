@@ -193,6 +193,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// bilsin va raqamni mijozdan so'rasin. Zanjir to'xtamaydi.
 			dataCtx = append(dataCtx, imageNoNumberHint)
 			natija = "RASMDAN BUYURTMA RAQAMI CHIQMADI — raqam mijozdan so'raladi"
+			in.ImageNoNumber = true
 			log.Printf("agent: suhbat %d — rasmdan buyurtma raqami chiqmadi", conversationID)
 
 			// OCR tushunmadi (past sifat, burchak, boshqa format va h.k.) —
@@ -304,18 +305,9 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		in.Error = "model na chat, na help qaytardi"
 	}
 
-	// 3. help — TASDIQSIZ, darhol xodimlar guruhiga (zanjir yarim yo'lda
-	//    to'xtagan bo'lsa ham: xodimlar muammodan xabardor bo'lsin).
-	if in.HelpText != "" {
-		if err := DeliverHelp(in); err != nil {
-			log.Printf("agent: suhbat %d help yuborilmadi: %v", conversationID, err)
-			if in.Error == "" {
-				in.Error = err.Error()
-			} else {
-				in.Error += " | " + err.Error()
-			}
-		}
-	}
+	// 3. help — Telegram guruhiga YUBORILMAYDI (o'chirilgan, quyidagi
+	//    DeliverHelp izohiga qarang). HelpText baribir saqlanadi va
+	//    statistikada ("needed_staff", support/stats.go) hisoblanadi.
 
 	// 4. chat — mijozga. Avto-javob yoqilgan bo'lsa darhol, aks holda
 	//    admin tasdig'ini kutadi.
@@ -329,16 +321,10 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 
 	default:
-		// Faqat help bor edi — mijozga yoziladigan narsa yo'q, ya'ni
-		// tasdiqlashga ham hojat yo'q.
-		if in.HelpSent {
-			in.markSent("avto")
-		} else {
-			in.Status = StatusFailed
-			if in.Error == "" {
-				in.Error = "help yuborilmadi"
-			}
-		}
+		// Faqat help bor edi, mijozga yoziladigan narsa yo'q va help
+		// endi Telegramga yuborilmaydi — admin panelda ko'rib chiqishi
+		// uchun "pending" holatida qoladi.
+		in.Status = StatusPending
 	}
 
 	if err := SaveInteraction(DB, in); err != nil {
@@ -387,25 +373,13 @@ func DeliverChat(in *Interaction) error {
 	return nil
 }
 
-// DeliverHelp xodimlar guruhiga (Telegram) xabar yuboradi.
-//
-// help TASDIQ KUTMAYDI: mijozga hech narsa ketmaydi, xodimlar esa muammodan
-// darhol xabardor bo'lishi kerak. Tasdiqlash faqat mijozga yoziladigan
-// chat javobiga tegishli.
+// DeliverHelp - O'CHIRILGAN: "🆘 Mijoz ..." xabarlari endi Telegram
+// guruhiga yuborilmaydi. Guruhga faqat "⚠️ Muammoli buyurtma(lar)"
+// turidagi xabarlar ketadi (support/issue_detect.go — notifyIssues).
+// HelpText baribir saqlanadi va statistikada hisoblanadi
+// (support/stats.go — "needed_staff"/"needed_help"), faqat Telegramga
+// yuborilmaydi.
 func DeliverHelp(in *Interaction) error {
-	if in.HelpText == "" || in.HelpSent {
-		return nil
-	}
-	text := fmt.Sprintf("🆘 Mijoz #%d\n\n%s", in.ClientID, in.HelpText)
-	if in.ClientMessage != "" {
-		text += "\n\nMijoz xabari: " + in.ClientMessage
-	}
-	if err := SendTelegram(text); err != nil {
-		return fmt.Errorf("telegram: %w", err)
-	}
-	in.HelpSent = true
-	saveFlag(in, "help_sent", true)
-	log.Printf("agent: suhbat %d — help xodimlar guruhiga yuborildi", in.ConversationID)
 	return nil
 }
 
@@ -427,7 +401,7 @@ func Deliver(in *Interaction) error {
 
 // saveFlag - bazadagi bitta bayroqni yangilaydi (yozuv hali saqlanmagan
 // bo'lsa hech narsa qilinmaydi — qiymat struct'da qolib, keyin saqlanadi).
-func saveFlag(in *Interaction, field string, val bool) {
+func saveFlag(in *Interaction, field string, val any) {
 	if DB != nil && in.ID > 0 {
 		DB.Model(in).Update(field, val)
 	}
@@ -555,7 +529,7 @@ func sendUnreadableImages(clientID int64, img ImageNumbers) {
 		var caption string
 		if i == 0 {
 			caption = fmt.Sprintf(
-				"🖼 Mijoz #%d — rasm yubordi, lekin undan buyurtma/trek "+
+				"🖼 Mijoz %d — rasm yubordi, lekin undan buyurtma/trek "+
 					"raqami avtomatik o'qilmadi. Xodim tekshirsin.", clientID)
 		}
 		if err := SendTelegramPhoto(link, caption); err != nil {

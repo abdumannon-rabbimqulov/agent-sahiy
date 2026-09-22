@@ -51,6 +51,11 @@ function Item({ item, onDone }) {
               🖼 rasmdan
             </span>
           )}
+          {item.image_no_number && (
+            <span className="badge" style={{ marginLeft: 8 }} title="Mijoz rasm yubordi, lekin OCR undan buyurtma/trek raqamini topa olmadi — o'zingiz tekshiring">
+              🖼 raqam topilmadi
+            </span>
+          )}
         </div>
         <div className="row">
           <span className={`badge ${st.cls}`}>{st.label}</span>

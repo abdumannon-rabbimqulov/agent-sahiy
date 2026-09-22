@@ -101,6 +101,25 @@ func RemindHours() int {
 	return n
 }
 
+// DefaultIssueStaleHours - guruhga eslatma yuborilgan, lekin hamon hal
+// bo'lmagan muammo yaratilganidan shuncha soat o'tsa avtomatik
+// yopiladi: xodim allaqachon xabardor qilingan, guruhda abadiy
+// "ochiq" bo'lib osilib qolmasin.
+const DefaultIssueStaleHours = 24
+
+// IssueStaleHours - .env dagi ISSUE_STALE_HOURS (default 24, 0 — o'chirilgan).
+func IssueStaleHours() int {
+	v := envStr("ISSUE_STALE_HOURS", "")
+	if v == "" {
+		return DefaultIssueStaleHours
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return DefaultIssueStaleHours
+	}
+	return n
+}
+
 // ProblemStatuses - kuzatiladigan statuslar (.env: PROBLEM_STATUSES="3,4").
 func ProblemStatuses() []int {
 	v := envStr("PROBLEM_STATUSES", "")

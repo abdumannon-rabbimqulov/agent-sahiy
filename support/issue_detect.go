@@ -323,7 +323,42 @@ func ReviewOpenIssues(db *gorm.DB) error {
 	for _, clientID := range order {
 		sendRemind(db, due[clientID])
 	}
+
+	if _, err := CloseStaleIssues(db); err != nil {
+		log.Printf("muammo: eskirganlarni yopish: %v", err)
+	}
 	return nil
+}
+
+// CloseStaleIssues - guruhga kamida bir marta eslatma yuborilgan
+// (notify_count > 0), lekin yaratilganiga IssueStaleHours dan ko'p
+// bo'lgan ochiq muammolarni avtomatik yopadi. Xodim allaqachon
+// xabardor qilingan — guruhda abadiy "ochiq" bo'lib osilib qolmasin.
+func CloseStaleIssues(db *gorm.DB) (int64, error) {
+	hours := IssueStaleHours()
+	if hours <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var stale []OrderIssue
+	if err := db.Where("state = ? AND notify_count > 0 AND created_at < ?", IssueOpen, cutoff).
+		Find(&stale).Error; err != nil {
+		return 0, err
+	}
+
+	var closed int64
+	for i := range stale {
+		is := &stale[i]
+		res := fmt.Sprintf("%d soatdan ko'p eslatilib, javob bo'lmagani uchun avtomatik yopildi", hours)
+		if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err != nil {
+			log.Printf("muammo: %s avtomatik yopilmadi: %v", is.OrderSN, err)
+			continue
+		}
+		notifyResolved(is, res)
+		closed++
+	}
+	return closed, nil
 }
 
 // sendRemind - bitta mijozning eslatmalarini bitta xabar qilib yuboradi

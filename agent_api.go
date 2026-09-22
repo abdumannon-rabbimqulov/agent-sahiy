@@ -1,6 +1,3 @@
-// Panel API'si: statistika, AI javoblari navbati (ko'rish, tahrirlash,
-// tasdiqlash yoki rad etish), muammoli buyurtmalar, sozlamalar va
-// agentni qo'lda ishga tushirish.
 package main
 
 import (

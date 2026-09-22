@@ -38,12 +38,12 @@ func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who s
 	if is.ConversationID <= 0 {
 		return nil, fmt.Errorf("suhbat id yo'q")
 	}
-
+	conversationID, clientID := is.ConversationID, is.ClientID
 	sns := issueNumbers(issues)
 
 	in := &Interaction{
-		ConversationID: is.ConversationID,
-		ClientID:       is.ClientID,
+		ConversationID: conversationID,
+		ClientID:       clientID,
 		Source:         SourceTelegram,
 		Status:         StatusPending,
 		// Zaxira: xodim matni o'z holicha, buyurtma raqami bilan.
@@ -51,9 +51,9 @@ func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who s
 	}
 
 	// Suhbat tarixi — til va kontekst uchun.
-	msgs, err := fetchHistory(is.ConversationID)
+	msgs, err := fetchHistory(conversationID)
 	if err != nil {
-		log.Printf("xodim javobi: suhbat %d tarixini olib bo'lmadi: %v", is.ConversationID, err)
+		log.Printf("xodim javobi: suhbat %d tarixini olib bo'lmadi: %v", conversationID, err)
 	}
 	in.ClientMessage = lastClientMessage(msgs)
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
@@ -73,7 +73,7 @@ func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who s
 	if err := SaveInteraction(DB, in); err != nil {
 		return in, fmt.Errorf("bazaga yozish: %w", err)
 	}
-	log.Printf("xodim javobi: suhbat %d — %s (%s)", is.ConversationID, in.Status, who)
+	log.Printf("xodim javobi: suhbat %d — %s (%s)", conversationID, in.Status, who)
 	return in, nil
 }
 

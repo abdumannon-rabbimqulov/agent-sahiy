@@ -24,23 +24,25 @@ const DefaultTgPollSec = 30
 
 // tgUpdate - getUpdates javobidan kerakli maydonlar.
 type tgUpdate struct {
-	UpdateID int64 `json:"update_id"`
-	Message  *struct {
-		MessageID int64  `json:"message_id"`
-		Text      string `json:"text"`
-		Date      int64  `json:"date"`
-		Chat      struct {
-			ID int64 `json:"id"`
-		} `json:"chat"`
-		From struct {
-			Username  string `json:"username"`
-			FirstName string `json:"first_name"`
-			LastName  string `json:"last_name"`
-		} `json:"from"`
-		ReplyTo *struct {
-			MessageID int64 `json:"message_id"`
-		} `json:"reply_to_message"`
-	} `json:"message"`
+	UpdateID int64        `json:"update_id"`
+	Message  *tgMsgUpdate `json:"message"`
+}
+
+type tgMsgUpdate struct {
+	MessageID int64  `json:"message_id"`
+	Text      string `json:"text"`
+	Date      int64  `json:"date"`
+	Chat      struct {
+		ID int64 `json:"id"`
+	} `json:"chat"`
+	From struct {
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	} `json:"from"`
+	ReplyTo *struct {
+		MessageID int64 `json:"message_id"`
+	} `json:"reply_to_message"`
 }
 
 // StartTelegramPoller guruhdagi javoblarni fon rejimida kuzatadi.
@@ -120,20 +122,15 @@ func PollTelegramReplies() error {
 }
 
 // handleTelegramReply - bitta update. Bot xabariga reply bo'lsa va o'sha
-// xabar ochiq muammoga tegishli bo'lsa, muammo yopiladi.
+// xabar ochiq muammoga tegishli bo'lsa, tegishlicha ishlanadi. Guruhga
+// endi FAQAT "⚠️ Muammoli buyurtma(lar)" turidagi xabarlar ketadi
+// (support/issue_detect.go) — "🆘 Mijoz ..." xabarlari o'chirilgan
+// (support/agent.go — DeliverHelp), shuning uchun boshqa turdagi reply
+// qidirilmaydi.
 func handleTelegramReply(u tgUpdate) {
 	m := u.Message
 	if m == nil || m.ReplyTo == nil || strings.TrimSpace(m.Text) == "" {
 		return
-	}
-
-	// Bitta xabarda bir mijozning bir necha buyurtmasi bo'lishi mumkin —
-	// reply ularning HAMMASINI yopadi.
-	var issues []OrderIssue
-	err := DB.Where("tg_message_id = ? AND state = ?", m.ReplyTo.MessageID, IssueOpen).
-		Order("id asc").Find(&issues).Error
-	if err != nil || len(issues) == 0 {
-		return // bu reply muammoga tegishli emas
 	}
 
 	who := strings.TrimSpace(m.From.FirstName + " " + m.From.LastName)
@@ -144,6 +141,19 @@ func handleTelegramReply(u tgUpdate) {
 		who = "xodim"
 	}
 
+	// Bitta xabarda bir mijozning bir necha buyurtmasi bo'lishi mumkin —
+	// reply ularning HAMMASINI yopadi.
+	var issues []OrderIssue
+	err := DB.Where("tg_message_id = ? AND state = ?", m.ReplyTo.MessageID, IssueOpen).
+		Order("id asc").Find(&issues).Error
+	if err == nil && len(issues) > 0 {
+		handleIssueReply(m, issues, who)
+	}
+}
+
+// handleIssueReply - guruhdagi "muammoli buyurtma" xabariga reply: muammo
+// hal qilindi deb belgilanadi va mijozga javob tayyorlanadi.
+func handleIssueReply(m *tgMsgUpdate, issues []OrderIssue, who string) {
 	var closed []string
 	for i := range issues {
 		if err := ResolveIssue(DB, &issues[i], strings.TrimSpace(m.Text), who, ResolvedViaTelegram); err != nil {

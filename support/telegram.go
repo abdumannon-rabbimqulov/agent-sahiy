@@ -1,5 +1,5 @@
-// Xodimlar guruhiga (Telegram bot) xabar yuborish: help kaliti va
-// muammoli buyurtmalar haqidagi xabarlar shu yerdan ketadi.
+// Xodimlar guruhiga (Telegram bot) xabar yuborish: muammoli
+// buyurtmalar haqidagi xabarlar shu yerdan ketadi.
 package support
 
 import (
@@ -18,12 +18,6 @@ const DefaultTelegramAPI = "https://api.telegram.org"
 
 // TelegramAPI - .env dagi TELEGRAM_API_URL (sinov uchun almashtiriladi).
 func TelegramAPI() string { return envStr("TELEGRAM_API_URL", DefaultTelegramAPI) }
-
-// SendTelegram xodimlar guruhiga xabar yuboradi (help kaliti shu yerga ketadi).
-func SendTelegram(text string) error {
-	_, err := SendTelegramMessage(text, 0)
-	return err
-}
 
 // SendTelegramMessage guruhga xabar yuboradi va Telegram bergan message_id ni
 // qaytaradi. Muammoli buyurtma xabarlarida shu id saqlanadi: xodim o'sha

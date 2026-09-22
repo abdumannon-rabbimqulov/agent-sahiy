@@ -107,6 +107,11 @@ export default function Detail() {
             🖼 Buyurtma/trek raqami rasmdan (OCR) olindi
           </div>
         )}
+        {item.image_no_number && (
+          <div className="badge" style={{ marginBottom: 8 }}>
+            🖼 Mijoz rasm yubordi, lekin raqam topilmadi — pastdagi "Zanjir bosqichlari"dan rasmni tekshiring
+          </div>
+        )}
         {item.chat_reply || <span className="muted">—</span>}
         <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
           {item.read_marked

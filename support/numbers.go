@@ -16,7 +16,9 @@ var (
 	// \b ishlatilmaydi: Go'da u ASCII bo'yicha ishlaydi va "дг" dan
 	// oldin chegara topilmaydi — shuning uchun oldingi belgi o'zi
 	// tekshiriladi.
-	orderSNRe = regexp.MustCompile(`(?i)(?:^|[^0-9A-Za-zА-Яа-я])(?:DG|ДГ)\s?(\d{6,})`)
+	// \s* (bitta emas): OCR "DG" bilan raqam orasiga qator ko'chirish yoki
+	// bir nechta probel tashlab yuborishi mumkin (masalan "DG\n60679679").
+	orderSNRe = regexp.MustCompile(`(?i)(?:^|[^0-9A-Za-zА-Яа-я])(?:DG|ДГ)\s*(\d{6,})`)
 	// Harf bilan boshlanadigan trek: JT…, YT…, P…, SF… va h.k.
 	letterTrackRe = regexp.MustCompile(`(?i)\b([A-Z]{1,2}\d{9,})\b`)
 	// Faqat raqamli uzun trek (masalan 78975877791396).

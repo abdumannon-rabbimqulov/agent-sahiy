@@ -90,6 +90,35 @@ type PendingPickup struct {
 	Branch     string `json:"filial"`
 	Address    string `json:"manzil,omitempty"`
 	ArrivedAt  string `json:"kelgan,omitempty"`
+	// Izoh - filial "Markaziy ombor" bo'lganda tayyor holatda
+	// to'ldiriladi: bu filial mijoz o'zi borib oladigan nuqta emas,
+	// buyurtma hali taqsimlash bosqichida turibdi va tez orada mijoz
+	// belgilagan manzilga jo'natiladi. Model buni qayta talqin
+	// qilmasin deb tayyor matn shu yerda beriladi — promt o'zgarmaydi.
+	Izoh string `json:"izoh,omitempty"`
+}
+
+// centralWarehouseBranch - "filial" markaziy ombor bo'lganda kelib
+// tushadigan nom. Dashboarddan qaytadigan haqiqiy qiymat, kod ichida
+// hardcode qilingan doim bir xil bo'lmasligi mumkin — shuning uchun
+// solishtirish katta-kichik harf va bo'shliqqa sezgir emas.
+const centralWarehouseBranch = "markaziy ombor"
+
+// centralWarehouseNote - Markaziy omborda turgan (hali filialga
+// jo'natilmagan) buyurtma uchun mijozga tayyor holatda beriladigan
+// izoh.
+const centralWarehouseNote = "Buyurtma hozircha Markaziy omborda — tez orada mijoz belgilagan manzilga yetkaziladi."
+
+// pickupBranchPrefix - mijoz o'zi borib olib keta oladigan jismoniy
+// punkt bo'lsa, location_number shu prefiks bilan boshlanadi (masalan
+// "SHOTA-28" — branch_name "SHOTA"). Boshqa qiymat kelsa, bu hali
+// mijozga ochiq punkt emas — Markaziy ombordagi kabi talqin qilinadi.
+const pickupBranchPrefix = "SHOTA"
+
+// isPickupBranch - location_number pickupBranchPrefix bilan
+// boshlansa, bu haqiqiy o'zi-olib-ketish punkti.
+func isPickupBranch(locationNumber string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(locationNumber)), pickupBranchPrefix)
 }
 
 // SentDelivery - kuryerga berilgan yetkazma (delivered = true).
@@ -187,12 +216,17 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 			(o.Status == 8 && expressLineKind(o.ExpressLine) == "delivery")
 
 		if !givenToCourier {
-			out.Pending = append(out.Pending, PendingPickup{
+			branch := firstNonEmpty(o.BranchName, o.LocationNumber, o.City)
+			row := PendingPickup{
 				ExpressNum: o.ExpressNum,
-				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+				Branch:     branch,
 				Address:    trimText(o.BranchAddress, 80),
 				ArrivedAt:  sanaMatnISO(o.CreatedAt),
-			})
+			}
+			if strings.EqualFold(strings.TrimSpace(branch), centralWarehouseBranch) || !isPickupBranch(o.LocationNumber) {
+				row.Izoh = centralWarehouseNote
+			}
+			out.Pending = append(out.Pending, row)
 			continue
 		}
 

@@ -43,6 +43,13 @@ type Interaction struct {
 	// chiqqanini bilsin.
 	NumbersFromImage bool `gorm:"not null;default:false" json:"numbers_from_image"`
 
+	// ImageNoNumber - mijoz rasm yubordi, lekin OCR undan buyurtma/trek
+	// raqamini topa olmadi (past sifat, notanish format va h.k.). Panelda
+	// alohida belgi bilan ko'rsatiladi — xodim rasmni topilmadi holatida
+	// ham bilib, o'zi tekshirib qo'ysin (aks holda "rasm yuborildi, hech
+	// narsa ko'rinmadi" holati ko'zdan yashirin qolardi).
+	ImageNoNumber bool `gorm:"not null;default:false" json:"image_no_number"`
+
 	// MessageIDs - shu murojaatda javob berilayotgan mijoz xabarlari
 	// ("1,2,3"). Javob mijozga yetib borgandan keyin shular o'qilgan
 	// deb belgilanadi.
@@ -52,8 +59,10 @@ type Interaction struct {
 	// ChatResolved - javobdan keyin suhbat "hal qilindi" holatiga
 	// o'tkazilganmi (support tizimida).
 	ChatResolved bool `gorm:"not null;default:false" json:"chat_resolved"`
-	// HelpSent - help matni Telegram guruhga yuborilganmi. help tasdiq
-	// kutmaydi: xodimlar darhol xabardor bo'lishi kerak.
+	// HelpSent - help matni Telegram guruhga yuborilganmi. Hozircha
+	// help xabarlari ("🆘 Mijoz ...") Telegramga umuman yuborilmaydi
+	// (support/agent.go — DeliverHelp o'chirilgan), shuning uchun bu
+	// maydon doim false qoladi — panelda faqat statistika/UI uchun.
 	HelpSent bool `gorm:"not null;default:false" json:"help_sent"`
 
 	// Forced - qo'lda, tekshiruvsiz ishga tushirilganmi (oxirgi so'z
