@@ -2922,6 +2922,11 @@
             "type": "boolean",
             "default": true,
             "description": "Mijozga javob ketgandan keyin suhbat support tizimida 'hal qilindi' (resolution_state=2) holatiga o'tkaziladimi"
+          },
+          "help_to_telegram": {
+            "type": "boolean",
+            "default": true,
+            "description": "AI 'xodim kerak' degan matn (help) Telegram guruhga 'Yordam kerak' xabari bo'lib yuboriladimi"
           }
         }
       },

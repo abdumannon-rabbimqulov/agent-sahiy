@@ -59,11 +59,13 @@ type Interaction struct {
 	// ChatResolved - javobdan keyin suhbat "hal qilindi" holatiga
 	// o'tkazilganmi (support tizimida).
 	ChatResolved bool `gorm:"not null;default:false" json:"chat_resolved"`
-	// HelpSent - help matni Telegram guruhga yuborilganmi. Hozircha
-	// help xabarlari ("🆘 Mijoz ...") Telegramga umuman yuborilmaydi
-	// (support/agent.go — DeliverHelp o'chirilgan), shuning uchun bu
-	// maydon doim false qoladi — panelda faqat statistika/UI uchun.
+	// HelpSent - help matni Telegram guruhga yuborilganmi. Ikki marta
+	// yuborilmasin uchun ham shu maydon tekshiriladi.
 	HelpSent bool `gorm:"not null;default:false" json:"help_sent"`
+	// HelpMessageID - guruhdagi help xabarining id'si. Xodim o'sha
+	// xabarga reply qilsa, javob shu murojaat bo'yicha mijozga ketadi
+	// (support/telegram_updates.go).
+	HelpMessageID int64 `gorm:"index" json:"help_message_id,omitempty"`
 
 	// Forced - qo'lda, tekshiruvsiz ishga tushirilganmi (oxirgi so'z
 	// biz tomondan bo'lsa ham). Panelda ajratib ko'rsatiladi.

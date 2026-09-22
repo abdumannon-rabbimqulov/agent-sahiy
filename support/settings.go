@@ -13,10 +13,11 @@ import (
 
 // Sozlama kalitlari.
 const (
-	SettingAgentEnabled = "agent_enabled" // AI agent umuman ishlaydimi
-	SettingAutoReply    = "auto_reply"    // AI javobi tasdiqsiz ketadimi
-	SettingPollEnabled  = "poll_enabled"  // fon sikli ishlaydimi
-	SettingAutoResolve  = "auto_resolve"  // javobdan keyin suhbat yopiladimi
+	SettingAgentEnabled = "agent_enabled"    // AI agent umuman ishlaydimi
+	SettingAutoReply    = "auto_reply"       // AI javobi tasdiqsiz ketadimi
+	SettingPollEnabled  = "poll_enabled"     // fon sikli ishlaydimi
+	SettingAutoResolve  = "auto_resolve"     // javobdan keyin suhbat yopiladimi
+	SettingHelpToTG     = "help_to_telegram" // help matni guruhga ketadimi
 
 	// Tezlik sozlamalari — panel orqali o'zgartiriladi, darhol kuchga
 	// kiradi (fon sikli har aylanishda qaytadan o'qiydi).
@@ -118,6 +119,7 @@ func AllSettings() map[string]any {
 		SettingAutoReply:    AutoReplyOn(),
 		SettingPollEnabled:  PollEnabled(),
 		SettingAutoResolve:  AutoResolveOn(),
+		SettingHelpToTG:     HelpToTelegramOn(),
 		SettingPollInterval: PollInterval(),
 		SettingBatchSize:    BatchSize(),
 		SettingChatDelay:    ChatDelay(),
@@ -160,6 +162,11 @@ func AutoReplyOn() bool { return GetBoolSetting(SettingAutoReply, false) }
 // PollEnabled - fon sikli yoqilganmi.
 func PollEnabled() bool { return GetBoolSetting(SettingPollEnabled, true) }
 
+// HelpToTelegramOn - AI "xodim kerak" degan matn (help) Telegram
+// guruhga yuboriladimi. Yoqiq bo'lsa har bir shunday murojaat guruhga
+// tushadi; o'chirilsa help faqat bazada va panelda qoladi.
+func HelpToTelegramOn() bool { return GetBoolSetting(SettingHelpToTG, true) }
+
 // seedSettings boshlang'ich sozlamalarni yozadi (bor bo'lsa tegilmaydi).
 func seedSettings(db *gorm.DB) error {
 	defs := map[string]string{
@@ -167,6 +174,7 @@ func seedSettings(db *gorm.DB) error {
 		SettingAutoReply:    "false",
 		SettingPollEnabled:  "true",
 		SettingAutoResolve:  "true",
+		SettingHelpToTG:     "true",
 		SettingPollInterval: strconv.Itoa(envInt("POLL_INTERVAL_SEC", DefaultPollInterval)),
 		SettingBatchSize:    strconv.Itoa(envInt("RATE_LIMIT_COUNT", 5)),
 		SettingChatDelay:    strconv.Itoa(envInt("CHAT_DELAY_SEC", 0)),

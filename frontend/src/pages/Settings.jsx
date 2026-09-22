@@ -119,6 +119,11 @@ export default function Settings() {
         desc="Yoqilsa: AI javobi (chat) mijozga darhol ketadi. O'chiq bo'lsa chat tasdiqlash navbatida kutadi. help esa har doim tasdiqsiz, darhol Telegram guruhga yuboriladi."
       />
       <Toggle
+        name="help_to_telegram" value={s.help_to_telegram} onChange={change}
+        title="Yordam so'rovini guruhga yuborish"
+        desc="Yoqilsa: AI 'xodim kerak' degan har bir murojaat (help) Telegram guruhga '🆘 Yordam kerak' xabari bo'lib tushadi — muammoli buyurtma xabari bilan bir xil ko'rinishda, mijoz id si bilan. Xodim o'sha xabarga reply qilsa, javobi mijozga moslab yuboriladi. O'chirilsa help faqat panelda qoladi."
+      />
+      <Toggle
         name="auto_resolve" value={s.auto_resolve} onChange={change}
         title="Javobdan keyin suhbatni yopish"
         desc="Mijozga javob ketgach suhbat support tizimida 'hal qilindi' holatiga o'tadi. Mijoz yana yozsa, support o'zi qayta ochadi."

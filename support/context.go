@@ -55,12 +55,19 @@ type OrderBrief struct {
 	ExpressNum  string `json:"express_num,omitempty"`
 	ShippedAt   string `json:"shipped_at,omitempty"`
 	PackageName string `json:"package_name,omitempty"`
+
+	// OwnerUserID - buyurtma egasi, faqat u hozirgi mijoz BO'LMAGANDA
+	// to'ldiriladi. Buyurtma raqami bo'yicha qidiruv adminkaning butun
+	// bazasidan qidiradi: mijoz boshqa odamning DG raqamini yozsa ham
+	// buyurtma topiladi. Model buni ko'rib tursin — begona buyurtma
+	// tafsilotini mijozga aytib yubormasin.
+	OwnerUserID int64 `json:"boshqa_mijozning_buyurtmasi,omitempty"`
 }
 
 // BriefOrders - buyurtmalarni ixchamlashtiradi. Sanalar odam o'qiydigan
 // ko'rinishga o'tkaziladi (model xom "2026-08-21 16:43:54" dan foydali
 // narsa yoza olmaydi, faqat token yeydi).
-func BriefOrders(views []OrderView) []OrderBrief {
+func BriefOrders(views []OrderView, clientID int64) []OrderBrief {
 	out := make([]OrderBrief, 0, len(views))
 	for _, v := range views {
 		b := OrderBrief{
@@ -78,6 +85,9 @@ func BriefOrders(views []OrderView) []OrderBrief {
 		}
 		if v.ShippedAt != "" {
 			b.ShippedAt = sanaMatn(v.ShippedAt)
+		}
+		if clientID > 0 && v.UserID > 0 && v.UserID != clientID {
+			b.OwnerUserID = v.UserID
 		}
 		out = append(out, b)
 	}

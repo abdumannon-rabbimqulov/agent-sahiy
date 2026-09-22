@@ -121,12 +121,13 @@ func PollTelegramReplies() error {
 	return nil
 }
 
-// handleTelegramReply - bitta update. Bot xabariga reply bo'lsa va o'sha
-// xabar ochiq muammoga tegishli bo'lsa, tegishlicha ishlanadi. Guruhga
-// endi FAQAT "⚠️ Muammoli buyurtma(lar)" turidagi xabarlar ketadi
-// (support/issue_detect.go) — "🆘 Mijoz ..." xabarlari o'chirilgan
-// (support/agent.go — DeliverHelp), shuning uchun boshqa turdagi reply
-// qidirilmaydi.
+// handleTelegramReply - bitta update. Bot xabariga reply bo'lsa, o'sha
+// xabar qaysi turga tegishliligi aniqlanadi:
+//
+//   - "⚠️ Muammoli buyurtma(lar)" / "🔁 Hali hal bo'lmagan" — ochiq
+//     muammo(lar) yopiladi va mijozga javob tayyorlanadi;
+//   - "🆘 Yordam kerak" — yopiladigan buyurtma yo'q, mijozga javob
+//     xuddi shu yo'l bilan tayyorlanadi.
 func handleTelegramReply(u tgUpdate) {
 	m := u.Message
 	if m == nil || m.ReplyTo == nil || strings.TrimSpace(m.Text) == "" {
@@ -148,6 +149,48 @@ func handleTelegramReply(u tgUpdate) {
 		Order("id asc").Find(&issues).Error
 	if err == nil && len(issues) > 0 {
 		handleIssueReply(m, issues, who)
+		return
+	}
+
+	// "🆘 Yordam kerak" xabariga reply.
+	var in Interaction
+	if err := DB.Where("help_message_id = ?", m.ReplyTo.MessageID).
+		Order("id desc").First(&in).Error; err == nil {
+		handleHelpReply(m, &in, who)
+	}
+}
+
+// handleHelpReply - guruhdagi "yordam kerak" xabariga reply: xodim
+// javobidan mijozga xabar tayyorlanadi. Muammoli buyurtma yo'li bilan
+// bir xil ishlaydi, faqat yopiladigan buyurtma yozuvi yo'q.
+func handleHelpReply(m *tgMsgUpdate, src *Interaction, who string) {
+	log.Printf("telegram: suhbat %d — yordam so'roviga %s javob berdi", src.ConversationID, who)
+
+	// Shu suhbat bo'yicha tasdiqlanmagan AI qoralamasi bo'lsa navbatdan
+	// chiqariladi: javobni endi xodim berdi, eski qoralama keyinroq
+	// tasodifan yuborilib, mijoz ikki xil javob olmasin.
+	supersedePending(src.ConversationID)
+
+	holat := "mijozga javob tayyorlanmadi"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if in, err := AnswerFromStaffHelp(ctx, src, m.Text, who); err != nil {
+		log.Printf("telegram: suhbat %d — mijozga javob tayyorlanmadi: %v", src.ConversationID, err)
+	} else {
+		switch in.Status {
+		case StatusSent:
+			holat = "mijozga yuborildi"
+		case StatusPending:
+			holat = "mijozga javob tayyor — admin tasdig'i kutilmoqda"
+		default:
+			holat = "mijozga javob tayyorlandi, lekin yuborilmadi: " + in.Error
+		}
+	}
+
+	if _, err := SendTelegramMessage(
+		fmt.Sprintf("✅ Javob qabul qilindi (%s).\n%s", who, holat), m.MessageID); err != nil {
+		log.Printf("telegram: tasdiq yuborilmadi: %v", err)
 	}
 }
 

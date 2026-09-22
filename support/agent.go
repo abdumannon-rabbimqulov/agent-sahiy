@@ -305,9 +305,10 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		in.Error = "model na chat, na help qaytardi"
 	}
 
-	// 3. help — Telegram guruhiga YUBORILMAYDI (o'chirilgan, quyidagi
-	//    DeliverHelp izohiga qarang). HelpText baribir saqlanadi va
-	//    statistikada ("needed_staff", support/stats.go) hisoblanadi.
+	// 3. help — Telegram guruhiga tasdiqsiz ketadi (quyida, murojaat
+	//    saqlangandan keyin: DeliverHelp). Sozlamadan o'chirilgan bo'lsa
+	//    faqat bazada qoladi va statistikada hisoblanadi
+	//    ("needed_staff", support/stats.go).
 
 	// 4. chat — mijozga. Avto-javob yoqilgan bo'lsa darhol, aks holda
 	//    admin tasdig'ini kutadi.
@@ -321,14 +322,20 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		}
 
 	default:
-		// Faqat help bor edi, mijozga yoziladigan narsa yo'q va help
-		// endi Telegramga yuborilmaydi — admin panelda ko'rib chiqishi
-		// uchun "pending" holatida qoladi.
+		// Faqat help bor edi, mijozga yoziladigan narsa yo'q: help
+		// guruhga ketadi, murojaatning o'zi esa admin panelda ko'rinib
+		// tursin deb "pending" holatida qoladi.
 		in.Status = StatusPending
 	}
 
 	if err := SaveInteraction(DB, in); err != nil {
 		return in, fmt.Errorf("bazaga yozish: %w", err)
+	}
+	// help — guruhga darhol, tasdiq kutmasdan (murojaat saqlangandan
+	// keyin: xabar id'si shu yozuvga yoziladi). Telegram ishlamasa
+	// murojaat baribir saqlangan, log yetarli.
+	if err := DeliverHelp(in); err != nil {
+		log.Printf("agent: suhbat %d — help guruhga ketmadi: %v", conversationID, err)
 	}
 	log.Printf("agent: suhbat %d — %s, %d bosqich, %s", conversationID, in.Status, in.StepsCount, usage)
 	return in, nil
@@ -373,13 +380,43 @@ func DeliverChat(in *Interaction) error {
 	return nil
 }
 
-// DeliverHelp - O'CHIRILGAN: "🆘 Mijoz ..." xabarlari endi Telegram
-// guruhiga yuborilmaydi. Guruhga faqat "⚠️ Muammoli buyurtma(lar)"
-// turidagi xabarlar ketadi (support/issue_detect.go — notifyIssues).
-// HelpText baribir saqlanadi va statistikada hisoblanadi
-// (support/stats.go — "needed_staff"/"needed_help"), faqat Telegramga
-// yuborilmaydi.
+// helpText - guruhga ketadigan "xodim kerak" xabari. Ko'rinishi
+// muammoli buyurtma xabari bilan BIR XIL (support/notify_text.go):
+// sarlavha, mijoz, suhbat, tana va reply haqida bir qator.
+func helpText(in *Interaction) string {
+	var b strings.Builder
+	b.WriteString(guruhSarlavha("🆘 Yordam kerak", in.ClientID, in.ClientID, in.ConversationID))
+	b.WriteString("\n" + strings.TrimSpace(in.HelpText) + "\n")
+	b.WriteString(guruhFooter(false))
+	return b.String()
+}
+
+// DeliverHelp - AI "xodim aralashuvi kerak" degan matnni (help) Telegram
+// guruhga yuboradi. Mijozga ketadigan javobdan farqli: tasdiq kutmaydi,
+// xodim muammodan imkon qadar tez xabardor bo'lishi kerak.
+//
+// Xabar id'si saqlanadi — xodim o'sha xabarga reply qilsa, javobi
+// mijozga moslab yuboriladi (support/telegram_updates.go), xuddi
+// muammoli buyurtma xabaridagidek.
+//
+// Ikki marta yuborilmaydi (HelpSent) va xodimning o'z javobidan
+// tug'ilgan murojaat qaytib guruhga chiqmaydi (Source == telegram).
 func DeliverHelp(in *Interaction) error {
+	if in == nil || strings.TrimSpace(in.HelpText) == "" {
+		return nil
+	}
+	if in.HelpSent || in.Source == SourceTelegram || !HelpToTelegramOn() {
+		return nil
+	}
+	msgID, err := SendTelegramMessage(helpText(in), 0)
+	if err != nil {
+		return fmt.Errorf("help: %w", err)
+	}
+	in.HelpSent = true
+	in.HelpMessageID = msgID
+	if DB != nil && in.ID > 0 {
+		DB.Model(in).Updates(map[string]any{"help_sent": true, "help_message_id": msgID})
+	}
 	return nil
 }
 
@@ -624,7 +661,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool)
 		out["mijoz_turi"] = CustomerType(rows)
 		// Muammoli buyurtmalarni aniqlash (kerak bo'lsa guruhga xabar ketadi).
 		views := DetectIssues(rows, clientID, conversationID)
-		out["adminka"] = BriefOrders(views)
+		out["adminka"] = BriefOrders(views, clientID)
 		if HasPendingOrders(views) {
 			pending = true
 		}

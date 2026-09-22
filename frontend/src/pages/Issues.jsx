@@ -37,7 +37,10 @@ function Row({ item, onDone }) {
       </div>
 
       <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-        Mijoz {item.client_id} · suhbat #{item.conversation_id} ·
+        Mijoz {item.owner_user_id || item.client_id}
+        {Boolean(item.owner_user_id) && item.owner_user_id !== item.client_id
+          ? ` (so'ragan: ${item.client_id})`
+          : ''} · suhbat #{item.conversation_id} ·
         aniqlangan {fmt.date(item.created_at)}
         {open && item.notify_count > 0 && ` · guruhga ${item.notify_count} marta yozilgan`}
       </div>

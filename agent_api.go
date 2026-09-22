@@ -256,6 +256,7 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		support.SettingAutoReply:    true,
 		support.SettingPollEnabled:  true,
 		support.SettingAutoResolve:  true,
+		support.SettingHelpToTG:     true,
 	}
 	// Qat'iy ro'yxatdan tanlanadigan matn sozlamalari.
 	enums := map[string][]string{

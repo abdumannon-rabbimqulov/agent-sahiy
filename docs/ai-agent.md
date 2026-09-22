@@ -45,8 +45,13 @@ Sabab: `help` mijozga ko'rinmaydi, xodimlar esa muammodan imkon qadar tez
 xabardor bo'lishi kerak. Zanjir yarim yo'lda xato bilan to'xtasa ham, `help`
 matni bo'lsa yuboriladi.
 
-Faqat `help` qaytgan murojaat (mijozga yoziladigan matn yo'q) tasdiqlash
-navbatiga umuman tushmaydi — status darhol `sent` bo'ladi.
+Faqat `help` qaytgan murojaat (mijozga yoziladigan matn yo'q) `pending`
+bo'lib qoladi — help guruhga allaqachon ketgan, murojaatning o'zi esa
+panelda ko'rinib tursin deb navbatda saqlanadi.
+
+`help` guruhga ketishini paneldagi **"Yordam so'rovini guruhga yuborish"**
+tugmasi (`help_to_telegram`, default yoqiq) bilan o'chirish mumkin —
+o'chirilsa help faqat bazada va panelda qoladi.
 
 ## 1.1. Xabarlar qachon "o'qilgan" bo'ladi
 
@@ -371,12 +376,38 @@ raqami sarlavhada bir marta yoziladi). Takroriy eslatmalar ham xuddi
 shunday: eslatma vaqti kelgan buyurtmalar mijoz bo'yicha guruhlanib
 bitta xabarga yig'iladi.
 
+### Guruhdagi xabarlar bir xil ko'rinishda
+
+Guruhga uch turdagi xabar boradi va **uchalasi ham bir xil tuzilishda**
+(`support/notify_text.go`):
+
+```
+<belgi> <sarlavha>
+Mijoz: <egasi>            ← egasi so'ragandan farq qilsa: "(so'ragan: id)"
+Suhbat: #<conversation_id>
+
+<tana>
+
+Hal bo'lgach shu xabarga REPLY qilib yozing — javobingiz mijozga moslab yuboriladi.
+```
+
+| Belgi | Qachon | Reply nima qiladi |
+|---|---|---|
+| ⚠️ Muammoli buyurtma(lar) | yangi muammo topilganda | muammo(lar) yopiladi + mijozga javob |
+| 🔁 Hali hal bo'lmagan | `ISSUE_REMIND_HOURS` o'tganda | xuddi shunday |
+| 🆘 Yordam kerak | model `help` qaytarganda | mijozga javob (yopiladigan buyurtma yo'q) |
+
 **Hal qilish — Telegram guruhdagi reply orqali.** Bot yozgan xabarga xodim
 reply qilsa, o'sha matn yechim bo'lib saqlanadi (`resolved_via: telegram`,
 `resolved_by: @username`) va bot "✅ … hal qilindi" deb tasdiqlaydi.
 Xabarda bir nechta buyurtma bo'lsa, bitta reply **hammasini** yopadi va
 mijozga ham bitta javob tayyorlanadi (promt #5 ga hamma buyurtma raqami
 birga uzatiladi).
+
+🆘 xabariga reply ham xuddi shunday ishlaydi: yopiladigan buyurtma
+yozuvi yo'q, lekin javob mijozga aynan bir yo'l bilan (promt #5 orqali)
+tayyorlanadi. Shu suhbatdagi tasdiqlanmagan AI qoralamasi esa navbatdan
+chiqariladi — mijoz ikki xil javob olmasin.
 
 **Xodim javobi mijozga ham yetadi.** Reply matni promt #5 orqali mijoz
 tiliga moslab qayta yoziladi (ichki atamalarsiz, xushmuomala) va odatdagi
@@ -408,6 +439,20 @@ qayta ko'radi va faqat shundan keyin eslatma yuboradi:
    (`resolved_via: auto`, guruhga "✅ holat o'zgardi" deb yoziladi).
 3. `ISSUE_REMIND_HOURS` (24 soat) o'tgan bo'lsa — eslatma yuboriladi;
    reply endi yangi xabarga qilinadi.
+
+### Buyurtma egasi
+
+Buyurtma raqami bo'yicha qidiruv adminkaning **butun** bazasidan qidiradi
+— foydalanuvchi bo'yicha filtr yo'q. Ya'ni mijoz chatda boshqa odamning
+DG raqamini yozsa, o'sha buyurtma ham topiladi. Shuning uchun:
+
+- muammo yozuvida `owner_user_id` — adminkadagi haqiqiy **egasi**,
+  `client_id` — buyurtmani **so'ragan** odam;
+- guruhga ketadigan xabar egasi bo'yicha ajratiladi: bitta xabarda
+  faqat bitta odamning buyurtmalari bo'ladi. Sarlavha —
+  `Mijoz: <egasi>`, egasi so'ragandan farq qilsa `(so'ragan: <id>)`;
+- modelga beriladigan buyurtmada egasi boshqa bo'lsa
+  `boshqa_mijozning_buyurtmasi: <id>` maydoni qo'shiladi.
 
 **Yopilgan muammo qayta ko'tarilmaydi** — buyurtma hali ham qotib tursa
 ham. Faqat adminkadagi **holat o'zgargan** bo'lsa (masalan 3 → 4) yangi
@@ -459,6 +504,7 @@ curl -X PUT http://localhost:8080/api/settings \
 | `auto_reply` | `true` — mijozga javob (chat) tasdiqsiz ketadi; `false` — chat navbatda kutadi. `help` ga ta'sir qilmaydi |
 | `poll_enabled` | Fon siklini yoqish/o'chirish |
 | `auto_resolve` | Javobdan keyin suhbatni "hal qilindi" holatiga o'tkazish (default yoqilgan) |
+| `help_to_telegram` | `help` matni Telegram guruhga "🆘 Yordam kerak" xabari bo'lib ketadimi (default yoqilgan) |
 | `poll_interval_sec` | Sikllar orasidagi oraliq, 10–3600 s (sekinlashtirish uchun oshiring) |
 | `batch_size` | Bitta siklda nechta suhbat, 1–50 (qolganlari keyingi siklda) |
 | `chat_delay_sec` | Suhbatlar orasidagi tanaffus, 0–600 s |

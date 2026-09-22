@@ -67,6 +67,7 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) []Order
 			is := &OrderIssue{
 				OrderSN:        o.OrderSN,
 				ClientID:       clientID,
+				OwnerUserID:    o.UserID,
 				ConversationID: conversationID,
 				Status:         o.Status,
 				StatusLabel:    v.StatusLabel,
@@ -84,11 +85,16 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) []Order
 
 		case v.Problem && open != nil:
 			// Muammo davom etmoqda — kun sonini yangilab qo'yamiz.
-			DB.Model(open).Updates(map[string]any{
+			upd := map[string]any{
 				"days_since_paid": v.DaysSincePaid,
 				"status":          o.Status,
 				"status_label":    v.StatusLabel,
-			})
+			}
+			if o.UserID > 0 && open.OwnerUserID != o.UserID {
+				upd["owner_user_id"] = o.UserID
+				open.OwnerUserID = o.UserID
+			}
+			DB.Model(open).Updates(upd)
 			v.InReview = true
 
 		case !v.Problem && open != nil:
@@ -106,9 +112,40 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) []Order
 
 	// Bir mijozning bir necha muammosi — bitta xabar. Xodim guruhda
 	// bitta odam haqida beshta alohida xabarni emas, bitta ro'yxatni
-	// ko'radi va bitta reply bilan hammasini yopadi.
-	notifyIssues(fresh)
+	// ko'radi va bitta reply bilan hammasini yopadi. Lekin buyurtmalar
+	// har doim ham bitta odamniki emas (raqam bo'yicha qidiruv butun
+	// adminkadan qidiradi) — shuning uchun EGASI bo'yicha ajratiladi.
+	for _, grp := range groupByOwner(fresh) {
+		notifyIssues(grp)
+	}
 	return views
+}
+
+// issueOwner - muammo kimniki: adminkadagi egasi, u noma'lum bo'lsa
+// so'ragan mijozning o'zi.
+func issueOwner(is *OrderIssue) int64 {
+	if is.OwnerUserID > 0 {
+		return is.OwnerUserID
+	}
+	return is.ClientID
+}
+
+// groupByOwner - muammolarni egasi bo'yicha guruhlaydi (tartibi saqlanadi).
+// Bitta xabarda faqat BITTA odamning buyurtmalari bo'ladi: "Mijoz: X"
+// sarlavhasi hamma qatorga to'g'ri kelsin.
+func groupByOwner(list []*OrderIssue) [][]*OrderIssue {
+	idx := map[int64]int{}
+	var out [][]*OrderIssue
+	for _, is := range list {
+		own := issueOwner(is)
+		if i, ok := idx[own]; ok {
+			out[i] = append(out[i], is)
+			continue
+		}
+		idx[own] = len(out)
+		out = append(out, []*OrderIssue{is})
+	}
+	return out
 }
 
 // issuesText - guruhga ketadigan birinchi xabar: bitta mijozning barcha
@@ -120,12 +157,11 @@ func issuesText(list []*OrderIssue) string {
 	first := list[0]
 
 	var b strings.Builder
-	if len(list) == 1 {
-		fmt.Fprintf(&b, "⚠️ Muammoli buyurtma — %s\n", first.OrderSN)
-	} else {
-		fmt.Fprintf(&b, "⚠️ Muammoli buyurtmalar — %d ta\n", len(list))
+	title := fmt.Sprintf("⚠️ Muammoli buyurtma — %s", first.OrderSN)
+	if len(list) > 1 {
+		title = fmt.Sprintf("⚠️ Muammoli buyurtmalar — %d ta", len(list))
 	}
-	fmt.Fprintf(&b, "Mijoz: %d\n", first.ClientID)
+	b.WriteString(guruhSarlavha(title, issueOwner(first), first.ClientID, first.ConversationID))
 
 	for i, is := range list {
 		b.WriteString("\n")
@@ -140,13 +176,14 @@ func issuesText(list []*OrderIssue) string {
 		}
 	}
 
-	b.WriteString("\nHal bo'lgach shu xabarga REPLY qilib yozing — " +
-		"javobingiz yechim sifatida saqlanadi")
-	if len(list) > 1 {
-		b.WriteString(" (reply yuqoridagi buyurtmalarning hammasini yopadi)")
-	}
-	b.WriteString(".")
+	b.WriteString(guruhFooter(len(list) > 1))
 	return b.String()
+}
+
+// remindKey - eslatma guruhining kaliti: buyurtma egasi + so'ragan mijoz.
+type remindKey struct {
+	Owner  int64
+	Client int64
 }
 
 // remindItem - eslatmaga tushadigan bitta muammo va uning yangi holati.
@@ -166,13 +203,12 @@ func remindText(items []remindItem) string {
 	first := items[0].Issue
 
 	var b strings.Builder
-	if len(items) == 1 {
-		fmt.Fprintf(&b, "🔁 Hali hal bo'lmagan — %s (%d-eslatma)\n",
-			first.OrderSN, first.NotifyCount+1)
-	} else {
-		fmt.Fprintf(&b, "🔁 Hali hal bo'lmagan — %d ta buyurtma\n", len(items))
+	title := fmt.Sprintf("🔁 Hali hal bo'lmagan — %s (%d-eslatma)",
+		first.OrderSN, first.NotifyCount+1)
+	if len(items) > 1 {
+		title = fmt.Sprintf("🔁 Hali hal bo'lmagan — %d ta buyurtma", len(items))
 	}
-	fmt.Fprintf(&b, "Mijoz: %d\n", first.ClientID)
+	b.WriteString(guruhSarlavha(title, issueOwner(first), first.ClientID, first.ConversationID))
 	// Mijozga javob berilgani suhbatga tegishli — hamma buyurtma uchun bir xil.
 	if items[0].Answered {
 		fmt.Fprintf(&b, "Mijozga javob: berilgan (%s)\n", vaqtMatn(items[0].LastAt))
@@ -188,11 +224,7 @@ func remindText(items []remindItem) string {
 		fmt.Fprintf(&b, "Holat: %s · to'langaniga %d kun\n", it.Issue.StatusLabel, it.Days)
 	}
 
-	b.WriteString("\nHal bo'lgach shu xabarga REPLY qiling")
-	if len(items) > 1 {
-		b.WriteString(" (reply yuqoridagi buyurtmalarning hammasini yopadi)")
-	}
-	b.WriteString(".")
+	b.WriteString(guruhFooter(len(items) > 1))
 	return b.String()
 }
 
@@ -258,9 +290,12 @@ func ReviewOpenIssues(db *gorm.DB) error {
 	remind := time.Duration(RemindHours()) * time.Hour
 
 	// Eslatmalar ham mijoz bo'yicha to'planadi: bitta odam uchun bitta
-	// xabar ketadi, har bir buyurtma uchun alohida emas.
-	due := map[int64][]remindItem{}
-	var order []int64
+	// xabar ketadi, har bir buyurtma uchun alohida emas. Kalit — buyurtma
+	// EGASI va uni so'ragan mijoz birgalikda: bitta xabardagi hamma
+	// buyurtma bir odamniki bo'lsin va "mijozga javob berilgan/berilmagan"
+	// satri ham o'sha suhbatga to'g'ri kelsin.
+	due := map[remindKey][]remindItem{}
+	var order []remindKey
 
 	for i := range open {
 		is := &open[i]
@@ -294,6 +329,10 @@ func ReviewOpenIssues(db *gorm.DB) error {
 		if cur == nil {
 			continue
 		}
+		if cur.UserID > 0 && is.OwnerUserID != cur.UserID {
+			db.Model(is).Update("owner_user_id", cur.UserID)
+			is.OwnerUserID = cur.UserID
+		}
 		if !IsProblem(*cur) {
 			res := fmt.Sprintf("Adminkada holat o'zgardi: %q → %q",
 				is.StatusLabel, StatusLabel(cur.Status))
@@ -309,10 +348,11 @@ func ReviewOpenIssues(db *gorm.DB) error {
 			continue
 		}
 
-		if _, ok := due[is.ClientID]; !ok {
-			order = append(order, is.ClientID)
+		key := remindKey{Owner: issueOwner(is), Client: is.ClientID}
+		if _, ok := due[key]; !ok {
+			order = append(order, key)
 		}
-		due[is.ClientID] = append(due[is.ClientID], remindItem{
+		due[key] = append(due[key], remindItem{
 			Issue:    is,
 			Days:     DaysSincePaid(*cur),
 			Answered: answered,
@@ -320,45 +360,11 @@ func ReviewOpenIssues(db *gorm.DB) error {
 		})
 	}
 
-	for _, clientID := range order {
-		sendRemind(db, due[clientID])
+	for _, key := range order {
+		sendRemind(db, due[key])
 	}
 
-	if _, err := CloseStaleIssues(db); err != nil {
-		log.Printf("muammo: eskirganlarni yopish: %v", err)
-	}
 	return nil
-}
-
-// CloseStaleIssues - guruhga kamida bir marta eslatma yuborilgan
-// (notify_count > 0), lekin yaratilganiga IssueStaleHours dan ko'p
-// bo'lgan ochiq muammolarni avtomatik yopadi. Xodim allaqachon
-// xabardor qilingan — guruhda abadiy "ochiq" bo'lib osilib qolmasin.
-func CloseStaleIssues(db *gorm.DB) (int64, error) {
-	hours := IssueStaleHours()
-	if hours <= 0 {
-		return 0, nil
-	}
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
-
-	var stale []OrderIssue
-	if err := db.Where("state = ? AND notify_count > 0 AND created_at < ?", IssueOpen, cutoff).
-		Find(&stale).Error; err != nil {
-		return 0, err
-	}
-
-	var closed int64
-	for i := range stale {
-		is := &stale[i]
-		res := fmt.Sprintf("%d soatdan ko'p eslatilib, javob bo'lmagani uchun avtomatik yopildi", hours)
-		if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err != nil {
-			log.Printf("muammo: %s avtomatik yopilmadi: %v", is.OrderSN, err)
-			continue
-		}
-		notifyResolved(is, res)
-		closed++
-	}
-	return closed, nil
 }
 
 // sendRemind - bitta mijozning eslatmalarini bitta xabar qilib yuboradi

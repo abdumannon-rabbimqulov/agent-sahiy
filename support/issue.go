@@ -50,6 +50,13 @@ type OrderIssue struct {
 	ClientID       int64  `gorm:"index" json:"client_id"`
 	ConversationID int64  `json:"conversation_id"`
 
+	// OwnerUserID - buyurtma adminkada KIMGA tegishli (AdminkaOrder.UserID).
+	// Buyurtma raqami bo'yicha qidiruv foydalanuvchi bo'yicha filtrlanmaydi:
+	// bitta suhbatda boshqa odamlarning DG raqami ham so'ralishi mumkin.
+	// Shu sababli "mijoz" deb har doim shu maydon ko'rsatiladi, so'ragan
+	// odam (ClientID) esa boshqa bo'lsa alohida yoziladi.
+	OwnerUserID int64 `gorm:"index" json:"owner_user_id,omitempty"`
+
 	Status        int    `json:"status"`
 	StatusLabel   string `gorm:"size:64" json:"status_label"`
 	DaysSincePaid int    `json:"days_since_paid"`
@@ -97,25 +104,6 @@ func RemindHours() int {
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
 		return DefaultRemindHours
-	}
-	return n
-}
-
-// DefaultIssueStaleHours - guruhga eslatma yuborilgan, lekin hamon hal
-// bo'lmagan muammo yaratilganidan shuncha soat o'tsa avtomatik
-// yopiladi: xodim allaqachon xabardor qilingan, guruhda abadiy
-// "ochiq" bo'lib osilib qolmasin.
-const DefaultIssueStaleHours = 24
-
-// IssueStaleHours - .env dagi ISSUE_STALE_HOURS (default 24, 0 — o'chirilgan).
-func IssueStaleHours() int {
-	v := envStr("ISSUE_STALE_HOURS", "")
-	if v == "" {
-		return DefaultIssueStaleHours
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return DefaultIssueStaleHours
 	}
 	return n
 }

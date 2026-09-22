@@ -35,11 +35,27 @@ func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who s
 		return nil, fmt.Errorf("muammo berilmagan")
 	}
 	is := &issues[0]
-	if is.ConversationID <= 0 {
+	return answerFromStaff(ctx, is.ConversationID, is.ClientID, issueNumbers(issues), reply, who)
+}
+
+// AnswerFromStaffHelp - "🆘 Yordam kerak" xabariga kelgan reply.
+// Muammoli buyurtma xabaridan farqi faqat shu: yopiladigan buyurtma
+// yozuvi yo'q, mijozga javob esa AYNAN bir xil yo'l bilan tayyorlanadi.
+func AnswerFromStaffHelp(ctx context.Context, src *Interaction, reply, who string) (*Interaction, error) {
+	if src == nil {
+		return nil, fmt.Errorf("murojaat berilmagan")
+	}
+	return answerFromStaff(ctx, src.ConversationID, src.ClientID, nil, reply, who)
+}
+
+// answerFromStaff - ikkala yo'l uchun umumiy qism: xodim matnini LLM
+// bilan mijoz tiliga moslab yozadi va odatdagi qoida bo'yicha yuboradi.
+func answerFromStaff(ctx context.Context, conversationID, clientID int64,
+	sns []string, reply, who string) (*Interaction, error) {
+
+	if conversationID <= 0 {
 		return nil, fmt.Errorf("suhbat id yo'q")
 	}
-	conversationID, clientID := is.ConversationID, is.ClientID
-	sns := issueNumbers(issues)
 
 	in := &Interaction{
 		ConversationID: conversationID,
