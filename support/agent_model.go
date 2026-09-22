@@ -95,6 +95,13 @@ type Interaction struct {
 
 	Steps []AgentStep `gorm:"foreignKey:InteractionID" json:"steps,omitempty"`
 
+	// Alerts - KOD topgan holatlar (masalan posilka mijoz viloyatidan
+	// boshqa filialda). Bazada saqlanmaydi — matni help ichiga
+	// qo'shiladi. Shundaylar bo'lsa xabar guruhga "help guruhga
+	// ketsinmi" sozlamasidan qat'i nazar yuboriladi: bu model fikri
+	// emas, tekshirishni talab qiladigan aniq holat.
+	Alerts []string `gorm:"-" json:"alerts,omitempty"`
+
 	// Overdue - "pending" holatida PendingOverdueHours dan ko'p vaqt
 	// turgan (mijoz qayta yozmagan, admin ham tasdiqlamagan). Bazada
 	// saqlanmaydi — ro'yxat chiqarilganda hisoblanadi.

@@ -6,6 +6,7 @@
 package support
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +57,14 @@ type OrderBrief struct {
 	ShippedAt   string `json:"shipped_at,omitempty"`
 	PackageName string `json:"package_name,omitempty"`
 
+	// Region - buyurtma manzili viloyati (adminkadagi `province`),
+	// Kind - o'sha viloyatda yetkazish qanday ishlashi. Ikkalasi ham
+	// tayyor matn: model uyga yetkazish bor-yo'qligini o'zi taxmin
+	// qilmasin — Toshkent shahri va Toshkent viloyatidan boshqa hamma
+	// joyda mijoz posilkani filialdan o'zi olib ketadi.
+	Region string `json:"viloyat,omitempty"`
+	Kind   string `json:"yetkazish,omitempty"`
+
 	// OwnerUserID - buyurtma egasi, faqat u hozirgi mijoz BO'LMAGANDA
 	// to'ldiriladi. Buyurtma raqami bo'yicha qidiruv adminkaning butun
 	// bazasidan qidiradi: mijoz boshqa odamning DG raqamini yozsa ham
@@ -89,6 +98,10 @@ func BriefOrders(views []OrderView, clientID int64) []OrderBrief {
 		if clientID > 0 && v.UserID > 0 && v.UserID != clientID {
 			b.OwnerUserID = v.UserID
 		}
+		if r := RegionOf(v.Province); r != "" {
+			b.Region = r
+			b.Kind = DeliveryKindText(r)
+		}
 		out = append(out, b)
 	}
 	return out
@@ -100,6 +113,8 @@ type PendingPickup struct {
 	Branch     string `json:"filial"`
 	Address    string `json:"manzil,omitempty"`
 	ArrivedAt  string `json:"kelgan,omitempty"`
+	// Region - mijozning viloyati (dashboarddagi `city`).
+	Region string `json:"mijoz_viloyati,omitempty"`
 	// Izoh - filial "Markaziy ombor" bo'lganda tayyor holatda
 	// to'ldiriladi: bu filial mijoz o'zi borib oladigan nuqta emas,
 	// buyurtma hali taqsimlash bosqichida turibdi va tez orada mijoz
@@ -116,8 +131,20 @@ const centralWarehouseBranch = "markaziy ombor"
 
 // centralWarehouseNote - Markaziy omborda turgan (hali filialga
 // jo'natilmagan) buyurtma uchun mijozga tayyor holatda beriladigan
-// izoh.
+// izoh. Toshkent shahri va viloyati uchun: u yerda kuryer manzilga
+// olib boradi.
 const centralWarehouseNote = "Buyurtma hozircha Markaziy omborda — tez orada mijoz belgilagan manzilga yetkaziladi."
+
+// centralWarehouseRegionNote - xuddi shu holat, lekin mijoz Toshkentdan
+// tashqarida: u yerda uyga yetkazish YO'Q, posilka mijoz viloyatidagi
+// filialga jo'natiladi va mijoz o'sha yerdan oladi.
+const centralWarehouseRegionNote = "Buyurtma hozircha Markaziy omborda — tez orada mijoz " +
+	"viloyatidagi filialga jo'natiladi, mijoz o'sha filialdan olib ketadi."
+
+// pickupNote - posilka mijozning o'z viloyatidagi filialda: olib
+// ketishi kerak, uyiga olib borilmaydi.
+const pickupNote = "Posilka mijoz viloyatidagi filialda turibdi — mijoz o'zi borib olib ketadi " +
+	"(bu viloyatda uyga yetkazish yo'q)."
 
 // pickupBranchPrefix - mijoz o'zi borib olib keta oladigan jismoniy
 // punkt bo'lsa, location_number shu prefiks bilan boshlanadi (masalan
@@ -140,6 +167,10 @@ type SentDelivery struct {
 	Branch     string `json:"filial,omitempty"`
 	SentAt     string `json:"berilgan,omitempty"` // qachon kuryerga berilgan
 	Days       int    `json:"kun"`                // berilganiga necha kun
+	// Region - mijozning viloyati (dashboarddagi `city`).
+	Region string `json:"mijoz_viloyati,omitempty"`
+	// Izoh - kod tayyorlagan izoh (masalan filial viloyati mos emas).
+	Izoh string `json:"izoh,omitempty"`
 }
 
 // DeliveryBrief - yetkazma bo'yicha modelga ketadigan xulosa.
@@ -156,7 +187,35 @@ type DeliveryBrief struct {
 	PickedUp []PickupDone `json:"olib_ketilgan,omitempty"`
 	// Umuman yozuv yo'q.
 	Empty bool `json:"yozuv_yoq,omitempty"`
+	// Kind - mijozning viloyatida yetkazish qanday ishlaydi. Tayyor
+	// matn: model o'zi taxmin qilmasin ("uyga olib boramiz" deb
+	// noto'g'ri va'da bermasin).
+	Kind string `json:"yetkazish_turi,omitempty"`
 }
+
+// BranchMismatch - posilka mijoz viloyatidagi filialda emas.
+//
+// Mijoz manzili (dashboarddagi `city`) va posilka turgan filial
+// (`branch_name`) har xil viloyatga tushsa, posilka mijoz belgilagan
+// manzilga yetmagan bo'ladi. Bu kod chiqaradigan xulosa — model buni
+// o'zi topishi shart emas, xodimga yuboriladi.
+type BranchMismatch struct {
+	ExpressNum   string
+	Region       string // mijoz viloyati
+	Branch       string // posilka turgan filial
+	BranchRegion string // o'sha filial qaysi viloyatda
+}
+
+// Text - xodimlar guruhiga va modelga ketadigan bir qatorlik izoh.
+func (m BranchMismatch) Text() string {
+	return fmt.Sprintf("%s — posilka mijoz viloyatiga (%s) emas, %s filialiga (%s) tushgan",
+		m.ExpressNum, m.Region, m.Branch, m.BranchRegion)
+}
+
+// mismatchNote - shu holatda modelga beriladigan tayyor ko'rsatma.
+// Mijozga va'da berilmaydi: xodim tekshiradi.
+const mismatchNote = "Posilka mijoz viloyatidagi filialda emas — xodimga topshirildi. " +
+	"Mijozga faqat \"tekshirilmoqda\" deb ayt, sabab yoki muddat aytma."
 
 // PickupDone - o'zi-olib-ketish turidagi jo'natma, mijoz allaqachon
 // filialdan olib ketgan (express_line "Pickup", status=2,
@@ -165,6 +224,8 @@ type PickupDone struct {
 	ExpressNum string `json:"express_num,omitempty"`
 	Branch     string `json:"filial,omitempty"`
 	PickedAt   string `json:"olingan,omitempty"`
+	// Region - mijozning viloyati (dashboarddagi `city`).
+	Region string `json:"mijoz_viloyati,omitempty"`
 }
 
 // expressLineKind - express_line matnidan jo'natma turini aniqlaydi:
@@ -202,19 +263,40 @@ const MaxDeliveryRows = 5
 //
 // Ikkala ro'yxat ham yangisidan eskisiga saralanadi va MaxDeliveryRows
 // tadan oshmaydi.
-func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
+func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 	var out DeliveryBrief
+	var bad []BranchMismatch
 	now := time.Now()
 
 	for _, o := range orders {
+		// Mijoz viloyati dashboarddagi `city` da keladi ("Toshkent
+		// shahri", "Qoraqalpog'iston"), posilka turgan joy esa
+		// `branch_name` da ("SHOTA", "Nukus"). Ikkalasi bir viloyatga
+		// tushmasa — posilka mijoz belgilagan manzilga ketmagan.
+		region := RegionOf(o.City)
+		branchRegion := RegionOf(o.BranchName)
+		mismatch := region != "" && branchRegion != "" && region != branchRegion
+		if mismatch {
+			bad = append(bad, BranchMismatch{
+				ExpressNum:   o.ExpressNum,
+				Region:       region,
+				Branch:       firstNonEmpty(o.BranchName, o.LocationNumber),
+				BranchRegion: branchRegion,
+			})
+		}
+		if out.Kind == "" {
+			out.Kind = DeliveryKindText(region)
+		}
+
 		// O'zi-olib-ketish turi + status=7 + delivered=true — mijoz
 		// buyurtmani ALLAQACHON o'zi olib ketgan. Boshqa bucketlarga
 		// (ayniqsa "tekshirish_kerak"ga) tushmasin — yakunlangan holat.
 		if o.Delivered && o.Status == 7 && expressLineKind(o.ExpressLine) == "pickup" {
 			out.PickedUp = append(out.PickedUp, PickupDone{
 				ExpressNum: o.ExpressNum,
-				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 				PickedAt:   sanaMatnISO(o.DeliveredAt),
+				Region:     region,
 			})
 			continue
 		}
@@ -226,15 +308,33 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 			(o.Status == 8 && expressLineKind(o.ExpressLine) == "delivery")
 
 		if !givenToCourier {
-			branch := firstNonEmpty(o.BranchName, o.LocationNumber, o.City)
+			branch := firstNonEmpty(o.BranchName, o.LocationNumber)
 			row := PendingPickup{
 				ExpressNum: o.ExpressNum,
 				Branch:     branch,
 				Address:    trimText(o.BranchAddress, 80),
 				ArrivedAt:  sanaMatnISO(o.CreatedAt),
+				Region:     region,
 			}
-			if strings.EqualFold(strings.TrimSpace(branch), centralWarehouseBranch) || !isPickupBranch(o.LocationNumber) {
-				row.Izoh = centralWarehouseNote
+			// Izoh tanlash tartibi: avval xato holat, keyin "hali yo'lda",
+			// oxirida oddiy "kelib bo'ldi, olib keting".
+			central := strings.EqualFold(strings.TrimSpace(branch), centralWarehouseBranch)
+			// Filial tanilmasa va SHOTA punkti ham bo'lmasa — bu hali
+			// mijozga ochiq punkt emas, Markaziy ombordagidek talqin
+			// qilinadi.
+			notOpenYet := branchRegion == "" && !isPickupBranch(o.LocationNumber)
+			switch {
+			case mismatch:
+				// Viloyat mos emas — bu hamma izohdan muhimroq.
+				row.Izoh = mismatchNote
+			case central || notOpenYet:
+				if HomeDeliveryRegion(region) || region == "" {
+					row.Izoh = centralWarehouseNote
+				} else {
+					row.Izoh = centralWarehouseRegionNote
+				}
+			case region != "" && !HomeDeliveryRegion(region):
+				row.Izoh = pickupNote
 			}
 			out.Pending = append(out.Pending, row)
 			continue
@@ -246,16 +346,20 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 			// tekshiriladiganlar qatoriga tushadi.
 			out.NeedCheck = append(out.NeedCheck, SentDelivery{
 				ExpressNum: o.ExpressNum,
-				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
+				Region:     region,
+				Izoh:       mismatchIzoh(mismatch),
 			})
 			continue
 		}
 
 		row := SentDelivery{
 			ExpressNum: o.ExpressNum,
-			Branch:     firstNonEmpty(o.BranchName, o.LocationNumber, o.City),
+			Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 			SentAt:     sanaMatnISO(o.DeliveredAt),
 			Days:       int(now.Sub(t).Hours() / 24),
+			Region:     region,
+			Izoh:       mismatchIzoh(mismatch),
 		}
 		if row.Days < 0 {
 			row.Days = 0 // sana kelajakda — 0 kun deb hisoblaymiz
@@ -283,7 +387,15 @@ func BriefDelivery(orders []DeliveryOrder) DeliveryBrief {
 
 	out.Empty = len(out.Pending) == 0 && len(out.InDelivery) == 0 &&
 		len(out.NeedCheck) == 0 && len(out.PickedUp) == 0
-	return out
+	return out, bad
+}
+
+// mismatchIzoh - viloyat mos kelmagan qatorga qo'yiladigan izoh.
+func mismatchIzoh(mismatch bool) string {
+	if mismatch {
+		return mismatchNote
+	}
+	return ""
 }
 
 // capRows - ro'yxatni MaxDeliveryRows tagacha qisqartiradi.

@@ -144,6 +144,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	var (
 		usage    Usage
 		dataCtx  []string // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
+		alerts   []string // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
 		langCtx  string   // birinchi promtdan chiqqan til ("uzb"/"rus"), bir marta uzatiladi
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
@@ -269,8 +270,9 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
 			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
-			data, _ := fetchSystemData(a, clientID, conversationID)
+			data, _, found := fetchSystemData(a, clientID, conversationID)
 			dataCtx = append(dataCtx, data)
+			alerts = append(alerts, found...)
 		}
 
 		next, more := a.NextPromt()
@@ -297,6 +299,12 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	}
 	in.StepsCount = len(in.Steps)
 	in.applyUsage(usage)
+
+	// Kod topgan holatlar model nima yozganidan qat'i nazar xodimga
+	// yetkaziladi: model ularni ko'rmasligi yoki "muammo yo'q" deb
+	// o'tkazib yuborishi mumkin, lekin bu tekshirishni talab qiladi.
+	in.Alerts = alerts
+	in.HelpText = withAlerts(in.HelpText, alerts)
 
 	if in.Error != "" {
 		in.Status = StatusFailed
@@ -380,6 +388,26 @@ func DeliverChat(in *Interaction) error {
 	return nil
 }
 
+// withAlerts - kod topgan holatlarni help matniga qo'shadi. Model help
+// yozmagan bo'lsa ham xabar ketadi; takrorlanmaydi.
+func withAlerts(help string, alerts []string) string {
+	if len(alerts) == 0 {
+		return help
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(help))
+	for _, a := range alerts {
+		if strings.Contains(b.String(), a) {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("⚠️ " + a)
+	}
+	return b.String()
+}
+
 // helpText - guruhga ketadigan "xodim kerak" xabari. Ko'rinishi
 // muammoli buyurtma xabari bilan BIR XIL (support/notify_text.go):
 // sarlavha, mijoz, suhbat, tana va reply haqida bir qator.
@@ -405,7 +433,12 @@ func DeliverHelp(in *Interaction) error {
 	if in == nil || strings.TrimSpace(in.HelpText) == "" {
 		return nil
 	}
-	if in.HelpSent || in.Source == SourceTelegram || !HelpToTelegramOn() {
+	if in.HelpSent || in.Source == SourceTelegram {
+		return nil
+	}
+	// Sozlama o'chirilgan bo'lsa ham, kod topgan holat (Alerts) bo'lsa
+	// xabar baribir ketadi.
+	if !HelpToTelegramOn() && len(in.Alerts) == 0 {
 		return nil
 	}
 	msgID, err := SendTelegramMessage(helpText(in), 0)
@@ -625,8 +658,15 @@ func imageStepResult(img ImageNumbers, natija string) string {
 // Modelga XOM javob berilmaydi: bitta buyurtma ~10 KB, undan javob yozish
 // uchun 6-7 maydon kerak. Shu yerda saralanadi (context.go) — token ham
 // tejaladi, model ham chalkashmaydi.
-func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool) {
+//
+// Uchinchi qaytadigan qiymat — KOD topgan, xodimga aytilishi kerak
+// bo'lgan holatlar (masalan posilka mijoz viloyatidan boshqa filialda).
+// Ular modelga ham izoh bo'lib boradi, ham "🆘 Yordam kerak" xabariga
+// qo'shiladi: model ularni o'zi topishi yoki o'tkazib yuborishi mumkin
+// emas.
+func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool, []string) {
 	out := map[string]any{}
+	var alerts []string
 	numbers := a.Numbers()
 	// pending - mijozning hali kelmagan (yakunlanmagan) buyurtmasi
 	// topildimi. Model muammoni tushunmaganda shu bo'yicha qaror
@@ -690,8 +730,11 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool)
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
 				rows, errs = appendResult(rows, errs, r, err)
 			}
-			brief := BriefDelivery(rows)
+			brief, bad := BriefDelivery(rows)
 			out["yetkazma"] = brief
+			for _, m := range bad {
+				alerts = append(alerts, m.Text())
+			}
 			// Mijozning qo'liga tegmagan yetkazmasi: filialda kutayotgani,
 			// yo'ldagisi va holati noaniq bo'lgani — uchalasi ham
 			// "hali olinmagan" hisoblanadi.
@@ -706,9 +749,9 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool)
 
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending
+		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending, alerts
 	}
-	return string(raw), pending
+	return string(raw), pending, alerts
 }
 
 // HasPendingOrders - mijozda hali kelmagan (yakunlanmagan) buyurtma bormi.

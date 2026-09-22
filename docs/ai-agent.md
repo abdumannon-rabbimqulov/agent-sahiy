@@ -179,7 +179,8 @@ tejaladi, model ham chalkashmaydi:
   "yetkazma": {
     "olinmagan": [
       { "express_num": "JT3172404674793", "filial": "Chirchiq",
-        "manzil": "Toshkent viloyati, Chirchiq shahri…", "kelgan": "17-avgust" }
+        "manzil": "Toshkent viloyati, Chirchiq shahri…", "kelgan": "17-avgust",
+        "mijoz_viloyati": "Toshkent viloyati" }
     ],
     "yetkazilmoqda": [
       { "express_num": "JT3172404674793", "filial": "SAHIY JIZZAX",
@@ -188,7 +189,8 @@ tejaladi, model ham chalkashmaydi:
     "tekshirish_kerak": [
       { "express_num": "JT7639647959095", "filial": "SAHIY JIZZAX",
         "berilgan": "26-iyul", "kun": 40 }
-    ]
+    ],
+    "yetkazish_turi": "kuryer mijozning manziliga olib boradi (Toshkent viloyati)"
   }
 }
 ```
@@ -199,10 +201,45 @@ tejaladi, model ham chalkashmaydi:
 | `olinmagan` | yetkazmada `delivered: false` | Mijozga qaysi filialda ekanini aytish |
 | `yetkazilmoqda` | `delivered: true`, **3 kungacha** | "Yo'lda, kuryer bog'lanadi" deb aytish |
 | `tekshirish_kerak` | `delivered: true`, **3 kundan oshgan** | Holati noaniq — mijozdan so'rash va xodimga topshirish |
+| `mijoz_viloyati` | yetkazmadagi `city` | Viloyatni model taxmin qilmasin |
+| `yetkazish_turi` | viloyatdan hisoblanadi | Uyga yetkazish bormi yoki filialdan olib ketiladimi |
+| `viloyat` / `yetkazish` (adminka) | buyurtmadagi `province` | Xuddi shu, buyurtma tomonida |
 
 Sanalar odam o'qiydigan ko'rinishga o'tkaziladi ("21-avgust"), manzil,
 ism va summa kabi maydonlar umuman yuborilmaydi. Har ro'yxatdan eng
 ko'pi 5 ta yozuv ketadi (`MaxDeliveryRows`), yangisidan eskisiga.
+
+### Viloyat: uyga yetkazish faqat Toshkentda
+
+**Toshkent shahri va Toshkent viloyatida** kuryer mijozning manziliga
+olib boradi. **Qolgan hamma viloyatda** uyga yetkazish yo'q — mijoz
+posilkani o'z viloyatidagi filialdan (punktdan) olib ketadi.
+
+Buni model taxmin qilmaydi: kod tayyor matn beradi (`yetkazish_turi`,
+har bir qatorda `mijoz_viloyati`, buyurtma tomonida `viloyat` va
+`yetkazish`). Viloyat nomi `support/region.go` da bir ko'rinishga
+keltiriladi — apostrof, katta-kichik harf va filial nomlaridagi
+farqlar hisobga olinadi (`SAHIY GULISTION` → Sirdaryo, `SHOTA` →
+Toshkent shahri, `Nukus` → Qoraqalpog'iston).
+
+### Filial viloyati mos kelmasa — xodimga
+
+Mijozning viloyati (`city`) bilan posilka turgan filial
+(`branch_name`) har xil viloyatga tushsa, posilka mijoz belgilagan
+manzilga ketmagan bo'ladi. Kod buni o'zi topadi:
+
+- yetkazma qatoriga izoh qo'yiladi: mijozga **faqat "tekshirilmoqda"**
+  deb aytiladi, sabab ham, muddat ham va'da qilinmaydi;
+- xuddi shu holat `help` matniga qo'shiladi va guruhga
+  "🆘 Yordam kerak" xabari bo'lib ketadi — **"help guruhga ketsinmi"
+  sozlamasi o'chirilgan bo'lsa ham**: bu model fikri emas, aniq holat.
+
+Filial nomi tanilmasa (masalan "Markaziy ombor") hech qanday xulosa
+chiqarilmaydi — noma'lum nom "mos emas" deb hisoblanmaydi.
+
+Markaziy omborda turgan posilka uchun izoh ham viloyatga qarab
+beriladi: Toshkentda "manzilingizga yetkaziladi", boshqa viloyatda
+"viloyatingizdagi filialga jo'natiladi, o'sha yerdan olasiz".
 
 ### `delivered: true` — "yetkazildi" DEGANI EMAS
 
