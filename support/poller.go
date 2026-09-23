@@ -23,6 +23,12 @@ const (
 	DefaultChatsPages   = 6   // nechta sahifa ko'riladi
 )
 
+// pollPageCursor - keyingi siklda qaysi sahifadan boshlanadi. Ro'yxat
+// serverda yangilik bo'yicha saralanmagani uchun doim 1-sahifadan
+// boshlasak, tez-tez yangilanadigan suhbatlar doim old sahifalarda turib,
+// uzoqdagi eski javobsizlarga navbat yetmay qoladi (qarang: fetchChatsFrom).
+var pollPageCursor atomic.Int64
+
 // StartPoller fon siklini ishga tushiradi: har `poll_interval_sec` da
 // yangi mijoz xabari bo'lgan suhbatlarni topib, zanjirni yuritadi.
 //
@@ -80,9 +86,18 @@ func PollOnce(ctx context.Context) error {
 	pages := envInt("CHATS_PAGES", DefaultChatsPages)
 	limit := envInt("CHATS_LIMIT", DefaultChatsLimit)
 
-	chats, err := fetchChats(pages, limit)
+	startPage := int(pollPageCursor.Load())
+	if startPage < 1 {
+		startPage = 1
+	}
+	chats, reachedEnd, err := fetchChatsFrom(startPage, pages, limit)
 	if err != nil {
 		return err
+	}
+	if reachedEnd {
+		pollPageCursor.Store(1) // ro'yxat tugadi — keyingi safar boshidan
+	} else {
+		pollPageCursor.Store(int64(startPage + pages))
 	}
 
 	todo := pendingChats(chats)
@@ -364,4 +379,18 @@ func fetchChats(pages, limit int) ([]Chat, error) {
 	return withToken(func(baseURL, token string) ([]Chat, error) {
 		return FetchAllChats(baseURL, token, pages, limit)
 	})
+}
+
+// fetchChatsFrom - fetchChats bilan bir xil, lekin sahifa oynasini
+// `startPage`dan boshlaydi (pollPageCursor uchun).
+func fetchChatsFrom(startPage, pages, limit int) ([]Chat, bool, error) {
+	type result struct {
+		chats      []Chat
+		reachedEnd bool
+	}
+	res, err := withToken(func(baseURL, token string) (result, error) {
+		chats, reachedEnd, err := FetchChatsFrom(baseURL, token, startPage, pages, limit)
+		return result{chats, reachedEnd}, err
+	})
+	return res.chats, res.reachedEnd, err
 }

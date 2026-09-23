@@ -91,13 +91,32 @@ func FetchChats(baseURL, token string, f ChatFilter) ([]Chat, error) {
 	return out.Data.Chats, nil
 }
 
-// FetchAllChats bir necha sahifani yig'ib qaytaradi.
+// FetchAllChats bir necha sahifani yig'ib qaytaradi (1-sahifadan boshlab).
 //
 // Server ro'yxatni yangilik bo'yicha saralamaydi: eng yangi xabarlar
 // oxirgi sahifalarda ham bo'lishi mumkin. Shuning uchun poller bir
 // sahifa bilan cheklanmaydi — bir nechta sahifa olinadi va keyin
 // o'zimiz saralaymiz.
 func FetchAllChats(baseURL, token string, pages, limit int) ([]Chat, error) {
+	all, _, err := FetchChatsFrom(baseURL, token, 1, pages, limit)
+	return all, err
+}
+
+// FetchChatsFrom `startPage`dan boshlab `pages` ta sahifani yig'ib qaytaradi.
+// Ro'yxat butunlay tugagan bo'lsa (oxirgi sahifadan kam natija kelsa yoki
+// sahifa bo'sh bo'lsa) ikkinchi qiymat `true` bo'ladi — chaqiruvchi
+// keyingi safar 1-sahifadan qayta boshlashi kerakligini shundan biladi.
+//
+// Nega startPage kerak: server javobsiz suhbatlarni ustunlik bilan
+// bermaydi, shunchaki sahifalab beradi. Doim 1-sahifadan boshlasak, tez-tez
+// yangilanadigan (yangi mijozlar yozgan) suhbatlar doim birinchi sahifalarda
+// turib, uzoqdagi eski javobsiz suhbatlarga hech qachon navbat yetmaydi.
+// Sahifa oynasini har chaqiruvda surib borish shu muammoni hal qiladi:
+// vaqt o'tishi bilan butun ro'yxat aylanib chiqiladi.
+func FetchChatsFrom(baseURL, token string, startPage, pages, limit int) ([]Chat, bool, error) {
+	if startPage < 1 {
+		startPage = 1
+	}
 	if pages < 1 {
 		pages = 1
 	}
@@ -107,15 +126,18 @@ func FetchAllChats(baseURL, token string, pages, limit int) ([]Chat, error) {
 
 	seen := map[int64]bool{}
 	var all []Chat
-	for p := 1; p <= pages; p++ {
+	reachedEnd := false
+	for i := 0; i < pages; i++ {
+		p := startPage + i
 		part, err := FetchChats(baseURL, token, ChatFilter{Page: p, Limit: limit})
 		if err != nil {
 			if len(all) > 0 {
 				break // bir qismi olindi — shuning bilan davom etamiz
 			}
-			return nil, err
+			return nil, false, err
 		}
 		if len(part) == 0 {
+			reachedEnd = true
 			break
 		}
 		for _, c := range part {
@@ -125,10 +147,11 @@ func FetchAllChats(baseURL, token string, pages, limit int) ([]Chat, error) {
 			}
 		}
 		if len(part) < limit {
+			reachedEnd = true
 			break // oxirgi sahifa
 		}
 	}
-	return all, nil
+	return all, reachedEnd, nil
 }
 
 // ChatsJSON suhbatlarni tayyor JSON matn qilib qaytaradi:
