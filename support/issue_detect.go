@@ -33,11 +33,18 @@ func sanaMatn(s string) string {
 }
 
 // DetectIssues buyurtmalarni ko'rib chiqadi:
-//   - yangi muammolarni ochadi va guruhga xabar beradi,
+//   - yangi muammolarni ochadi,
 //   - muammosi yo'qolganlarini avtomatik yopadi.
 //
-// Qaytadigan qiymat — modelga beriladigan boyitilgan ro'yxat.
-func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) []OrderView {
+// Guruhga XABAR YUBORMAYDI: yangi ochilgan muammolar ikkinchi qiymat
+// bo'lib qaytadi, chaqiruvchi esa ularni AI xulosasi bilan BITTA xabar
+// qilib yuboradi (agent.go: DeliverStaffNotice). Ilgari xabar shu yerdan
+// darhol ketardi va bitta muammo guruhga IKKI marta — avval
+// "⚠️ Muammoli buyurtma", so'ng "🆘 Yordam kerak" bo'lib, ikki xil
+// ko'rinishda — tushardi.
+//
+// Birinchi qaytadigan qiymat — modelga beriladigan boyitilgan ro'yxat.
+func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]OrderView, []*OrderIssue) {
 	views := make([]OrderView, 0, len(orders))
 	// Yangi ochilgan muammolar shu yerda to'planadi: bitta mijozning
 	// hamma muammosi guruhga BITTA xabar bo'lib ketadi.
@@ -110,15 +117,41 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) []Order
 		views = append(views, v)
 	}
 
-	// Bir mijozning bir necha muammosi — bitta xabar. Xodim guruhda
-	// bitta odam haqida beshta alohida xabarni emas, bitta ro'yxatni
-	// ko'radi va bitta reply bilan hammasini yopadi. Lekin buyurtmalar
-	// har doim ham bitta odamniki emas (raqam bo'yicha qidiruv butun
-	// adminkadan qidiradi) — shuning uchun EGASI bo'yicha ajratiladi.
-	for _, grp := range groupByOwner(fresh) {
-		notifyIssues(grp)
+	return views, fresh
+}
+
+// NotifyIssues yangi ochilgan muammolarni guruhga chiqaradi.
+//
+// Bir mijozning bir necha muammosi — bitta xabar. Xodim guruhda bitta
+// odam haqida beshta alohida xabarni emas, bitta ro'yxatni ko'radi va
+// bitta reply bilan hammasini yopadi. Lekin buyurtmalar har doim ham
+// bitta odamniki emas (raqam bo'yicha qidiruv butun adminkadan qidiradi)
+// — shuning uchun EGASI bo'yicha ajratiladi.
+//
+// `help` — AI ning shu suhbat bo'yicha xulosasi. Bo'sh bo'lmasa, alohida
+// "🆘 Yordam kerak" xabari sifatida emas, BIRINCHI xabarning ichiga
+// qo'shib yuboriladi: bitta muammo — bitta xabar.
+//
+// Qaytadigan qiymat — birinchi xabarning id'si (AI xulosasi shunga
+// ilingan; reply ham shunga tushadi). Hech narsa ketmasa 0.
+func NotifyIssues(list []*OrderIssue, help string) int64 {
+	var firstID int64
+	for i, grp := range groupByOwner(list) {
+		// Xulosa faqat birinchi xabarga qo'shiladi — u suhbatga tegishli,
+		// har bir buyurtma egasiga alohida takrorlanishi shart emas.
+		text := ""
+		if i == 0 {
+			text = help
+		}
+		msgID, err := notifyIssues(grp, text)
+		if err != nil {
+			continue
+		}
+		if i == 0 {
+			firstID = msgID
+		}
 	}
-	return views
+	return firstID
 }
 
 // issueOwner - muammo kimniki: adminkadagi egasi, u noma'lum bo'lsa
@@ -149,8 +182,9 @@ func groupByOwner(list []*OrderIssue) [][]*OrderIssue {
 }
 
 // issuesText - guruhga ketadigan birinchi xabar: bitta mijozning barcha
-// yangi muammolari bitta matnda.
-func issuesText(list []*OrderIssue) string {
+// yangi muammolari bitta matnda. `help` bo'sh bo'lmasa, AI ning shu
+// suhbat bo'yicha xulosasi ham shu xabarga qo'shiladi.
+func issuesText(list []*OrderIssue, help string) string {
 	if len(list) == 0 {
 		return ""
 	}
@@ -176,8 +210,19 @@ func issuesText(list []*OrderIssue) string {
 		}
 	}
 
+	b.WriteString(aiXulosa(help))
 	b.WriteString(guruhFooter(len(list) > 1))
 	return b.String()
+}
+
+// aiXulosa - AI ning muammo haqidagi qisqa xulosasi (guruh xabarining
+// ichida, alohida xabar emas). Bo'sh bo'lsa hech narsa qo'shilmaydi.
+func aiXulosa(help string) string {
+	help = strings.TrimSpace(help)
+	if help == "" {
+		return ""
+	}
+	return "\nAI xulosasi:\n" + help + "\n"
 }
 
 // remindKey - eslatma guruhining kaliti: buyurtma egasi + so'ragan mijoz.
@@ -232,14 +277,14 @@ func remindText(items []remindItem) string {
 // ro'yxatdagi hamma muammoga yozib qo'yadi — reply shu xabarga qilinadi
 // va hammasini birdan yopadi. Telegram ishlamasa muammolar baribir
 // bazada qoladi (eslatma aylanishida qayta uriniladi).
-func notifyIssues(list []*OrderIssue) {
+func notifyIssues(list []*OrderIssue, help string) (int64, error) {
 	if len(list) == 0 {
-		return
+		return 0, nil
 	}
-	msgID, err := SendTelegramMessage(issuesText(list), 0)
+	msgID, err := SendTelegramMessage(issuesText(list, help), 0)
 	if err != nil {
 		log.Printf("muammo: %s guruhga yuborilmadi: %v", issueSNs(list), err)
-		return
+		return 0, err
 	}
 	now := time.Now()
 	for _, is := range list {
@@ -250,6 +295,7 @@ func notifyIssues(list []*OrderIssue) {
 			"tg_message_id": msgID, "notify_count": is.NotifyCount, "last_notified_at": &now,
 		})
 	}
+	return msgID, nil
 }
 
 // issueSNs - log uchun buyurtma raqamlari.

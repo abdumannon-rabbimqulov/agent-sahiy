@@ -6,6 +6,8 @@ package support
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -233,12 +235,18 @@ func RejectStalePending(db *gorm.DB) (int64, error) {
 	return res.RowsAffected, nil
 }
 
-// ListInteractions ro'yxat (status bo'yicha filtr, sahifalash).
+// ListInteractions ro'yxat (status va id bo'yicha filtr, sahifalash).
 // Har doim eng yangisidan eskisiga qarab chiqadi ("id desc").
 // "pending" uchun har bir yozuvga Overdue belgisi ham hisoblanadi
 // (qarang: PendingOverdueHours) — uzoq kutganini panelda ajratib
 // ko'rsatish uchun, tartibga tegmaydi.
-func ListInteractions(db *gorm.DB, status string, page, limit int) ([]Interaction, int64, error) {
+//
+// `search` — id bo'yicha qidiruv. Panelda odam qo'liga tushadigan uch xil
+// raqam bor va ular bir-biriga o'xshaydi, shuning uchun qaysi biri
+// yozilgani so'ralmaydi — UCHALASI ham tekshiriladi: murojaat id'si,
+// suhbat id'si (#62139) va mijoz id'si (8485098). Raqam bo'lmasa qidiruv
+// e'tiborga olinmaydi.
+func ListInteractions(db *gorm.DB, status, search string, page, limit int) ([]Interaction, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -248,6 +256,9 @@ func ListInteractions(db *gorm.DB, status string, page, limit int) ([]Interactio
 	q := db.Model(&Interaction{})
 	if status != "" {
 		q = q.Where("status = ?", status)
+	}
+	if id, ok := searchID(search); ok {
+		q = q.Where("id = ? OR conversation_id = ? OR client_id = ?", id, id, id)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -265,6 +276,26 @@ func ListInteractions(db *gorm.DB, status string, page, limit int) ([]Interactio
 		}
 	}
 	return list, total, err
+}
+
+// searchID - qidiruv matnidan id ajratadi. Panelda raqam turli
+// ko'rinishda yoziladi: "#62139", "8485098", bo'shliq bilan. Shulardan
+// raqam bo'lmagan hamma belgi tashlanadi. Raqam qolmasa — qidiruv yo'q.
+func searchID(s string) (int64, bool) {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(b.String(), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
 }
 
 // applyUsage - sarflangan tokenlar va hisoblangan narxni interaksiyaga

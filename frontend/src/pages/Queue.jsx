@@ -105,6 +105,10 @@ function Item({ item, onDone }) {
 
 export default function Queue() {
   const [status, setStatus] = useState('pending')
+  // query — qidiruv maydonidagi matn, q — yuborilgani. Ikkisi alohida:
+  // har harfda so'rov ketmasin, faqat Enter yoki tugma bosilganda.
+  const [query, setQuery] = useState('')
+  const [q, setQ] = useState('')
   const [data, setData] = useState({ items: [], total: 0 })
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
@@ -116,11 +120,11 @@ export default function Queue() {
 
   const load = useCallback(() => {
     setLoading(true)
-    api.interactions(status, 1, 50)
+    api.interactions(status, 1, 50, q)
       .then(setData)
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false))
-  }, [status])
+  }, [status, q])
 
   useEffect(load, [load])
 
@@ -135,6 +139,18 @@ export default function Queue() {
         </p>
         </div>
         <div className="row">
+          <input
+            value={query}
+            placeholder="ID bo'yicha qidirish"
+            title="Murojaat, suhbat yoki mijoz id'si"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') setQ(query) }}
+            style={{ width: 190 }}
+          />
+          <button className="ghost" onClick={() => setQ(query)}>Qidirish</button>
+          {q && (
+            <button className="ghost" onClick={() => { setQuery(''); setQ('') }}>Tozalash</button>
+          )}
           <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 190 }}>
             <option value="pending">Kutayotganlar</option>
             <option value="">Hammasi</option>
@@ -155,7 +171,11 @@ export default function Queue() {
       )}
       {err && <div className="err">{err}</div>}
       {loading && <p className="muted">Yuklanmoqda…</p>}
-      {!loading && data.items.length === 0 && <p className="muted">Bo'sh — hozircha hech narsa yo'q.</p>}
+      {!loading && data.items.length === 0 && (
+        <p className="muted">
+          {q ? `"${q}" bo'yicha hech narsa topilmadi.` : "Bo'sh — hozircha hech narsa yo'q."}
+        </p>
+      )}
       {data.items.map((it) => <Item key={it.id} item={it} onDone={load} />)}
     </>
   )

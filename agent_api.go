@@ -107,18 +107,22 @@ func clientStatsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
-// interactionsHandler: GET /api/interactions?status=pending&page=1&limit=20
+// interactionsHandler: GET /api/interactions?status=pending&q=62139&page=1&limit=20
+//
+// `q` — id bo'yicha qidiruv: murojaat, suhbat yoki mijoz id'si (uchalasi
+// ham tekshiriladi). Ro'yxat har doim yangisidan eskisiga ("id desc").
 func interactionsHandler(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
+	search := r.URL.Query().Get("q")
 	page, limit := queryInt(r, "page", 1), queryInt(r, "limit", 20)
 
-	list, total, err := support.ListInteractions(support.DB, status, page, limit)
+	list, total, err := support.ListInteractions(support.DB, status, search, page, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total": total, "page": page, "limit": limit, "items": list,
+		"total": total, "page": page, "limit": limit, "q": search, "items": list,
 	})
 }
 

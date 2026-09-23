@@ -73,6 +73,11 @@ type OrderBrief struct {
 	Region string `json:"viloyat,omitempty"`
 	Kind   string `json:"yetkazish,omitempty"`
 
+	// Mismatch - posilka mijoz viloyatiga tushmagan (MarkMismatch).
+	// To'ldirilgan bo'lsa `yetkazish` bo'sh qoladi: mijozga qayerdan
+	// olishini aytib bo'lmaydi, avval xodim tuzatishi kerak.
+	Mismatch string `json:"DIQQAT_xatolik,omitempty"`
+
 	// OwnerUserID - buyurtma egasi, faqat u hozirgi mijoz BO'LMAGANDA
 	// to'ldiriladi. Buyurtma raqami bo'yicha qidiruv adminkaning butun
 	// bazasidan qidiradi: mijoz boshqa odamning DG raqamini yozsa ham
@@ -151,20 +156,27 @@ func MarkArrival(briefs []OrderBrief, delivery []DeliveryOrder) {
 	}
 }
 
-// PendingPickup - mijoz hali olib ketmagan yetkazma.
+// PendingPickup - posilka O'zbekistonda, lekin hali mijozga
+// topshirilmagan (kuryerga ham berilmagan).
+//
+// JSON kalitlari ataylab BETARAF: ilgari ro'yxat "olinmagan", joy esa
+// "filial" deb atalardi va model shu ikki so'zga qarab, izohni o'qimay
+// turib "borib olib keting" deb javob yozardi — posilka Markaziy omborda
+// turgan va kuryer olib boradigan holatda ham. Endi kalitlar joyni
+// bildiradi, xulosani emas: nima qilish kerakligi faqat `izoh`da.
 type PendingPickup struct {
 	ExpressNum string `json:"express_num"`
-	Branch     string `json:"filial"`
-	Address    string `json:"manzil,omitempty"`
-	ArrivedAt  string `json:"kelgan,omitempty"`
+	// Branch - posilka HOZIR qayerda turgani. Bu mijoz boradigan manzil
+	// degani emas: "Markaziy ombor" ichki taqsimlash nuqtasi.
+	Branch    string `json:"hozir_qayerda"`
+	Address   string `json:"shu_joyning_manzili,omitempty"`
+	ArrivedAt string `json:"kelgan,omitempty"`
 	// Region - mijozning viloyati (dashboarddagi `city`).
 	Region string `json:"mijoz_viloyati,omitempty"`
-	// Izoh - filial "Markaziy ombor" bo'lganda tayyor holatda
-	// to'ldiriladi: bu filial mijoz o'zi borib oladigan nuqta emas,
-	// buyurtma hali taqsimlash bosqichida turibdi va tez orada mijoz
-	// belgilagan manzilga jo'natiladi. Model buni qayta talqin
-	// qilmasin deb tayyor matn shu yerda beriladi — promt o'zgarmaydi.
-	Izoh string `json:"izoh,omitempty"`
+	// Izoh - mijozga nima deyilishi kerakligi. Tayyor matn: model buni
+	// qayta talqin qilmasin, shundayligicha aytsin — promt o'zgarmaydi.
+	// Bu maydon boshqa hamma maydondan USTUN.
+	Izoh string `json:"mijozga_nima_deyiladi,omitempty"`
 }
 
 // centralWarehouseBranch - "filial" markaziy ombor bo'lganda kelib
@@ -177,18 +189,33 @@ const centralWarehouseBranch = "markaziy ombor"
 // jo'natilmagan) buyurtma uchun mijozga tayyor holatda beriladigan
 // izoh. Toshkent shahri va viloyati uchun: u yerda kuryer manzilga
 // olib boradi.
-const centralWarehouseNote = "Buyurtma hozircha Markaziy omborda — tez orada mijoz belgilagan manzilga yetkaziladi."
+//
+// Taqiq alohida yozilgan: Markaziy ombor mijoz boradigan punkt EMAS,
+// lekin model "ombor" so'zini ko'rib "borib olib keting" deb yozib
+// yuborardi — mijoz bekorga yo'lga chiqadi.
+const centralWarehouseNote = "Buyurtma O'zbekistonga kelgan, hozir Markaziy omborda saralanmoqda. " +
+	"Tez orada KURYER mijoz belgilagan manzilga olib boradi. " +
+	"Markaziy ombor mijoz boradigan punkt EMAS — mijozga \"olib keting\", " +
+	"\"omborga boring\" yoki \"filialdan oling\" DEMA."
 
 // centralWarehouseRegionNote - xuddi shu holat, lekin mijoz Toshkentdan
 // tashqarida: u yerda uyga yetkazish YO'Q, posilka mijoz viloyatidagi
 // filialga jo'natiladi va mijoz o'sha yerdan oladi.
-const centralWarehouseRegionNote = "Buyurtma hozircha Markaziy omborda — tez orada mijoz " +
-	"viloyatidagi filialga jo'natiladi, mijoz o'sha filialdan olib ketadi."
+const centralWarehouseRegionNote = "Buyurtma O'zbekistonga kelgan, hozir Markaziy omborda " +
+	"(Toshkentda) saralanmoqda. Tez orada mijoz viloyatidagi filialga jo'natiladi va mijoz " +
+	"o'sha filialdan oladi. Posilka HALI mijoz viloyatiga yetmagan — mijozga hozir " +
+	"\"borib olib keting\" DEMA, avval filialga yetib borishini kutish kerak."
+
+// courierPendingNote - posilka mijoz viloyatidagi haqiqiy punktda, lekin
+// bu viloyatda (Toshkent shahri/viloyati) yetkazishni kuryer bajaradi:
+// mijoz o'zi borishi shart emas.
+const courierPendingNote = "Posilka mijoz viloyatidagi punktda, kuryerga berilishi kutilmoqda. " +
+	"Bu viloyatda KURYER manzilga olib boradi — mijozga \"o'zingiz borib oling\" DEMA."
 
 // pickupNote - posilka mijozning o'z viloyatidagi filialda: olib
 // ketishi kerak, uyiga olib borilmaydi.
-const pickupNote = "Posilka mijoz viloyatidagi filialda turibdi — mijoz o'zi borib olib ketadi " +
-	"(bu viloyatda uyga yetkazish yo'q)."
+const pickupNote = "Posilka mijoz viloyatidagi filialga yetib kelgan va tayyor — mijoz o'zi " +
+	"borib olib ketadi (bu viloyatda uyga yetkazish yo'q). Filial nomi va manzilini ayt."
 
 // pickupBranchPrefix - mijoz o'zi borib olib keta oladigan jismoniy
 // punkt bo'lsa, location_number shu prefiks bilan boshlanadi (masalan
@@ -219,8 +246,11 @@ type SentDelivery struct {
 
 // DeliveryBrief - yetkazma bo'yicha modelga ketadigan xulosa.
 type DeliveryBrief struct {
-	// Olinmagan — filialda kutmoqda (delivered = false).
-	Pending []PendingPickup `json:"olinmagan,omitempty"`
+	// Pending — posilka O'zbekistonda, lekin hali mijozga topshirilmagan
+	// va kuryerga ham berilmagan (delivered = false). Kalit "olinmagan"
+	// emas: u "mijoz borib olmagan" degan ma'noni berib, modelni har
+	// safar "olib keting" deyishga undardi.
+	Pending []PendingPickup `json:"mijozga_topshirilmagan,omitempty"`
 	// Kuryerga berilgan va muddati o'tmagan — hozir yo'lda.
 	InDelivery []SentDelivery `json:"yetkazilmoqda,omitempty"`
 	// Kuryerga berilganiga DeliveryDays dan oshgan — holati noaniq,
@@ -260,6 +290,53 @@ func (m BranchMismatch) Text() string {
 // Mijozga va'da berilmaydi: xodim tekshiradi.
 const mismatchNote = "Posilka mijoz viloyatidagi filialda emas — xodimga topshirildi. " +
 	"Mijozga faqat \"tekshirilmoqda\" deb ayt, sabab yoki muddat aytma."
+
+// alertKey - kod topgan holatlar JSON'da shu kalit ostida ketadi.
+// Nomi ataylab baland: model uni e'tibordan chetda qoldirmasin.
+const alertKey = "DIQQAT_muammo_topildi"
+
+// alertGuidance - kod muammo topganda modelga beriladigan ko'rsatma.
+//
+// Bu ro'yxatdagi holat qolgan HAMMA maydondan ustun turadi. Sabab: xato
+// holatda boshqa maydonlar (buyurtma viloyati, yetkazish turi) hamon
+// "to'g'ri" ko'rinadi va model o'shalarga qarab mijozga ishonch bilan
+// noto'g'ri ko'rsatma yozadi — masalan posilka Sirdaryoda turganda
+// "Jizzax filialiga borib oling" deb. Mijoz bekorga yo'lga chiqadi.
+const alertGuidance = "Tizim bu buyurtmada XATOLIK topdi va uni xodimga topshirdi. " +
+	"Bu ro'yxat quyidagi hamma maydondan USTUN. " +
+	"Mijozga posilka qayerdaligini, qaysi filialdan olishini yoki qachon yetishini AYTMA — " +
+	"bu ma'lumotlar hozir ishonchsiz. " +
+	"Mijozga shuni ayt: buyurtmasida xatolik aniqlandi, uzr so'raymiz, " +
+	"xodimlarimiz tuzatish ustida ishlamoqda va hal bo'lishi bilan xabar beramiz. " +
+	"Sabab, muddat yoki filial nomini aytma."
+
+// MarkMismatch - posilka mijoz viloyatiga tushmagan buyurtmalarni
+// belgilaydi va ularning "qayerdan olib ketish" ko'rsatmasini O'CHIRADI.
+//
+// Bu maydon (`yetkazish`) mijozning O'Z viloyatidan hisoblanadi, posilka
+// qayerda turganidan emas. Posilka boshqa viloyatga tushganda u to'g'ri
+// ko'rinib turadi-yu, aslida noto'g'ri bo'ladi — model shunga qarab
+// mijozga "o'z viloyatingizdagi filialdan oling" deb yozib yuboradi.
+// Ikkala manba trek raqami (`express_num`) orqali bog'lanadi.
+func MarkMismatch(briefs []OrderBrief, bad []BranchMismatch) {
+	if len(bad) == 0 {
+		return
+	}
+	byTrack := make(map[string]BranchMismatch, len(bad))
+	for _, m := range bad {
+		if t := strings.TrimSpace(m.ExpressNum); t != "" {
+			byTrack[t] = m
+		}
+	}
+	for i := range briefs {
+		m, ok := byTrack[strings.TrimSpace(briefs[i].ExpressNum)]
+		if !ok {
+			continue
+		}
+		briefs[i].Kind = "" // "o'z viloyatingizdan oling" — bu yerda noto'g'ri
+		briefs[i].Mismatch = m.Text() + ". " + mismatchNote
+	}
+}
 
 // PickupDone - o'zi-olib-ketish turidagi jo'natma, mijoz allaqachon
 // filialdan olib ketgan (express_line "Pickup", status=2,
@@ -356,12 +433,14 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			row := PendingPickup{
 				ExpressNum: o.ExpressNum,
 				Branch:     branch,
-				Address:    trimText(o.BranchAddress, 80),
+				Address:    trimText(plainVal(o.BranchAddress), 80),
 				ArrivedAt:  sanaMatnISO(o.CreatedAt),
 				Region:     region,
 			}
 			// Izoh tanlash tartibi: avval xato holat, keyin "hali yo'lda",
-			// oxirida oddiy "kelib bo'ldi, olib keting".
+			// oxirida oddiy "kelib bo'ldi, olib keting". Izoh HECH QACHON
+			// bo'sh qolmasligi kerak: bo'sh bo'lsa model qolgan maydonlarga
+			// qarab o'zi xulosa chiqaradi va noto'g'ri ko'rsatma beradi.
 			central := strings.EqualFold(strings.TrimSpace(branch), centralWarehouseBranch)
 			// Filial tanilmasa va SHOTA punkti ham bo'lmasa — bu hali
 			// mijozga ochiq punkt emas, Markaziy ombordagidek talqin
@@ -379,6 +458,10 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				}
 			case region != "" && !HomeDeliveryRegion(region):
 				row.Izoh = pickupNote
+			default:
+				// Toshkent shahri/viloyati + haqiqiy punkt: posilka joyida,
+				// lekin bu viloyatda yetkazishni kuryer bajaradi.
+				row.Izoh = courierPendingNote
 			}
 			out.Pending = append(out.Pending, row)
 			continue
@@ -431,6 +514,14 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 
 	out.Empty = len(out.Pending) == 0 && len(out.InDelivery) == 0 &&
 		len(out.NeedCheck) == 0 && len(out.PickedUp) == 0
+
+	// Hamma yozuv xato filialga tushgan bo'lsa, "bu viloyatda yetkazish
+	// qanday ishlaydi" degan umumiy matn ham olib tashlanadi. O'zi to'g'ri
+	// bo'lsa-da, shu holatda u modelni "o'z viloyatingizdagi filialdan
+	// oling" deyishga undaydi — posilka esa boshqa viloyatda.
+	if len(bad) > 0 && len(bad) == len(orders) {
+		out.Kind = ""
+	}
 	return out, bad
 }
 
@@ -471,12 +562,36 @@ func sanaMatnISO(s string) string {
 	return sanaMatn(t.Format(adminkaTimeLayout))
 }
 
-// firstNonEmpty - birinchi bo'sh bo'lmagan qiymat.
+// firstNonEmpty - birinchi haqiqiy (bo'sh ham, "null" ham bo'lmagan) qiymat.
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
-		if v = strings.TrimSpace(v); v != "" {
+		if v = plainVal(v); v != "" {
 			return v
 		}
 	}
 	return ""
+}
+
+// boshQiymatlar - tashqi API bo'sh maydonni matn ko'rinishida qaytarganda
+// keladigan qiymatlar. Ular modelga YETIB BORMASLIGI kerak: model
+// `"manzil": "null"` ni ko'rib, mijozga "null" manzilini yozib yuborishi
+// yoki yo'q ma'lumotni bor deb o'ylashi mumkin.
+//
+// Bu faqat TASHQI API matn maydonlariga tegishli — model qaytargan JSON
+// bu yerdan o'tmaydi (masalan javobdagi `"promt": null` — zanjir tugagani,
+// u o'z joyida to'g'ri o'qiladi).
+var boshQiymatlar = map[string]bool{
+	"null": true, "nil": true, "<nil>": true, "undefined": true,
+	"n/a": true, "na": true, "-": true, "—": true,
+}
+
+// plainVal - tashqi API qiymatini tozalaydi: bo'shliqlar olib tashlanadi,
+// "null" kabi soxta qiymatlar esa bo'sh satrga aylantiriladi (JSON'da
+// `omitempty` bilan butunlay tushib qoladi).
+func plainVal(s string) string {
+	s = strings.TrimSpace(s)
+	if boshQiymatlar[strings.ToLower(s)] {
+		return ""
+	}
+	return s
 }

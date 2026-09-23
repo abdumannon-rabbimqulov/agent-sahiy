@@ -143,9 +143,10 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 
 	var (
 		usage    Usage
-		dataCtx  []string // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
-		alerts   []string // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
-		langCtx  string   // birinchi promtdan chiqqan til ("uzb"/"rus"), bir marta uzatiladi
+		dataCtx  []string      // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
+		alerts   []string      // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
+		issues   []*OrderIssue // shu zanjirda yangi ochilgan muammoli buyurtmalar
+		langCtx  string        // birinchi promtdan chiqqan til ("uzb"/"rus"), bir marta uzatiladi
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
 	)
@@ -285,9 +286,10 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
 			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
-			data, _, found := fetchSystemData(a, clientID, conversationID)
+			data, _, found, fresh := fetchSystemData(a, clientID, conversationID)
 			dataCtx = append(dataCtx, data)
 			alerts = append(alerts, found...)
+			issues = append(issues, fresh...)
 		}
 
 		next, more := a.NextPromt()
@@ -357,8 +359,8 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// help — guruhga darhol, tasdiq kutmasdan (murojaat saqlangandan
 	// keyin: xabar id'si shu yozuvga yoziladi). Telegram ishlamasa
 	// murojaat baribir saqlangan, log yetarli.
-	if err := DeliverHelp(in); err != nil {
-		log.Printf("agent: suhbat %d — help guruhga ketmadi: %v", conversationID, err)
+	if err := DeliverStaffNotice(in, issues); err != nil {
+		log.Printf("agent: suhbat %d — guruhga xabar ketmadi: %v", conversationID, err)
 	}
 	log.Printf("agent: suhbat %d — %s, %d bosqich, %s", conversationID, in.Status, in.StepsCount, usage)
 	return in, nil
@@ -423,9 +425,13 @@ func withAlerts(help string, alerts []string) string {
 	return b.String()
 }
 
-// helpText - guruhga ketadigan "xodim kerak" xabari. Ko'rinishi
-// muammoli buyurtma xabari bilan BIR XIL (support/notify_text.go):
-// sarlavha, mijoz, suhbat, tana va reply haqida bir qator.
+// helpText - guruhga ketadigan "xodim kerak" xabari. Faqat yopiladigan
+// muammoli buyurtma bo'lmaganda ishlatiladi: buyurtma bor bo'lsa xulosa
+// o'sha xabarning ichiga qo'shiladi (DeliverStaffNotice).
+//
+// Ko'rinishi muammoli buyurtma xabari bilan BIR XIL
+// (support/notify_text.go): sarlavha, mijoz, suhbat, tana va reply
+// haqida bir qator.
 func helpText(in *Interaction) string {
 	var b strings.Builder
 	b.WriteString(guruhSarlavha("🆘 Yordam kerak", in.ClientID, in.ClientID, in.ConversationID))
@@ -434,38 +440,77 @@ func helpText(in *Interaction) string {
 	return b.String()
 }
 
-// DeliverHelp - AI "xodim aralashuvi kerak" degan matnni (help) Telegram
-// guruhga yuboradi. Mijozga ketadigan javobdan farqli: tasdiq kutmaydi,
-// xodim muammodan imkon qadar tez xabardor bo'lishi kerak.
+// DeliverStaffNotice - zanjir oxirida guruhga ketadigan YAGONA xabar.
 //
-// Xabar id'si saqlanadi — xodim o'sha xabarga reply qilsa, javobi
-// mijozga moslab yuboriladi (support/telegram_updates.go), xuddi
-// muammoli buyurtma xabaridagidek.
+// Ilgari bir muammo guruhga ikki marta tushardi: "⚠️ Muammoli buyurtma"
+// ni DetectIssues zanjir o'rtasida yuborar, keyin esa xuddi shu muammo
+// haqida AI ning "🆘 Yordam kerak" xabari ketardi — bir xil mijoz, bir
+// xil buyurtma, ikki xil ko'rinishda. Endi ikkalasi bitta xabar:
+// buyurtma tafsilotlari va AI xulosasi yonma-yon turadi, xodim bitta
+// reply bilan ham muammoni yopadi, ham mijozga javob beradi.
 //
-// Ikki marta yuborilmaydi (HelpSent) va xodimning o'z javobidan
-// tug'ilgan murojaat qaytib guruhga chiqmaydi (Source == telegram).
-func DeliverHelp(in *Interaction) error {
-	if in == nil || strings.TrimSpace(in.HelpText) == "" {
+// Muammo topilmagan bo'lsa (yopiladigan buyurtma yo'q) xabar eski
+// "🆘 Yordam kerak" ko'rinishida ketaveradi — tuzilishi baribir bir xil
+// (support/notify_text.go).
+func DeliverStaffNotice(in *Interaction, issues []*OrderIssue) error {
+	// Xodimning o'z javobidan tug'ilgan murojaat qaytib guruhga chiqmaydi.
+	if in == nil || in.Source == SourceTelegram {
 		return nil
 	}
-	if in.HelpSent || in.Source == SourceTelegram {
+
+	// Sozlama o'chirilgan bo'lsa AI xulosasi guruhga chiqmaydi. Kod topgan
+	// holat (Alerts) bo'lsa — baribir chiqadi: uni model emas, tizim topgan.
+	help := strings.TrimSpace(in.HelpText)
+	if in.HelpSent || (!HelpToTelegramOn() && len(in.Alerts) == 0) {
+		help = ""
+	}
+
+	// Muammoli buyurtma bor: xulosa ham shu xabarning ichiga kiradi.
+	if len(issues) > 0 {
+		msgID := NotifyIssues(issues, help)
+		if msgID == 0 {
+			return fmt.Errorf("muammoli buyurtma xabari guruhga ketmadi")
+		}
+		// Xulosa shu xabarga ilindi — qayta yuborilmasin. Reply esa
+		// muammo yo'li bilan ishlanadi (telegram_updates.go: muammolar
+		// birinchi tekshiriladi), shuning uchun help_message_id faqat
+		// takror yuborishni to'xtatish uchun yoziladi.
+		if help != "" {
+			markHelpSent(in, msgID)
+		}
 		return nil
 	}
-	// Sozlama o'chirilgan bo'lsa ham, kod topgan holat (Alerts) bo'lsa
-	// xabar baribir ketadi.
-	if !HelpToTelegramOn() && len(in.Alerts) == 0 {
+
+	// Muammo yo'q — faqat AI xulosasi.
+	if help == "" {
 		return nil
 	}
 	msgID, err := SendTelegramMessage(helpText(in), 0)
 	if err != nil {
 		return fmt.Errorf("help: %w", err)
 	}
+	markHelpSent(in, msgID)
+	return nil
+}
+
+// markHelpSent - xulosa guruhga ketgani va qaysi xabarga ilingani.
+func markHelpSent(in *Interaction, msgID int64) {
 	in.HelpSent = true
 	in.HelpMessageID = msgID
 	if DB != nil && in.ID > 0 {
 		DB.Model(in).Updates(map[string]any{"help_sent": true, "help_message_id": msgID})
 	}
-	return nil
+}
+
+// DeliverHelp - admin tasdiqlaganda ishlatiladigan yo'l: zanjir paytida
+// Telegram ishlamay qolgan bo'lsa AI xulosasi qayta yuboriladi. Bu yerda
+// muammoli buyurtmalar ro'yxati qo'lda bo'lmaydi (u zanjirga tegishli),
+// shuning uchun xabar "🆘 Yordam kerak" ko'rinishida ketadi.
+func DeliverHelp(in *Interaction) error {
+	if in == nil || strings.TrimSpace(in.HelpText) == "" {
+		return nil
+	}
+	return DeliverStaffNotice(in, nil)
 }
 
 // Deliver - admin tasdiqlaganda: chat mijozga ketadi, help hali
@@ -676,12 +721,20 @@ func imageStepResult(img ImageNumbers, natija string) string {
 //
 // Uchinchi qaytadigan qiymat — KOD topgan, xodimga aytilishi kerak
 // bo'lgan holatlar (masalan posilka mijoz viloyatidan boshqa filialda).
-// Ular modelga ham izoh bo'lib boradi, ham "🆘 Yordam kerak" xabariga
-// qo'shiladi: model ularni o'zi topishi yoki o'tkazib yuborishi mumkin
-// emas.
-func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool, []string) {
+// Ular modelga ham izoh bo'lib boradi, ham guruh xabariga qo'shiladi:
+// model ularni o'zi topishi yoki o'tkazib yuborishi mumkin emas.
+//
+// To'rtinchi qiymat — shu chaqiruvda YANGI ochilgan muammoli buyurtmalar.
+// Ular guruhga shu yerdan yuborilmaydi: zanjir tugagach, AI xulosasi
+// bilan birga BITTA xabar bo'lib ketadi (DeliverStaffNotice).
+func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool, []string, []*OrderIssue) {
 	out := map[string]any{}
 	var alerts []string
+	var issues []*OrderIssue
+	// mismatches - posilka mijoz viloyatiga tushmagan holatlar. Ular
+	// adminka ro'yxatiga ham qaytib ta'sir qiladi: o'sha buyurtmaning
+	// "filialdan olib keting" ko'rsatmasi noto'g'ri bo'lib qoladi.
+	var mismatches []BranchMismatch
 	numbers := a.Numbers()
 	// Ikki manba bir-birini to'ldiradi: adminkadagi status posilka
 	// KELGANINI aytmaydi, buni faqat yetkazma ro'yxati aytadi. Shuning
@@ -720,8 +773,12 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		}
 		// Mijoz turi (B2C/B2B) — yetkazish tarifini tushuntirish uchun.
 		out["mijoz_turi"] = CustomerType(rows)
-		// Muammoli buyurtmalarni aniqlash (kerak bo'lsa guruhga xabar ketadi).
-		views = DetectIssues(rows, clientID, conversationID)
+		// Muammoli buyurtmalarni aniqlash. Xabar bu yerdan ketmaydi —
+		// yangi muammolar yuqoriga qaytadi va zanjir oxirida AI xulosasi
+		// bilan bitta xabar bo'lib yuboriladi.
+		var fresh []*OrderIssue
+		views, fresh = DetectIssues(rows, clientID, conversationID)
+		issues = append(issues, fresh...)
 		if HasPendingOrders(views) {
 			pending = true
 		}
@@ -763,6 +820,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 			deliveryRows, haveDelivery = rows, true
 			brief, bad := BriefDelivery(rows)
 			out["yetkazma"] = brief
+			mismatches = append(mismatches, bad...)
 			for _, m := range bad {
 				alerts = append(alerts, m.Text())
 			}
@@ -786,14 +844,30 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		if haveDelivery {
 			MarkArrival(briefs, deliveryRows)
 		}
+		// Posilka boshqa viloyatga tushgan bo'lsa, shu buyurtmaning
+		// "qayerdan olib ketish" ko'rsatmasi o'chiriladi — aks holda model
+		// mijozga uning O'Z viloyatidagi filialni aytib yuboradi.
+		MarkMismatch(briefs, mismatches)
 		out["adminka"] = briefs
+	}
+
+	// Kod topgan holatlar modelga ham ko'rsatiladi. Ilgari ular faqat
+	// xodimlar guruhiga ketardi, modelga esa buyurtma ichidagi kichik
+	// `izoh` bo'lib borardi — model uni o'qimay, qolgan (ishonchli
+	// ko'rinadigan) maydonlarga qarab mijozga noto'g'ri ko'rsatma yozardi.
+	// Endi ular eng yuqorida, aniq taqiq bilan turadi.
+	if len(alerts) > 0 {
+		out[alertKey] = map[string]any{
+			"holatlar": alerts,
+			"korsatma": alertGuidance,
+		}
 	}
 
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending, alerts
+		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending, alerts, issues
 	}
-	return string(raw), pending, alerts
+	return string(raw), pending, alerts, issues
 }
 
 // needsArrivalCheck - ro'yxatda "tranzaksiya yopilgan" (status 6),

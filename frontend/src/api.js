@@ -45,8 +45,9 @@ export const api = {
   daily: (days = 14) => request(`/api/stats/daily?days=${days}`),
   clients: (days = 30, limit = 20) => request(`/api/stats/clients?days=${days}&limit=${limit}`),
 
-  interactions: (status = '', page = 1, limit = 20) =>
-    request(`/api/interactions?status=${status}&page=${page}&limit=${limit}`),
+  // q — id bo'yicha qidiruv: murojaat, suhbat yoki mijoz id'si.
+  interactions: (status = '', page = 1, limit = 20, q = '') =>
+    request(`/api/interactions?status=${status}&page=${page}&limit=${limit}&q=${encodeURIComponent(q)}`),
   interaction: (id) => request(`/api/interactions/${id}`),
   patchInteraction: (id, body) => request(`/api/interactions/${id}`, { method: 'PATCH', body }),
   approve: (id) => request(`/api/interactions/${id}/approve`, { method: 'POST' }),
