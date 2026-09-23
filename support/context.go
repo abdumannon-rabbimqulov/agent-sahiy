@@ -57,6 +57,14 @@ type OrderBrief struct {
 	ShippedAt   string `json:"shipped_at,omitempty"`
 	PackageName string `json:"package_name,omitempty"`
 
+	// StatusNote - status nimani bildiradi. Ayniqsa status 6 uchun
+	// kerak: adminkadagi "yakunlangan" — Xitoy tomonidagi tranzaksiya
+	// yopilgani, mijozga yetgani emas.
+	StatusNote string `json:"status_izoh,omitempty"`
+	// Arrived - posilka yetkazmada (dashboardda) chiqdimi. Faqat
+	// yetkazma ma'lumoti ham olingan bo'lsa to'ldiriladi.
+	Arrived string `json:"yetkazma,omitempty"`
+
 	// Region - buyurtma manzili viloyati (adminkadagi `province`),
 	// Kind - o'sha viloyatda yetkazish qanday ishlashi. Ikkalasi ham
 	// tayyor matn: model uyga yetkazish bor-yo'qligini o'zi taxmin
@@ -98,6 +106,7 @@ func BriefOrders(views []OrderView, clientID int64) []OrderBrief {
 		if clientID > 0 && v.UserID > 0 && v.UserID != clientID {
 			b.OwnerUserID = v.UserID
 		}
+		b.StatusNote = StatusMeaning(v.Status)
 		if r := RegionOf(v.Province); r != "" {
 			b.Region = r
 			b.Kind = DeliveryKindText(r)
@@ -105,6 +114,41 @@ func BriefOrders(views []OrderView, clientID int64) []OrderBrief {
 		out = append(out, b)
 	}
 	return out
+}
+
+// Yetkazmada bor-yo'qligini bildiradigan tayyor matnlar.
+const (
+	arrivedInDelivery = "yetkazmada bor — posilka O'zbekistonga kelgan, " +
+		"aniq holati \"yetkazma\" bo'limida"
+	notInDelivery = "yetkazmada hali yo'q — posilka Xitoydan yo'lda, " +
+		"O'zbekistonga kelmagan"
+)
+
+// MarkArrival - har bir buyurtmaga uning posilkasi yetkazmada (dashboardda)
+// chiqqan-chiqmagani yoziladi.
+//
+// Adminkadagi status buni AYTMAYDI: u "yakunlangan" bo'lsa ham posilka
+// hali yo'lda bo'lishi mumkin. Ikki manba trek raqami (`express_num`)
+// orqali bog'lanadi.
+func MarkArrival(briefs []OrderBrief, delivery []DeliveryOrder) {
+	seen := make(map[string]bool, len(delivery))
+	for _, d := range delivery {
+		if t := strings.TrimSpace(d.ExpressNum); t != "" {
+			seen[t] = true
+		}
+	}
+	for i := range briefs {
+		track := strings.TrimSpace(briefs[i].ExpressNum)
+		if track == "" {
+			// Trek hali berilmagan — posilka Xitoyda, yo'lga chiqmagan.
+			continue
+		}
+		if seen[track] {
+			briefs[i].Arrived = arrivedInDelivery
+		} else {
+			briefs[i].Arrived = notInDelivery
+		}
+	}
 }
 
 // PendingPickup - mijoz hali olib ketmagan yetkazma.

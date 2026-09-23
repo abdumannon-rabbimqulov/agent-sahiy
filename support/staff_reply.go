@@ -75,16 +75,23 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
 
 	// LLM bilan mijoz tiliga moslab yozamiz.
-	if usage, err := rewriteStaffReply(ctx, in, sns, reply, msgs); err != nil {
+	usage, err := rewriteStaffReply(ctx, in, sns, reply, msgs)
+	if err != nil {
 		in.Error = fmt.Sprintf("xodim javobini qayta yozib bo'lmadi: %v", err)
 		log.Printf("xodim javobi: %v — xodim matni qoralama bo'lib qoldi", err)
+		// XOM MATN MIJOZGA KETMAYDI. Xodim guruhda ichki tilda,
+		// qisqa yozadi ("sotuvchi bilan gaplashilmoqda") — uni mijozga
+		// o'sha holicha yuborib bo'lmaydi. Avto-javob yoqiq bo'lsa ham
+		// qoralama panelda tasdiqlashni kutadi: admin tahrirlab
+		// yuboradi. (Ilgari sendIfAuto shartsiz chaqirilar va model
+		// ishlamaganda xom matn to'g'ridan-to'g'ri mijozga ketardi.)
+		in.Status = StatusPending
 	} else {
 		in.applyUsage(usage)
 		in.StepsCount = len(in.Steps)
+		// Avto-javob yoqiq bo'lsa darhol mijozga.
+		sendIfAuto(in, who)
 	}
-
-	// Avto-javob yoqiq bo'lsa darhol mijozga.
-	sendIfAuto(in, who)
 
 	if err := SaveInteraction(DB, in); err != nil {
 		return in, fmt.Errorf("bazaga yozish: %w", err)

@@ -87,9 +87,36 @@ func StatusLabel(status int) string {
 	case StatusWaiting:
 		return "kiritish uchun kutilmoqda"
 	case StatusFinished:
-		return "yakunlangan"
+		// Ataylab "yakunlangan" emas: bu Xitoy tomonidagi tranzaksiya
+		// yopilgani, mijozga yetkazilgani emas (qarang: StatusMeaning).
+		return "Xitoyda tranzaksiya yopilgan — yo'lga chiqqan"
 	}
 	return fmt.Sprintf("holat %d", status)
+}
+
+// StatusMeaning - status MODEL uchun nimani bildiradi.
+//
+// Eng muhimi status 6: adminkada u "yakunlangan" deb turadi, lekin bu
+// XITOY TOMONIDAGI tranzaksiya yopilgani — posilka yo'lga chiqqani.
+// Mijozning qo'liga tekkani EMAS. Buni faqat yetkazma (dashboard)
+// ma'lumoti aytadi: posilka dashboardda chiqsa — O'zbekistonga kelgan,
+// keyin "punktga keldi"/"yetkazildi" holatlari o'sha yerda ko'rinadi.
+//
+// Ilgari modelga faqat "yakunlangan" degan yorliq borardi va model
+// mijozga "buyurtmangiz yakunlangan" deb yozib yuborardi — mijoz buni
+// "yetkazildi" deb tushunardi.
+func StatusMeaning(status int) string {
+	switch status {
+	case StatusPaid:
+		return "to'lov o'tgan, Xitoyda tayyorlanmoqda"
+	case StatusWaiting:
+		return "Xitoy omborida kiritish uchun kutilmoqda"
+	case StatusFinished:
+		return "Xitoy tomonida tranzaksiya yopilgan — posilka yo'lga chiqqan. " +
+			"BU MIJOZGA YETGANI EMAS: yetib kelgani faqat yetkazma (dashboard) " +
+			"ma'lumotidan bilinadi. Mijozga \"yakunlangan\" yoki \"yetkazildi\" deb aytma"
+	}
+	return ""
 }
 
 // ProblemDays - .env dagi PROBLEM_DAYS (default 3).

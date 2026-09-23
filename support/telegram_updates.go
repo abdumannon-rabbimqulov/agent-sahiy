@@ -160,6 +160,25 @@ func handleTelegramReply(u tgUpdate) {
 	}
 }
 
+// staffReplyStatus - xodimga guruhda qaytariladigan qisqa holat.
+//
+// Eng muhimi ikkinchi holat: model javobni qayta yoza olmagan bo'lsa,
+// xodimning XOM matni mijozga yuborilmaydi (u ichki tilda yozilgan).
+// Xodim buni bilib tursin — javob "ketdi" deb o'ylab qolmasin.
+func staffReplyStatus(in *Interaction) string {
+	switch {
+	case in.Status == StatusSent:
+		return "mijozga yuborildi"
+	case in.Status == StatusPending && in.Error != "":
+		return "⚠️ AI javobni mijoz tiliga o'gira olmadi (" + in.Error + ").\n" +
+			"Xom matn mijozga YUBORILMADI — panelda tahrirlab yuborish kerak."
+	case in.Status == StatusPending:
+		return "mijozga javob tayyor — admin tasdig'i kutilmoqda"
+	default:
+		return "mijozga javob tayyorlandi, lekin yuborilmadi: " + in.Error
+	}
+}
+
 // handleHelpReply - guruhdagi "yordam kerak" xabariga reply: xodim
 // javobidan mijozga xabar tayyorlanadi. Muammoli buyurtma yo'li bilan
 // bir xil ishlaydi, faqat yopiladigan buyurtma yozuvi yo'q.
@@ -178,14 +197,7 @@ func handleHelpReply(m *tgMsgUpdate, src *Interaction, who string) {
 	if in, err := AnswerFromStaffHelp(ctx, src, m.Text, who); err != nil {
 		log.Printf("telegram: suhbat %d — mijozga javob tayyorlanmadi: %v", src.ConversationID, err)
 	} else {
-		switch in.Status {
-		case StatusSent:
-			holat = "mijozga yuborildi"
-		case StatusPending:
-			holat = "mijozga javob tayyor — admin tasdig'i kutilmoqda"
-		default:
-			holat = "mijozga javob tayyorlandi, lekin yuborilmadi: " + in.Error
-		}
+		holat = staffReplyStatus(in)
 	}
 
 	if _, err := SendTelegramMessage(
@@ -222,14 +234,7 @@ func handleIssueReply(m *tgMsgUpdate, issues []OrderIssue, who string) {
 	if in, err := AnswerFromStaffReply(ctx, issues, m.Text, who); err != nil {
 		log.Printf("telegram: mijozga javob tayyorlanmadi (%s): %v", sns, err)
 	} else {
-		switch in.Status {
-		case StatusSent:
-			holat = "mijozga yuborildi"
-		case StatusPending:
-			holat = "mijozga javob tayyor — admin tasdig'i kutilmoqda"
-		default:
-			holat = "mijozga javob tayyorlandi, lekin yuborilmadi: " + in.Error
-		}
+		holat = staffReplyStatus(in)
 	}
 
 	// Xodimga qisqa tasdiq — javobi hisobga olingani ko'rinsin.

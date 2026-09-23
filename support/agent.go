@@ -175,6 +175,21 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	//
 	// Faqat matnda raqam TOPILMAGANDA ochiladi: matnda raqam bo'lsa rasm
 	// ortiqcha ish, javob baribir o'sha raqam bo'yicha yoziladi.
+	if maxSteps > 0 && HasClientImage(msgs) && (len(chatSN) > 0 || len(chatEx) > 0) {
+		// Matnda raqam bor — rasmni o'qish ortiqcha. Lekin bu ham
+		// panelda ko'rinib tursin: ilgari rasm haqida hech qayerda
+		// hech narsa yozilmasdi va "rasm o'qildimi yoki yo'qmi" degan
+		// savolga javob topib bo'lmasdi.
+		nums := strings.Join(mergeNumbers(chatSN, chatEx, 10), ", ")
+		in.Steps = append(in.Steps, AgentStep{
+			PromtTitle:     "Rasm o'qilmadi — matnda raqam bor",
+			RequestContext: fmt.Sprintf("Mijoz rasm yubordi (%d ta)", len(ClientImageLinks(msgs))),
+			RawResponse:    "Matndagi raqam(lar): " + nums,
+			CreatedAt:      time.Now(),
+		})
+		log.Printf("agent: suhbat %d — rasm o'qilmadi, matnda raqam bor: %s", conversationID, nums)
+	}
+
 	if maxSteps > 0 && len(chatSN) == 0 && len(chatEx) == 0 && HasClientImage(msgs) {
 		img, ok := ReadNumbersFromMessages(ctx, msgs)
 
@@ -668,6 +683,12 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	out := map[string]any{}
 	var alerts []string
 	numbers := a.Numbers()
+	// Ikki manba bir-birini to'ldiradi: adminkadagi status posilka
+	// KELGANINI aytmaydi, buni faqat yetkazma ro'yxati aytadi. Shuning
+	// uchun ikkalasi ham yig'ilgach solishtiriladi (quyida).
+	var views []OrderView
+	var deliveryRows []DeliveryOrder
+	haveDelivery := false
 	// pending - mijozning hali kelmagan (yakunlanmagan) buyurtmasi
 	// topildimi. Model muammoni tushunmaganda shu bo'yicha qaror
 	// qilinadi: bor bo'lsa — modelga qaytadan beriladi, yo'q bo'lsa —
@@ -700,14 +721,23 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		// Mijoz turi (B2C/B2B) — yetkazish tarifini tushuntirish uchun.
 		out["mijoz_turi"] = CustomerType(rows)
 		// Muammoli buyurtmalarni aniqlash (kerak bo'lsa guruhga xabar ketadi).
-		views := DetectIssues(rows, clientID, conversationID)
-		out["adminka"] = BriefOrders(views, clientID)
+		views = DetectIssues(rows, clientID, conversationID)
 		if HasPendingOrders(views) {
 			pending = true
 		}
 		if len(errs) > 0 {
 			out["adminka_error"] = strings.Join(errs, "; ")
 		}
+	}
+
+	// Adminkada "tranzaksiya yopilgan" (status 6) buyurtma bo'lsa,
+	// yetkazma ma'lumoti model so'ramagan bo'lsa ham olinadi: usiz
+	// posilka mijozga yetgan-yetmagani BILINMAYDI va model "buyurtmangiz
+	// yakunlangan" deb yozib yuborardi.
+	if a.Adminka && !a.Dashboard && needsArrivalCheck(views) {
+		a.Dashboard = true
+		log.Printf("agent: suhbat %d — tranzaksiya yopilgan buyurtma bor, yetkazma ham tekshirildi",
+			conversationID)
 	}
 
 	if a.Dashboard {
@@ -730,6 +760,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
 				rows, errs = appendResult(rows, errs, r, err)
 			}
+			deliveryRows, haveDelivery = rows, true
 			brief, bad := BriefDelivery(rows)
 			out["yetkazma"] = brief
 			for _, m := range bad {
@@ -747,6 +778,17 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		}
 	}
 
+	// Buyurtmalar ro'yxati oxirida yig'iladi: yetkazma ma'lumoti ham
+	// olingan bo'lsa, har bir buyurtmaga posilkasi O'zbekistonga
+	// kelgan-kelmagani yoziladi.
+	if a.Adminka {
+		briefs := BriefOrders(views, clientID)
+		if haveDelivery {
+			MarkArrival(briefs, deliveryRows)
+		}
+		out["adminka"] = briefs
+	}
+
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending, alerts
@@ -754,13 +796,28 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	return string(raw), pending, alerts
 }
 
-// HasPendingOrders - mijozda hali kelmagan (yakunlanmagan) buyurtma bormi.
+// needsArrivalCheck - ro'yxatda "tranzaksiya yopilgan" (status 6),
+// treki bor buyurtma bormi. Bunday buyurtma yo'lga chiqqan, lekin
+// kelgan-kelmagani faqat yetkazma ro'yxatidan bilinadi.
+func needsArrivalCheck(views []OrderView) bool {
+	for _, v := range views {
+		if v.Status == StatusFinished && strings.TrimSpace(v.ExpressNum) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPendingOrders - mijozda hali qo'liga tegmagan buyurtma bormi.
 //
-// Yakunlangan (status 6) buyurtma "kelgan" hisoblanadi; to'lanmagani ham
-// hisobga olinmaydi — u hali yo'lga chiqmagan, muammo emas.
+// Adminkadagi "yakunlangan" (status 6) KELGANI EMAS — u Xitoy
+// tomonidagi tranzaksiya yopilganini bildiradi. Shuning uchun status
+// bo'yicha "keldi" deb hisoblanmaydi: to'langan har qanday buyurtma
+// yetkazma ma'lumoti bilan tasdiqlanmaguncha "yo'lda" sanaladi.
+// To'lanmagani hisobga olinmaydi — u hali yo'lga chiqmagan.
 func HasPendingOrders(views []OrderView) bool {
 	for _, v := range views {
-		if v.Paid && v.Status != StatusFinished {
+		if v.Paid {
 			return true
 		}
 	}

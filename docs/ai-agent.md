@@ -346,6 +346,21 @@ Sozlama: `MAX_IMAGES` (default 2) — bitta suhbatda nechta rasm o'qiladi,
 eng oxirgisidan boshlab. Qolganlari: `OCR_ENABLED`, `OCR_LANGS`,
 `OCR_TIMEOUT_SEC`, `OCR_FETCH_TIMEOUT_SEC`, `TESSERACT_BIN`.
 
+**Havola va telefon raqami trek deb olinmaydi** (`support/numbers.go`,
+`cleanForNumbers`). Mijoz rasm yuborsa xabar matni — havolaning o'zi
+bo'ladi va uning ichida fayl nomi sifatida uzun raqam turadi
+(`…/1788967261401804602-image_picker_….png`); telefon raqami esa 12
+xonali (`+998901370006`). Ilgari ikkalasi ham "trek raqami" deb
+olinardi va shu sababli:
+
+- rasm HECH QACHON o'qilmasdi (rasm o'qish faqat matnda raqam
+  bo'lmaganda ishlaydi, soxta raqam esa doim "bor" edi);
+- adminkada o'sha soxta raqam bo'yicha qidirilib, mijozga
+  "buyurtmangiz topilmadi" deb javob ketardi.
+
+Matnda haqiqiy raqam bo'lib rasm o'qilmagan bo'lsa ham, panelda
+"Rasm o'qilmadi — matnda raqam bor" bosqichi ko'rinadi.
+
 Xabar **sanasi yuborilmaydi**: tartib yetarli, sana esa token sarflaydi va
 model javobida chalkashlik keltiradi. Haqiqiy sanalar (buyurtma yaratilgan,
 jo'natilgan) "Tizimdagi ma'lumot" blokida keladi.
@@ -379,7 +394,26 @@ Adminka status kodlari:
 |---|---|
 | 3 | sotib olingan, to'langan |
 | 4 | kiritish uchun kutilmoqda |
-| 6 | yakunlangan |
+| 6 | Xitoyda tranzaksiya yopilgan — posilka yo'lga chiqqan |
+
+### Status 6 "yetkazildi" DEGANI EMAS
+
+Adminkada status 6 **Xitoy tomonidagi tranzaksiya yopilganini** bildiradi:
+posilka yo'lga chiqqan. Mijozning qo'liga tekkani emas. Posilka
+O'zbekistonga kelgach **yetkazmada (dashboard)** chiqadi — "punktga keldi",
+"yetkazildi" kabi holatlar faqat o'sha yerda ko'rinadi.
+
+Ilgari modelga faqat "yakunlangan" degan yorliq borardi va model mijozga
+"buyurtmangiz yakunlangan" deb yozardi — mijoz buni "yetkazildi" deb
+tushunardi. Endi:
+
+- `status_label` — "Xitoyda tranzaksiya yopilgan — yo'lga chiqqan";
+- `status_izoh` — to'liq ma'nosi va "mijozga *yakunlangan*/*yetkazildi*
+  deb aytma" ko'rsatmasi (`StatusMeaning`, `support/issue.go`);
+- `yetkazma` — posilka yetkazma ro'yxatida bor-yo'qligi, trek raqami
+  orqali solishtiriladi (`MarkArrival`, `support/context.go`);
+- adminkada status 6 li, treki bor buyurtma topilsa, yetkazma ma'lumoti
+  model so'ramagan bo'lsa ham olinadi — usiz kelgan-kelmagani bilinmaydi.
 
 **Qoida:** buyurtma **to'langan** (`pay_status = 1`) bo'lib, status 3 yoki 4
 bo'lib, **to'lov sanasidan (`paid_at`) `PROBLEM_DAYS` (3) kundan ko'p**
@@ -460,8 +494,18 @@ ni albatta yoz" deb aytiladi, model tashlab ketsa esa kod o'zi qo'shadi
 raqam takrorlanmaydi. Mijoz javob qaysi buyurtmasi haqida ekanini bilishi
 kerak, ayniqsa bitta xabarda bir nechta buyurtma yopilganda.
 
-LLM ishlamay qolsa javob YO'QOLMAYDI: xodim matni o'z holicha qoralama
-bo'lib navbatga tushadi — u ham buyurtma raqami bilan.
+LLM ishlamay qolsa (model o'chirilgan, balans tugagan, xato) javob
+YO'QOLMAYDI, lekin **mijozga ham ketmaydi**: xodim matni o'z holicha
+qoralama bo'lib tasdiqlash navbatiga tushadi — `auto_reply` yoqiq
+bo'lsa ham. Sabab: xodim guruhda ichki tilda, qisqa yozadi ("sotuvchi
+bilan gaplashilmoqda") — bu matn mijozga tushunarsiz. Guruhdagi
+tasdiqda buni xodim ko'radi: "⚠️ AI javobni mijoz tiliga o'gira olmadi
+… panelda tahrirlab yuborish kerak".
+
+Diqqat: **AI agent o'chirilgan** (`agent_enabled: false`) bo'lsa ham
+shu holat yuz beradi — model chaqirilmaydi, demak qayta yozish ham
+bo'lmaydi. Guruhdagi javoblar mijozga avtomatik ketishini istasangiz,
+agentni yoqib qo'ying.
 Guruh javoblari `TG_POLL_SEC` (30 s) da bir marta `getUpdates` bilan
 o'qiladi; oxirgi `update_id` `settings` jadvalida saqlanadi.
 

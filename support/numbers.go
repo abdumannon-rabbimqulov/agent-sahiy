@@ -23,7 +23,45 @@ var (
 	letterTrackRe = regexp.MustCompile(`(?i)\b([A-Z]{1,2}\d{9,})\b`)
 	// Faqat raqamli uzun trek (masalan 78975877791396).
 	digitTrackRe = regexp.MustCompile(`\b(\d{11,})\b`)
+
+	// urlRe - matndagi havola. Mijoz rasm yuborsa, xabar matni —
+	// havolaning o'zi bo'ladi va uning ichida fayl nomi sifatida uzun
+	// raqam turadi ("…/1788967261401804602-image_picker_….png"). U
+	// trek raqami EMAS: havola butunlay olib tashlanadi.
+	urlRe = regexp.MustCompile(`(?i)https?://\S+`)
+
+	// phoneRe - O'zbekiston telefon raqami (+998901370006, 998901370006).
+	// 12 xonali bo'lgani uchun digitTrackRe uni trek deb olib qo'yardi:
+	// mijoz telefonini yozsa, tizim o'sha raqam bo'yicha buyurtma
+	// qidirib "topilmadi" deb javob berardi.
+	phoneRe = regexp.MustCompile(`(^|\D)(\+?998\d{9})(\D|$)`)
+
+	// plusPhoneRe - boshqa davlat raqami ham "+" bilan yoziladi; trek
+	// raqami hech qachon "+" bilan boshlanmaydi.
+	plusPhoneRe = regexp.MustCompile(`\+\d{9,}`)
 )
+
+// cleanForNumbers - matnni raqam qidirishga tayyorlaydi: havolalar va
+// telefon raqamlari olib tashlanadi (uzunligi saqlanadi — qolgan
+// raqamlarning chegaralari buzilmasin).
+func cleanForNumbers(text string) string {
+	if isImageLink(strings.TrimSpace(text)) {
+		return "" // butun xabar — rasm havolasi
+	}
+	text = urlRe.ReplaceAllStringFunc(text, blankOut)
+	text = plusPhoneRe.ReplaceAllStringFunc(text, blankOut)
+	for {
+		loc := phoneRe.FindStringSubmatchIndex(text)
+		if loc == nil {
+			return text
+		}
+		// 2-guruh — telefonning o'zi; atrofidagi belgilar tegilmaydi.
+		text = text[:loc[4]] + blankOut(text[loc[4]:loc[5]]) + text[loc[5]:]
+	}
+}
+
+// blankOut - matnni bir xil uzunlikdagi probelga almashtiradi.
+func blankOut(s string) string { return strings.Repeat(" ", len(s)) }
 
 // ExtractNumbers - MIJOZ yozgan xabarlardan buyurtma va trek raqamlari.
 // Bizning javoblarimizdagi raqamlar olinmaydi: ular baribir mijozning
@@ -36,7 +74,10 @@ func ExtractNumbers(msgs []Message) (orderSN, express []string) {
 		if !m.FromClient() {
 			continue
 		}
-		text := m.Message
+		text := cleanForNumbers(m.Message)
+		if text == "" {
+			continue
+		}
 
 		for _, g := range orderSNRe.FindAllStringSubmatch(text, -1) {
 			sn := "DG" + g[1]
