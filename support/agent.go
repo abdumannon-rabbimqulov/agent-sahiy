@@ -881,6 +881,18 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		if len(numbers) == 0 {
 			rows = onlyPaidOrders(rows)
 		}
+		// Begona buyurtma modelga ham, muammo ro'yxatiga ham
+		// tushmaydi (qarang: onlyOwnOrders).
+		var foreign []string
+		rows, foreign = onlyOwnOrders(rows, clientID)
+		if len(foreign) > 0 {
+			out["begona_buyurtma"] = map[string]any{
+				"raqamlar": foreign,
+				"korsatma": foreignOrderNote,
+			}
+			log.Printf("agent: suhbat %d — begona buyurtma(lar) chiqarib tashlandi: %v (mijoz %d)",
+				conversationID, foreign, clientID)
+		}
 		// Mijoz turi (B2C/B2B) — yetkazish tarifini tushuntirish uchun.
 		out["mijoz_turi"] = CustomerType(rows)
 		// Muammoli buyurtmalarni aniqlash. Xabar bu yerdan ketmaydi —
@@ -926,6 +938,18 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 			for _, n := range tracks {
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
 				rows, errs = appendResult(rows, errs, r, err)
+			}
+			// Trek raqami bo'yicha qidiruv ham butun bazadan ketadi —
+			// begona posilka bu yerda ham chiqarib tashlanadi.
+			if bad := onlyOwnDelivery(&rows, clientID); len(bad) > 0 {
+				log.Printf("agent: suhbat %d — begona yetkazma(lar) chiqarib tashlandi: %v (mijoz %d)",
+					conversationID, bad, clientID)
+				if _, ok := out["begona_buyurtma"]; !ok {
+					out["begona_buyurtma"] = map[string]any{
+						"raqamlar": bad,
+						"korsatma": foreignOrderNote,
+					}
+				}
 			}
 			deliveryRows, haveDelivery = rows, true
 			brief, bad := BriefDelivery(rows)
@@ -1151,4 +1175,63 @@ func sendIfAuto(in *Interaction, handledBy string) bool {
 		in.markSent(handledBy)
 	}
 	return true
+}
+
+// foreignOrderNote - so'ralgan buyurtma BOSHQA mijozniki bo'lganda
+// modelga beriladigan tayyor ko'rsatma.
+//
+// Nega kerak: raqam bo'yicha qidiruv adminkaning va yetkazmaning BUTUN
+// bazasidan ketadi (mijoz o'z raqamini noto'g'ri yozishi mumkin).
+// Ilgari bunday buyurtma modelga "boshqa mijozning buyurtmasi" degan
+// belgi bilan baribir berilardi va model uning holatini, sanasini,
+// qayerdaligini mijozga aytib yuborardi — bu begona odamning ma'lumoti.
+// Xodimlar guruhiga ham shu odam so'ramagan muammo bo'lib chiqardi.
+const foreignOrderNote = "Bu buyurtma BOSHQA mijozga tegishli — uning ma'lumoti " +
+	"ataylab berilmadi. Mijozga bu buyurtma haqida HECH QANDAY tafsilot aytma: " +
+	"holati, sanasi, qayerdaligi, nomi — hech biri. Faqat shuni ayt: bu raqam " +
+	"mijozning akkauntiga tegishli emas, o'z buyurtma raqamini tekshirib yuborsin " +
+	"(yoki buyurtma egasi o'zi murojaat qilsin). Raqamni \"tuzatib\" o'zingdan " +
+	"boshqasini taklif qilma."
+
+// onlyOwnOrders - faqat SHU mijozning buyurtmalarini qoldiradi.
+//
+// Egasi noma'lum (user_id bo'sh) yozuv qoldiriladi: adminka ba'zan bu
+// maydonni bermaydi, borini yashirib qo'yishdan ko'ra ko'rsatgan
+// ma'qul. Mijoz noma'lum bo'lsa (clientID = 0) filtr ishlamaydi.
+//
+// Ikkinchi qiymat — chiqarib tashlangan buyurtma raqamlari (logga va
+// modelga tushuntirish uchun).
+func onlyOwnOrders(rows []AdminkaOrder, clientID int64) ([]AdminkaOrder, []string) {
+	if clientID <= 0 {
+		return rows, nil
+	}
+	out := make([]AdminkaOrder, 0, len(rows))
+	var foreign []string
+	for _, o := range rows {
+		if o.UserID > 0 && o.UserID != clientID {
+			foreign = append(foreign, firstNonEmpty(o.OrderSN, o.ExpressNum))
+			continue
+		}
+		out = append(out, o)
+	}
+	return out, foreign
+}
+
+// onlyOwnDelivery - yetkazma yozuvlaridan begonalarini olib tashlaydi.
+// Ro'yxat joyida o'zgaradi; qaytadigan qiymat — tashlangan treklar.
+func onlyOwnDelivery(rows *[]DeliveryOrder, clientID int64) []string {
+	if clientID <= 0 || rows == nil {
+		return nil
+	}
+	out := make([]DeliveryOrder, 0, len(*rows))
+	var foreign []string
+	for _, d := range *rows {
+		if d.UserID > 0 && d.UserID != clientID {
+			foreign = append(foreign, d.ExpressNum)
+			continue
+		}
+		out = append(out, d)
+	}
+	*rows = out
+	return foreign
 }

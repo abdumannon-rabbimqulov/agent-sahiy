@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -165,4 +166,90 @@ func ChatsJSON(baseURL, token string, f ChatFilter) ([]byte, error) {
 		Count int    `json:"count"`
 		Chats []Chat `json:"chats"`
 	}{len(chats), chats}, "", "  ")
+}
+
+// DefaultUnansweredMaxPages — FetchUnansweredChats uchun xavfsizlik
+// chegarasi: server saralashni o'zgartirib qo'ysa ham butun ro'yxatni
+// (31 mingdan ortiq suhbat) o'qib ketmasin.
+const DefaultUnansweredMaxPages = 40
+
+// unansweredZeroPages - javobsiz zona tugagan deb hisoblash uchun kerakli
+// ketma-ket "javobsizi yo'q" sahifalar soni.
+const unansweredZeroPages = 2
+
+// FetchUnansweredChats javobsiz suhbatlarni TO'LIQ qaytaradi.
+//
+// Server ro'yxatni javobsizlarni oldinga qo'yib saralaydi: `unread_chats`
+// soni aynan 1..N sahifalardagi `operator_unseen_count > 0` suhbatlar
+// soniga teng (o'lchandi: 9 to'la sahifa + 10-sahifada 18 ta = 918 =
+// javobdagi unread_chats). Shuning uchun javobsiz bermagan birinchi
+// sahifada to'xtash mumkin — uning orqasida ham javobsiz yo'q.
+//
+// Nega bu muhim: ilgari poller sahifa oynasini surib borardi va 11-dan
+// 314-sahifagacha — 30 mingdan ortiq javob berilgan suhbatni — bekorga
+// aylanib chiqardi. Endi har siklda butun navbat (hamma javobsiz)
+// qo'lda bo'ladi, ya'ni "eng uzoq kutgan birinchi" saralash tasodifiy
+// oyna ichida emas, haqiqiy navbat bo'ylab ishlaydi.
+func FetchUnansweredChats(baseURL, token string, maxPages, limit int) ([]Chat, error) {
+	if maxPages < 1 {
+		maxPages = DefaultUnansweredMaxPages
+	}
+	if limit < 1 {
+		limit = 100
+	}
+
+	seen := map[int64]bool{}
+	var all []Chat
+	// zeroStreak - ketma-ket nechta sahifa javobsiz bermadi. Bitta bo'sh
+	// sahifada darhol to'xtamaymiz: server saralashni o'zgartirib qo'ysa
+	// (yoki chegara aynan sahifa boshiga tushsa) ish o'tkazib yuborilmasin.
+	// Bitta qo'shimcha sahifaning narxi ~1.2s, o'tkazib yuborilgan
+	// mijozning narxi esa ancha qimmat.
+	zeroStreak := 0
+	lastPage := 0
+	for page := 1; page <= maxPages; page++ {
+		lastPage = page
+		part, err := FetchChats(baseURL, token, ChatFilter{Page: page, Limit: limit})
+		if err != nil {
+			if len(all) > 0 {
+				break // bir qismi olindi — shuning bilan davom etamiz
+			}
+			return nil, err
+		}
+		if len(part) == 0 {
+			break // ro'yxat tugadi
+		}
+
+		n := 0
+		for _, c := range part {
+			if !c.Unanswered() {
+				continue
+			}
+			n++
+			if !seen[c.ID] {
+				seen[c.ID] = true
+				all = append(all, c)
+			}
+		}
+		if n == 0 {
+			zeroStreak++
+			if zeroStreak >= unansweredZeroPages {
+				break // javobsiz zona ishonchli tugadi
+			}
+		} else {
+			zeroStreak = 0
+		}
+		if len(part) < limit {
+			break // oxirgi sahifa
+		}
+	}
+	// Chegaraga urilsak — server saralashi o'zgargan bo'lishi mumkin:
+	// javobsizlar ro'yxat bo'ylab tarqalgan. Buni jimgina o'tkazib
+	// yubormaymiz, aks holda navbatning bir qismi ko'rinmay qoladi.
+	if lastPage >= maxPages {
+		log.Printf("suhbatlar: %d sahifa chegarasiga yetildi (%d javobsiz topildi) — "+
+			"javobsizlar ro'yxat boshida to'planmagan bo'lishi mumkin, UNANSWERED_MAX_PAGES ni oshirish kerak",
+			maxPages, len(all))
+	}
+	return all, nil
 }

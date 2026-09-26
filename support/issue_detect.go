@@ -346,6 +346,22 @@ func ReviewOpenIssues(db *gorm.DB) error {
 	for i := range open {
 		is := &open[i]
 
+		// 0. Begona buyurtma: muammo suhbatdagi mijozga emas, boshqa
+		//    odamga tegishli. Bunday muammo ochilmasligi kerak edi
+		//    (agent.go: onlyOwnOrders) — eski yozuvlar shu yerda
+		//    yopiladi, aks holda guruhga hech kim so'ramagan buyurtma
+		//    bo'yicha eslatma yog'ilaveradi.
+		if is.ClientID > 0 && is.OwnerUserID > 0 && is.OwnerUserID != is.ClientID {
+			res := fmt.Sprintf("Begona buyurtma: egasi %d, suhbatdagi mijoz %d — "+
+				"mijoz bu buyurtma haqida so'ramagan", is.OwnerUserID, is.ClientID)
+			if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err == nil {
+				log.Printf("muammo: %s begona buyurtma sifatida yopildi (egasi %d, mijoz %d)",
+					is.OrderSN, is.OwnerUserID, is.ClientID)
+				notifyResolved(is, res)
+			}
+			continue
+		}
+
 		// 1. Xodim mijozga chatda javob berganmi? Bergan bo'lsa muammo
 		//    hal qilingan hisoblanadi. Bu tekshiruv birinchi turadi:
 		//    adminka javob bermayotgan bo'lsa ham muammo yopilaveradi.

@@ -392,6 +392,11 @@ func main() {
 	defer stop()
 	support.StartPoller(ctx)
 
+	// Ochiq muammolarni qayta ko'rib chiqish — ALOHIDA sikl. Pollerni
+	// bloklamasligi kerak: u har muammo uchun tashqi so'rov qiladi va
+	// mijozga javob berishdan ko'ra shoshilinchligi kam.
+	support.StartIssueReviewer(ctx)
+
 	// Telegram guruhidagi javoblar (muammo yechimlari) — agent
 	// o'chirilgan bo'lsa ham o'qiladi.
 	support.StartTelegramPoller(ctx)

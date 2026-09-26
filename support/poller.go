@@ -20,14 +20,16 @@ import (
 const (
 	DefaultPollInterval = 60  // sekund
 	DefaultChatsLimit   = 100 // bir sahifada nechta suhbat
-	DefaultChatsPages   = 6   // nechta sahifa ko'riladi
+	DefaultChatsPages   = 6   // nechta sahifa ko'riladi (faqat ScanOnce uchun)
+
+	// DefaultIssueReviewSec - ochiq muammolarni qayta ko'rib chiqish
+	// oralig'i. Bu ish poller siklidan ALOHIDA yuradi (qarang:
+	// StartIssueReviewer).
+	DefaultIssueReviewSec = 600
 )
 
-// pollPageCursor - keyingi siklda qaysi sahifadan boshlanadi. Ro'yxat
-// serverda yangilik bo'yicha saralanmagani uchun doim 1-sahifadan
-// boshlasak, tez-tez yangilanadigan suhbatlar doim old sahifalarda turib,
-// uzoqdagi eski javobsizlarga navbat yetmay qoladi (qarang: fetchChatsFrom).
-var pollPageCursor atomic.Int64
+// IssueReviewSec - .env dagi ISSUE_REVIEW_SEC (default 600).
+func IssueReviewSec() int { return envInt("ISSUE_REVIEW_SEC", DefaultIssueReviewSec) }
 
 // StartPoller fon siklini ishga tushiradi: har `poll_interval_sec` da
 // yangi mijoz xabari bo'lgan suhbatlarni topib, zanjirni yuritadi.
@@ -68,36 +70,82 @@ func StartPoller(ctx context.Context) {
 	}()
 }
 
+// StartIssueReviewer ochiq muammolarni qayta ko'rib chiqadigan ALOHIDA
+// fon siklini ishga tushiradi.
+//
+// Nega alohida: bu ish har bir ochiq muammo uchun ketma-ket 2 ta tashqi
+// so'rov qiladi (suhbat tarixi + adminkadagi holat). 185 ta ochiq
+// muammoda bu ~2.5 daqiqa. Ilgari u PollOnce oxirida turardi va har
+// siklni shu vaqtga bloklardi: `poll_interval_sec` 30 bo'lsa ham bitta
+// sikl 3 daqiqaga cho'zilardi, mijoz esa javobni shuncha kutardi.
+// Muammolarni tekshirish shoshilinch ish emas — eslatma vaqti soatlar
+// bilan o'lchanadi (ISSUE_REMIND_HOURS), shuning uchun u o'z tezligida
+// (ISSUE_REVIEW_SEC, default 600s) yuradi.
+//
+// Sikl `agent_enabled` o'chirilganda ham ishlaydi: xodim yopgan muammo
+// yoki eskirgan javob osilib qolmasligi kerak.
+func StartIssueReviewer(ctx context.Context) {
+	log.Printf("muammolar: qayta ko'rib chiqish har %ds da", IssueReviewSec())
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("muammolar: sikl to'xtadi")
+				return
+			case <-time.After(time.Duration(IssueReviewSec()) * time.Second):
+			}
+			if !PollEnabled() {
+				continue
+			}
+			reviewIssuesOnce()
+		}
+	}()
+}
+
+// reviewIssuesOnce - bitta ko'rib chiqish: ochiq muammolar holati va
+// eskirgan (tasdiqlanmagan) javoblar.
+func reviewIssuesOnce() {
+	// Ochiq muammolarni qayta ko'rib chiqamiz: holat o'zgarganmi,
+	// mijozga javob berilganmi va eslatma vaqti kelganmi.
+	if err := ReviewOpenIssues(DB); err != nil {
+		log.Printf("muammolar: ko'rib chiqish: %v", err)
+	}
+
+	// Uzoq vaqt tasdiqlanmagan "pending" javoblar endi dolzarb emas —
+	// avtomatik bekor qilinadi (STALE_PENDING_HOURS).
+	if n, err := RejectStalePending(DB); err != nil {
+		log.Printf("muammolar: eskirgan javoblarni bekor qilish: %v", err)
+	} else if n > 0 {
+		log.Printf("muammolar: %d ta eskirgan (pending) javob avtomatik bekor qilindi", n)
+	}
+}
+
 // PollOnce bitta siklni bajaradi:
 //
-//  1. Bir necha sahifa suhbat olinadi (server ro'yxatni yangilik bo'yicha
-//     saralamaydi — eng yangi xabar oxirgi sahifada bo'lishi mumkin).
-//  2. Faqat JAVOBSIZ suhbatlar qoldiriladi: `operator_unseen_count > 0`
-//     — ya'ni biz o'qimagan mijoz xabari bor.
-//  3. Allaqachon ishlanganlari tashlanadi (oxirgi xabar vaqti bo'yicha) —
+//  1. HAMMA javobsiz suhbat olinadi: server ro'yxatni javobsizlarni
+//     oldinga qo'yib saralaydi, shuning uchun javobsiz bermagan birinchi
+//     sahifada to'xtash yetarli (qarang: FetchUnansweredChats).
+//  2. Allaqachon ishlanganlari tashlanadi (oxirgi xabar vaqti bo'yicha) —
 //     bu har suhbat uchun alohida so'rovni tejaydi.
-//  4. ENG ESKISIDAN (eng ko'p kutgan mijozdan) boshlab `batch_size` tasi
-//     ishlanadi. Qolganlari yo'qolmaydi — keyingi siklda navbat bilan
-//     olinadi.
+//  3. ENG ESKISIDAN (eng ko'p kutgan mijozdan) boshlab `batch_size` tasi
+//     ishlanadi. Qolganlari yo'qolmaydi — keyingi siklda navbatning
+//     boshidan davom etiladi.
+//
+// Ilgari bu yerda sahifa oynasi surilib borardi (pollPageCursor). Server
+// javobsizlarni oldinga qo'yib saralagani uchun u oynani javob berilgan
+// 30 mingdan ortiq suhbat ustiga surib, sikllarning deyarli hammasini
+// bekorga o'tkazardi — yangi xabar 30 daqiqadan bir necha soatgacha
+// kutib qolardi.
 func PollOnce(ctx context.Context) error {
 	if !AgentEnabled() {
 		return ErrAgentDisabled
 	}
-	pages := envInt("CHATS_PAGES", DefaultChatsPages)
 	limit := envInt("CHATS_LIMIT", DefaultChatsLimit)
 
-	startPage := int(pollPageCursor.Load())
-	if startPage < 1 {
-		startPage = 1
-	}
-	chats, reachedEnd, err := fetchChatsFrom(startPage, pages, limit)
+	chats, err := fetchUnanswered(limit)
 	if err != nil {
 		return err
-	}
-	if reachedEnd {
-		pollPageCursor.Store(1) // ro'yxat tugadi — keyingi safar boshidan
-	} else {
-		pollPageCursor.Store(int64(startPage + pages))
 	}
 
 	todo := pendingChats(chats)
@@ -163,20 +211,6 @@ func PollOnce(ctx context.Context) error {
 
 	if done > 0 {
 		log.Printf("poller: %d ta suhbat ishlandi", done)
-	}
-
-	// Ochiq muammolarni qayta ko'rib chiqamiz: holat o'zgarganmi,
-	// mijozga javob berilganmi va eslatma vaqti kelganmi.
-	if err := ReviewOpenIssues(DB); err != nil {
-		log.Printf("poller: muammolarni ko'rib chiqish: %v", err)
-	}
-
-	// Uzoq vaqt tasdiqlanmagan "pending" javoblar endi dolzarb emas —
-	// avtomatik bekor qilinadi (STALE_PENDING_HOURS).
-	if n, err := RejectStalePending(DB); err != nil {
-		log.Printf("poller: eskirgan javoblarni bekor qilish: %v", err)
-	} else if n > 0 {
-		log.Printf("poller: %d ta eskirgan (pending) javob avtomatik bekor qilindi", n)
 	}
 	return nil
 }
@@ -391,16 +425,10 @@ func fetchChats(pages, limit int) ([]Chat, error) {
 	})
 }
 
-// fetchChatsFrom - fetchChats bilan bir xil, lekin sahifa oynasini
-// `startPage`dan boshlaydi (pollPageCursor uchun).
-func fetchChatsFrom(startPage, pages, limit int) ([]Chat, bool, error) {
-	type result struct {
-		chats      []Chat
-		reachedEnd bool
-	}
-	res, err := withToken(func(baseURL, token string) (result, error) {
-		chats, reachedEnd, err := FetchChatsFrom(baseURL, token, startPage, pages, limit)
-		return result{chats, reachedEnd}, err
+// fetchUnanswered - hamma javobsiz suhbat (token eskirsa yangilanadi).
+func fetchUnanswered(limit int) ([]Chat, error) {
+	maxPages := envInt("UNANSWERED_MAX_PAGES", DefaultUnansweredMaxPages)
+	return withToken(func(baseURL, token string) ([]Chat, error) {
+		return FetchUnansweredChats(baseURL, token, maxPages, limit)
 	})
-	return res.chats, res.reachedEnd, err
 }
