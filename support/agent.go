@@ -58,6 +58,56 @@ var ErrAlreadyAnswered = errors.New("suhbatga javob berilgan — yangi mijoz xab
 // tekshiriladi), token behuda ketmasin.
 var ErrClientStillTyping = errors.New("mijoz hali yozib tugatmagan bo'lishi mumkin — kutilmoqda")
 
+// ErrAnsweredByStaff - javob tayyorlangandan keyin, u mijozga
+// yetib bormasidan oldin suhbatga BIZ tomondan (xodim yoki boshqa
+// murojaat) javob yozilgan. Tayyor javob endi eskirgan — yuborilmaydi.
+var ErrAnsweredByStaff = errors.New("suhbatga biz tomondan javob berilgan — tayyor javob yuborilmadi")
+
+// ErrAlreadyStudied - shu mijoz xabari allaqachon o'rganilgan (zanjir
+// bir marta yurgan). Mijoz yangi xabar yozmaguncha qayta o'rganilmaydi.
+var ErrAlreadyStudied = errors.New("bu mijoz xabari allaqachon o'rganilgan — yangi xabar yo'q")
+
+// alreadyStudied - shu suhbatning `lastID` xabari (yoki undan yangisi)
+// ilgari ishlangan bo'lsa true.
+//
+// Nega kerak: muammo xodimlar guruhiga topshirilganda mijozga hech
+// narsa yozilmaydi — suhbatdagi oxirgi so'z MIJOZNIKI bo'lib qolaveradi.
+// Faqat "oxirgi so'z kimniki" tekshiruvi bunday suhbatni har safar
+// yangidek ko'rsatardi: qo'lda skanerlash (ScanOnce) uni qayta-qayta
+// modelga berib, o'sha muammo guruhga takror tushardi. Mijoz yangi
+// xabar yozsa id o'sadi va zanjir odatdagidek yuradi.
+func alreadyStudied(conversationID, lastID int64) bool {
+	if DB == nil || lastID <= 0 {
+		return false
+	}
+	var st ConversationState
+	if err := DB.First(&st, "conversation_id = ?", conversationID).Error; err != nil {
+		return false // yozuv yo'q — birinchi marta ko'rilmoqda
+	}
+	return lastID <= st.LastMessageID
+}
+
+// alreadyAnswered - suhbatdagi oxirgi so'z BIZNIKI bo'lsa true.
+//
+// Zanjir boshida ham shunday tekshiruv bor (ErrAlreadyAnswered), lekin
+// u yetarli emas: zanjir model javobini kutib turgan (yoki javob admin
+// tasdig'ini kutib turgan) paytda xodim mijozga o'zi yozib qo'yishi
+// mumkin. Shu sababli tekshiruv yuborishdan OLDIN takrorlanadi.
+//
+// Xabarlarni olishda xato bo'lsa false qaytadi: aloqa uzilgani uchun
+// tayyor javobni ushlab qolmaymiz.
+func alreadyAnswered(conversationID int64) bool {
+	msgs, err := fetchHistory(conversationID)
+	if err != nil {
+		log.Printf("agent: suhbat %d — yuborishdan oldingi tekshiruv o'tmadi: %v", conversationID, err)
+		return false
+	}
+	if len(msgs) == 0 {
+		return false
+	}
+	return !msgs[len(msgs)-1].FromClient()
+}
+
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
 func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
@@ -103,6 +153,13 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// (hatto muammo sifatida qayta ko'tarilishi) demakdir.
 	if !force && !msgs[len(msgs)-1].FromClient() {
 		return nil, ErrAlreadyAnswered
+	}
+	// Mijoz yangi hech narsa yozmagan bo'lsa (shu xabar allaqachon
+	// o'rganilgan) — model chaqirilmaydi. Muammo xodimlar guruhida
+	// turgan bo'lsa ham shunday: javobni xodim beradi, AI uni qayta
+	// o'rganmaydi.
+	if !force && alreadyStudied(conversationID, msgs[len(msgs)-1].ID) {
+		return nil, ErrAlreadyStudied
 	}
 	// Mijoz ketma-ket bir necha qisqa xabar yozishi odatiy holat (har gap
 	// alohida xabar). Oxirgi xabardan beri hali "jim turish oralig'i"
@@ -150,6 +207,16 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
 	)
+
+	// Bekor qilish / pul qaytarish so'rovi: modelga qat'iy taqiq
+	// beriladi va murojaat xodimlar guruhiga chiqadi (cancel.go).
+	cancelAsk := WantsCancel(msgs)
+	if cancelAsk {
+		dataCtx = append(dataCtx, cancelGuidance)
+		alerts = append(alerts, cancelAlert)
+		log.Printf("agent: suhbat %d — mijoz bekor qilish/pul qaytarish so'radi, xodimga topshirildi",
+			conversationID)
+	}
 
 	// Xayrlashish: mijozning oxirgi so'zi "rahmat" / "hop" bo'lsa,
 	// savol yo'q — modelga bormaymiz, tayyor matn bilan chiroyli
@@ -282,6 +349,20 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
 		if a.NeedsData() {
+			// Model to'qib chiqargan raqam tashlanadi: qidiruv butun
+			// adminka bazasidan ketadi va bunday raqam BOSHQA odamning
+			// buyurtmasiga tushib, hech kim so'ramagan muammo ochilib
+			// ketardi (numbers.go: KeepMentioned).
+			if kept := KeepMentioned(a.OrderSN, msgs, chatSN); len(kept) != len(a.OrderSN) {
+				log.Printf("agent: suhbat %d — model to'qigan buyurtma raqami tashlandi: %v → %v",
+					conversationID, a.OrderSN, kept)
+				a.OrderSN = kept
+			}
+			if kept := KeepMentioned(a.ExpressNum, msgs, chatEx); len(kept) != len(a.ExpressNum) {
+				log.Printf("agent: suhbat %d — model to'qigan trek raqami tashlandi: %v → %v",
+					conversationID, a.ExpressNum, kept)
+				a.ExpressNum = kept
+			}
 			// Model qaytargan raqamlarga suhbatdan topilganlarini
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
@@ -317,6 +398,16 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	in.StepsCount = len(in.Steps)
 	in.applyUsage(usage)
 
+	// Taqiqqa qaramay model javobida bekor qilish haqida yozgan bo'lsa,
+	// javob mijozga AVTOMATIK ketmaydi: avval admin o'qib chiqsin.
+	holdForAdmin := false
+	if cancelAsk && MentionsCancel(in.ChatReply) {
+		holdForAdmin = true
+		alerts = append(alerts, cancelReplyAlert)
+		log.Printf("agent: suhbat %d — javobda bekor qilish haqida gap bor, avto-javob to'xtatildi",
+			conversationID)
+	}
+
 	// Kod topgan holatlar model nima yozganidan qat'i nazar xodimga
 	// yetkaziladi: model ularni ko'rmasligi yoki "muammo yo'q" deb
 	// o'tkazib yuborishi mumkin, lekin bu tekshirishni talab qiladi.
@@ -342,7 +433,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// zanjir xatosi — hech narsa yuborilmaydi
 
 	case in.ChatReply != "":
-		if !sendIfAuto(in, "avto") {
+		if holdForAdmin || !sendIfAuto(in, "avto") {
 			in.Status = StatusPending
 		}
 
@@ -368,9 +459,28 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 
 // DeliverChat mijozga javob yuboradi va javob yetib borsa o'sha xabarlarni
 // "o'qilgan" deb belgilaydi. Mijozga ketadigan yagona yo'l shu.
+//
+// Tayyor javob generatsiyadan keyin DARHOL yuborilsa (avto-javob),
+// xodim shu millisekundlar ichida ulgurishi amalda mumkin emas —
+// shuning uchun qayta tekshiruv (yana bitta tashqi so'rov) o'tkazib
+// yuboriladi: qarang deliverChat.
 func DeliverChat(in *Interaction) error {
+	return deliverChat(in, true)
+}
+
+func deliverChat(in *Interaction, recheck bool) error {
 	if in.ChatReply == "" {
 		return nil
+	}
+	// Javob tayyorlangandan beri xodim mijozga o'zi javob yozgan
+	// bo'lishi mumkin — bunda bizning javobimiz takror bo'lib tushadi.
+	//
+	// Ikki holat to'sib qo'yilmaydi: `Forced` — admin ataylab qo'lda
+	// yuborayotgani, va `SourceTelegram` — matn xodimning o'zinikidan
+	// kelib chiqqan (xodim guruhda reply qilgan), demak yuborilishi
+	// ataylab so'ralgan.
+	if recheck && !in.Forced && in.Source != SourceTelegram && alreadyAnswered(in.ConversationID) {
+		return ErrAnsweredByStaff
 	}
 	if err := SendToClient(in.ConversationID, in.ChatReply); err != nil {
 		return fmt.Errorf("chat: %w", err)
@@ -516,17 +626,17 @@ func DeliverHelp(in *Interaction) error {
 // Deliver - admin tasdiqlaganda: chat mijozga ketadi, help hali
 // yuborilmagan bo'lsa (masalan Telegram ishlamay qolgan edi) qayta uriniladi.
 func Deliver(in *Interaction) error {
-	var errs []string
+	// Xatolar errors.Join bilan birlashtiriladi: chaqiruvchi
+	// ErrAnsweredByStaff'ni errors.Is orqali ajrata olishi kerak
+	// (matnga aylantirilsa bu imkoniyat yo'qoladi).
+	var errs []error
 	if err := DeliverChat(in); err != nil {
-		errs = append(errs, err.Error())
+		errs = append(errs, err)
 	}
 	if err := DeliverHelp(in); err != nil {
-		errs = append(errs, err.Error())
+		errs = append(errs, err)
 	}
-	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "; "))
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // saveFlag - bazadagi bitta bayroqni yangilaydi (yozuv hali saqlanmagan
@@ -1017,13 +1127,26 @@ func lastClientMessage(msgs []Message) string {
 // sendIfAuto - avto-javob yoqiq bo'lsa javobni darhol mijozga yuboradi
 // va holatni yangilaydi. O'chiq bo'lsa false qaytaradi: javob admin
 // tasdig'ini kutadi.
+//
+// Javob shu funksiyada RunChain tugagandan keyin bir zumda ketadi —
+// "xodim ulgurib javob yozdi" tekshiruvi (yana bitta tashqi so'rov)
+// bu yerda shart emas, faqat kechikishi mumkin bo'lgan Deliver
+// (admin tasdig'i) yo'lida kerak. Har bir suhbatga tashqi API'ga
+// ketadigan bitta so'rovni tejaydi — ko'p suhbatli navbatda sezilarli.
 func sendIfAuto(in *Interaction, handledBy string) bool {
 	if !AutoReplyOn() {
 		return false
 	}
-	if err := DeliverChat(in); err != nil {
-		in.Status = StatusFailed
-		in.Error = err.Error()
+	if err := deliverChat(in, false); err != nil {
+		if errors.Is(err, ErrAnsweredByStaff) {
+			// Xato emas: xodim ulgurgan, javob endi kerak emas.
+			in.Status = StatusRejected
+			in.Error = ErrAnsweredByStaff.Error()
+			log.Printf("agent: suhbat %d — xodim javob bergan, tayyor javob yuborilmadi", in.ConversationID)
+		} else {
+			in.Status = StatusFailed
+			in.Error = err.Error()
+		}
 	} else {
 		in.markSent(handledBy)
 	}

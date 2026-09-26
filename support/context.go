@@ -55,6 +55,8 @@ type OrderBrief struct {
 	InReview    bool   `json:"tekshiruvda,omitempty"`
 	ExpressNum  string `json:"express_num,omitempty"`
 	ShippedAt   string `json:"shipped_at,omitempty"`
+	// ShippedDays - jo'natilganiga necha kun bo'lgani. Sana o'qilmasa 0.
+	ShippedDays int    `json:"jonatilganiga_kun,omitempty"`
 	PackageName string `json:"package_name,omitempty"`
 
 	// StatusNote - status nimani bildiradi. Ayniqsa status 6 uchun
@@ -84,6 +86,12 @@ type OrderBrief struct {
 	// buyurtma topiladi. Model buni ko'rib tursin — begona buyurtma
 	// tafsilotini mijozga aytib yubormasin.
 	OwnerUserID int64 `json:"boshqa_mijozning_buyurtmasi,omitempty"`
+
+	// AskReceived - posilka jo'natilganiga LongShipmentDays dan oshgan,
+	// lekin yetkazmada hali chiqmagan. Bunda "yo'lda" deb javob berish
+	// kam: mijoz posilkani allaqachon olgan, tizimda belgilanmay qolgan
+	// bo'lishi mumkin. Tayyor ko'rsatma — model shuni bajarsin.
+	AskReceived string `json:"DIQQAT_mijozdan_sora,omitempty"`
 }
 
 // BriefOrders - buyurtmalarni ixchamlashtiradi. Sanalar odam o'qiydigan
@@ -107,6 +115,7 @@ func BriefOrders(views []OrderView, clientID int64) []OrderBrief {
 		}
 		if v.ShippedAt != "" {
 			b.ShippedAt = sanaMatn(v.ShippedAt)
+			b.ShippedDays = daysSinceText(v.ShippedAt)
 		}
 		if clientID > 0 && v.UserID > 0 && v.UserID != clientID {
 			b.OwnerUserID = v.UserID
@@ -152,8 +161,46 @@ func MarkArrival(briefs []OrderBrief, delivery []DeliveryOrder) {
 			briefs[i].Arrived = arrivedInDelivery
 		} else {
 			briefs[i].Arrived = notInDelivery
+			// Jo'natilganiga juda ko'p bo'lgan bo'lsa, "yo'lda" deyish
+			// yetarli emas — avval mijozdan olgan-olmagani so'raladi.
+			if briefs[i].ShippedDays > LongShipmentDays() {
+				briefs[i].AskReceived = askReceivedNote
+			}
 		}
 	}
+}
+
+// DefaultLongShipmentDays - posilka jo'natilganidan keyin shu kundan
+// ko'p yetkazmada chiqmasa, holat oddiy "yo'lda" emas: yo tizimda
+// yozuv tushmay qolgan, yo mijoz allaqachon olgan.
+const DefaultLongShipmentDays = 30
+
+// LongShipmentDays - .env dagi LONG_SHIPMENT_DAYS (default 30).
+func LongShipmentDays() int { return envInt("LONG_SHIPMENT_DAYS", DefaultLongShipmentDays) }
+
+// askReceivedNote - jo'natilganiga 30 kundan oshgan, lekin yetkazmada
+// chiqmagan buyurtma uchun modelga tayyor ko'rsatma.
+//
+// Bu holatda model ilgari shunchaki "Xitoydan yo'lda" deb yozardi va
+// suhbat shu yerda tugardi — mijoz posilkani allaqachon olgan bo'lsa
+// ham (tizimda belgilanmay qolgan) hech kim buni bilmasdi.
+const askReceivedNote = "Buyurtma jo'natilganiga 30 kundan oshgan, lekin yetkazmada hali " +
+	"chiqmagan. Javobni SAVOL bilan tugat: mijozdan shu buyurtmani allaqachon olgan-olmaganini " +
+	"so'ra (tizimda belgilanmay qolgan bo'lishi mumkin). \"Yo'lda\" deb qat'iy aytma va muddat " +
+	"va'da qilma; mijoz olmaganini aytsa — xodimlar tekshirishini ayt."
+
+// daysSinceText - sana matnidan bugungacha o'tgan kun. Sana o'qilmasa
+// yoki kelajakda bo'lsa 0 (modelga ma'nosiz son ketmasin).
+func daysSinceText(s string) int {
+	t, ok := parseAnyTime(s)
+	if !ok {
+		return 0
+	}
+	d := int(time.Since(t).Hours() / 24)
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 // PendingPickup - posilka O'zbekistonda, lekin hali mijozga
@@ -347,7 +394,47 @@ type PickupDone struct {
 	PickedAt   string `json:"olingan,omitempty"`
 	// Region - mijozning viloyati (dashboarddagi `city`).
 	Region string `json:"mijoz_viloyati,omitempty"`
+	// Izoh - mijozga nima deyilishi kerakligi. PendingPickup dagi kabi
+	// tayyor matn va HECH QACHON bo'sh qolmaydi: bo'sh bo'lganda model
+	// qolgan maydonlarga qarab o'zi xulosa chiqarardi va mijozga
+	// "kuryer qaytargan bo'lishi mumkin" deb yozardi — kuryer bu
+	// jo'natmaga umuman tegishli emas.
+	Izoh string `json:"mijozga_nima_deyiladi,omitempty"`
 }
+
+// pickedUpNote - posilka filialdan olib ketilgan holat uchun tayyor
+// ko'rsatma.
+//
+// Bu jo'natma KURYERGA berilmagan: u o'zi-olib-ketish turida, filialda
+// qo'lma-qo'l topshirilgan. Shuning uchun "kuryer qaytargan",
+// "telefoningiz o'chiq bo'lgan" kabi izohlar bu yerda noto'g'ri —
+// model ularni boshqa holatlardan ko'chirib yozardi.
+const pickedUpNote = "Yetkazma ma'lumotida bu posilka FILIALDAN OLIB KETILGAN deb turadi " +
+	"(o'zi-olib-ketish turi, olingan sanasi bor). Mijozga qaysi filialdan va qachon " +
+	"olib ketilgani aytiladi. Bu jo'natma KURYERGA BERILMAGAN — \"kuryer\", " +
+	"\"kuryer qaytargan\", \"telefoningiz o'chiq bo'lgan\" deb yozma. " +
+	"Mijoz \"olmadim\" desa: buyurtmani O'ZI yoki yaqinlaridan biri olib ketgan " +
+	"bo'lishi mumkinligini xushmuomala so'ra; baribir olmagan bo'lsa xodimlar " +
+	"tekshirishini ayt — muddat va'da qilma."
+
+// pickedUpRegionNote - xuddi shu holat, lekin mijoz Toshkentdan
+// tashqarida: u yerda uyga yetkazishning O'ZI yo'q, shuning uchun
+// kuryer haqidagi har qanday gap yanada noto'g'ri.
+const pickedUpRegionNote = pickedUpNote + " Mijoz viloyatida uyga yetkazish UMUMAN YO'Q " +
+	"(kuryer faqat Toshkent shahri va Toshkent viloyatida) — mijozga kuryer haqida hech narsa aytma."
+
+// noCourierRegionNote - mijoz viloyatida kuryer yetkazish yo'q: posilka
+// filialdan beriladi, mijoz o'zi borib oladi.
+//
+// "Kuryerga berilgan" ko'rinishidagi yozuvlarga (yetkazilmoqda /
+// tekshirish_kerak) shu izoh qo'shiladi: model ularni Toshkentdagi
+// kuryer holati deb o'qib, mijozga "kuryer qaytargan bo'lishi mumkin"
+// deb yozardi.
+const noCourierRegionNote = "Mijoz viloyatida KURYER yetkazish YO'Q (uyga yetkazish faqat " +
+	"Toshkent shahri va Toshkent viloyatida) — posilka filialdan beriladi, mijoz o'zi borib oladi. " +
+	"Javobingda \"kuryer\", \"uyga olib boramiz\", \"kuryer qaytargan\", \"telefoningiz o'chiq edi\" " +
+	"kabi gaplarni ISHLATMA. Mijozdan so'ra: buyurtmani O'ZINGIZ yoki yaqiningiz filialdan " +
+	"olib ketgan bo'lishi mumkinmi? Olmagan bo'lsa xodimlar tekshiradi — muddat va'da qilma."
 
 // expressLineKind - express_line matnidan jo'natma turini aniqlaydi:
 // "pickup" (mijoz o'zi olib ketadi) yoki "delivery" (kuryer olib
@@ -413,11 +500,16 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		// buyurtmani ALLAQACHON o'zi olib ketgan. Boshqa bucketlarga
 		// (ayniqsa "tekshirish_kerak"ga) tushmasin — yakunlangan holat.
 		if o.Delivered && o.Status == 7 && expressLineKind(o.ExpressLine) == "pickup" {
+			izoh := pickedUpNote
+			if region != "" && !HomeDeliveryRegion(region) {
+				izoh = pickedUpRegionNote
+			}
 			out.PickedUp = append(out.PickedUp, PickupDone{
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 				PickedAt:   sanaMatnISO(o.DeliveredAt),
 				Region:     region,
+				Izoh:       izoh,
 			})
 			continue
 		}
@@ -475,7 +567,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 				Region:     region,
-				Izoh:       mismatchIzoh(mismatch),
+				Izoh:       mismatchIzoh(mismatch, region),
 			})
 			continue
 		}
@@ -486,7 +578,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			SentAt:     sanaMatnISO(o.DeliveredAt),
 			Days:       int(now.Sub(t).Hours() / 24),
 			Region:     region,
-			Izoh:       mismatchIzoh(mismatch),
+			Izoh:       mismatchIzoh(mismatch, region),
 		}
 		if row.Days < 0 {
 			row.Days = 0 // sana kelajakda — 0 kun deb hisoblaymiz
@@ -526,9 +618,13 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 }
 
 // mismatchIzoh - viloyat mos kelmagan qatorga qo'yiladigan izoh.
-func mismatchIzoh(mismatch bool) string {
+func mismatchIzoh(mismatch bool, region string) string {
 	if mismatch {
+		// Viloyat mos emasligi hamma izohdan muhimroq.
 		return mismatchNote
+	}
+	if region != "" && !HomeDeliveryRegion(region) {
+		return noCourierRegionNote
 	}
 	return ""
 }

@@ -190,6 +190,16 @@ func approveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := support.Deliver(in); err != nil {
+		// Tasdiq kutilayotgan paytda xodim mijozga o'zi javob yozgan
+		// bo'lsa — bu xato emas, javob shunchaki eskirgan.
+		if errors.Is(err, support.ErrAnsweredByStaff) {
+			support.DB.Model(in).Updates(map[string]any{
+				"status": support.StatusRejected, "handled_by": claims.Login,
+				"error": err.Error(),
+			})
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		support.DB.Model(in).Updates(map[string]any{
 			"status": support.StatusFailed, "error": err.Error(),
 		})
@@ -350,7 +360,7 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in, err := run(ctx, body.ConversationID, body.ClientID)
-	if errors.Is(err, support.ErrAlreadyAnswered) {
+	if errors.Is(err, support.ErrAlreadyAnswered) || errors.Is(err, support.ErrAlreadyStudied) {
 		writeErr(w, http.StatusConflict, err.Error()+` (qayta ishga tushirish uchun: {"force":true})`)
 		return
 	}

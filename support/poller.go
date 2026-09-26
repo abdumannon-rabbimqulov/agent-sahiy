@@ -140,8 +140,9 @@ func PollOnce(ctx context.Context) error {
 				// YANGILAMAYMIZ, shu suhbat keyingi siklda xabar
 				// o'zgarmagan holda yana tekshiriladi.
 				continue
-			case errors.Is(err, ErrAlreadyAnswered):
-				// Oxirgi so'z biz tomondan bo'lsa — normal holat, log shart emas.
+			case errors.Is(err, ErrAlreadyAnswered), errors.Is(err, ErrAlreadyStudied):
+				// Oxirgi so'z biz tomondan bo'lsa yoki shu xabar
+				// allaqachon o'rganilgan bo'lsa — normal holat, log shart emas.
 			default:
 				log.Printf("poller: suhbat %d zanjiri: %v", c.ID, err)
 			}
@@ -299,6 +300,13 @@ func ScanRunning() bool { return scanning.Load() }
 //
 // Javob berilgan suhbat modelga BORMAYDI: `RunChain` oxirgi so'z biz
 // tomondan bo'lsa `ErrAlreadyAnswered` qaytaradi — token sarflanmaydi.
+//
+// Shuningdek, mijoz yangi xabar yozmagan bo'lsa (shu xabar ilgari bir
+// marta o'rganilgan) zanjir qayta yurmaydi: `ErrAlreadyStudied`. Muammo
+// xodimlar guruhida ochiq turgan va mijozga hali javob yozilmagan
+// bo'lsa ham shunday — javobni xodim beradi, AI uni qayta o'rganmaydi.
+// Bitta suhbatni ataylab qayta yurgizish kerak bo'lsa: paneldan
+// `force` bilan (POST /api/agent/run).
 func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 	var res ScanResult
 	if !AgentEnabled() {
@@ -344,7 +352,9 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 		switch {
 		case errors.Is(err, ErrClientStillTyping):
 			res.Waiting++
-		case errors.Is(err, ErrAlreadyAnswered):
+		case errors.Is(err, ErrAlreadyAnswered), errors.Is(err, ErrAlreadyStudied):
+			// Javob berilgan yoki allaqachon o'rganilgan — modelga
+			// bormaydi, token sarflanmaydi.
 			res.Answered++
 		case err != nil:
 			res.Failed++

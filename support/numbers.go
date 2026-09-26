@@ -132,3 +132,58 @@ func mergeNumbers(a, b []string, max int) []string {
 	}
 	return out
 }
+
+// KeepMentioned - model qaytargan raqamlardan faqat SUHBATDA haqiqatan
+// uchraganlarini qoldiradi.
+//
+// Nega kerak: model ba'zan raqamni o'zidan to'qiydi (promtdagi misolni
+// ko'chiradi yoki raqamni "tuzatib" yuboradi). Qidiruv esa raqam
+// bo'yicha BUTUN adminka bazasidan ketadi — to'qilgan raqam boshqa
+// odamning buyurtmasiga tushib qoladi. Natijada hech kim so'ramagan
+// buyurtma bo'yicha muammo ochilib, xodimlar guruhiga eslatma yog'ilardi
+// ("Mijoz: X (so'ragan: Y)").
+//
+// Suhbatning HAMMA xabari (mijozniki ham, bizniki ham) tekshiriladi:
+// xodim javobida aytilgan raqam haqida mijoz "o'shani ayting" deb
+// yozishi mumkin. `extra` — koddan kelgan ishonchli raqamlar (masalan
+// mijoz yuborgan rasmdan OCR o'qiganlari).
+func KeepMentioned(nums []string, msgs []Message, extra []string) []string {
+	if len(nums) == 0 {
+		return nil
+	}
+	var hay strings.Builder
+	for _, m := range msgs {
+		hay.WriteString(normalizeNum(m.Message))
+		hay.WriteByte('\n')
+	}
+	for _, e := range extra {
+		hay.WriteString(normalizeNum(e))
+		hay.WriteByte('\n')
+	}
+	text := hay.String()
+
+	out := make([]string, 0, len(nums))
+	for _, n := range nums {
+		key := normalizeNum(n)
+		if key == "" {
+			continue
+		}
+		if strings.Contains(text, key) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// normalizeNum - solishtirish uchun ko'rinish: faqat harf va raqam,
+// katta harfda. "DG 60679679", "dg-60679679" va "DG60679679" bir xil
+// bo'lib qoladi.
+func normalizeNum(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(s) {
+		if (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
