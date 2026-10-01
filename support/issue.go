@@ -41,6 +41,7 @@ const (
 	ResolvedViaChat     = "chat"     // xodim mijozga support chatda javob berdi
 	ResolvedViaAuto     = "auto"     // adminkada status o'zgardi
 	ResolvedViaPanel    = "panel"    // admin paneldan yopdi
+	ResolvedViaRepeat   = "repeat"   // shu buyurtmaga xodim allaqachon javob bergan edi
 )
 
 // OrderIssue - qotib qolgan buyurtma va uning yechimi.
@@ -77,6 +78,12 @@ type OrderIssue struct {
 
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Repeat - shu buyurtma bo'yicha xodim ALLAQACHON javob bergani
+	// haqidagi tayyor matn. Bazada saqlanmaydi: xabar guruhga
+	// chiqqandan keyin o'sha xabarga "tepada javob berilgan" degan
+	// reply yuborish uchun ishlatiladi (issue_detect.go: notifyIssues).
+	Repeat string `gorm:"-" json:"-"`
 }
 
 // StatusLabel - status raqamining o'zbekcha nomi.
@@ -288,6 +295,22 @@ func ResolveIssue(db *gorm.DB, is *OrderIssue, resolution, by, via string) error
 		"state": IssueResolved, "resolution": resolution,
 		"resolved_by": by, "resolved_via": via, "resolved_at": &now,
 	}).Error
+}
+
+// AnsweredByStaff - muammoni ODAM yopganmi (tizim emas).
+//
+// Avtomatik yopilish (`auto`) "javob berilgan" hisoblanmaydi: u
+// adminkada holat o'zgargani uchun yopilgan, mijozga hech kim hech
+// narsa aytmagan.
+func AnsweredByStaff(is *OrderIssue) bool {
+	if is == nil || is.State != IssueResolved {
+		return false
+	}
+	switch is.ResolvedVia {
+	case ResolvedViaTelegram, ResolvedViaChat, ResolvedViaPanel, ResolvedViaRepeat:
+		return true
+	}
+	return false
 }
 
 // ListIssues - muammolar ro'yxati (state bo'yicha filtr, sahifalash).

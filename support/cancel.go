@@ -79,7 +79,10 @@ const cancelGuidance = "MIJOZ BUYURTMANI BEKOR QILISH yoki PULNI QAYTARISH haqid
 	"Javobingda \"bekor qilish\", \"otmena\", \"vozvrat\", \"pulni qaytarish\" so'zlarini " +
 	"UMUMAN ishlatma — bu mavzuni o'zing boshlama.\n" +
 	"Mijozga faqat shuni ayt: murojaati qabul qilindi va TEKSHIRILMOQDA, mutaxassislar " +
-	"ko'rib chiqib tez orada javob beradi. Kechikkani uchun uzr so'ra, xushmuomala bo'l."
+	"ko'rib chiqib tez orada javob beradi. Kechikkani uchun uzr so'ra, xushmuomala bo'l.\n" +
+	"Javobingni SAVOL bilan tugatma va mijozdan hech narsa so'rama (masalan \"posilkani " +
+	"filialdan olgan bo'lishingiz mumkinmi?\") — murojaat xodimga topshirildi, tekshiruvni " +
+	"xodim o'tkazadi. Faqat uzr + \"tekshirilmoqda\" — boshqa gap qo'shma."
 
 // cancelAlert - xodimlar guruhiga ketadigan holat. Sozlamadan qat'i
 // nazar yuboriladi (Alerts bo'lsa help doim guruhga chiqadi).

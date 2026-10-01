@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// photoOnlyReply - xodim izohsiz, faqat rasm yuborgan holat uchun
+// mijozga ketadigan qisqa matn (rasm o'zi asosiy javob).
+const photoOnlyReply = "Quyidagi rasmni yubordik — savolingiz bo'lsa yozing."
+
 // DefaultStaffPromtID - xodim javobini qayta yozadigan promt.
 const DefaultStaffPromtID = 5
 
@@ -30,28 +34,38 @@ func StaffPromtID() uint { return uint(envInt("STAFF_REPLY_PROMPT_ID", DefaultSt
 //
 // LLM ishlamasa ham javob YO'QOLMAYDI: xodim matni o'z holicha qoralama
 // bo'lib navbatga tushadi va admin uni tahrirlab yuborishi mumkin.
-func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who string) (*Interaction, error) {
+func AnswerFromStaffReply(ctx context.Context, issues []OrderIssue, reply, who, imageURL string) (*Interaction, error) {
 	if len(issues) == 0 {
 		return nil, fmt.Errorf("muammo berilmagan")
 	}
 	is := &issues[0]
-	return answerFromStaff(ctx, is.ConversationID, is.ClientID, issueNumbers(issues), reply, who)
+	return answerFromStaff(ctx, is.ConversationID, is.ClientID, issueNumbers(issues), reply, who, imageURL)
 }
 
 // AnswerFromStaffHelp - "🆘 Yordam kerak" xabariga kelgan reply.
 // Muammoli buyurtma xabaridan farqi faqat shu: yopiladigan buyurtma
 // yozuvi yo'q, mijozga javob esa AYNAN bir xil yo'l bilan tayyorlanadi.
-func AnswerFromStaffHelp(ctx context.Context, src *Interaction, reply, who string) (*Interaction, error) {
+func AnswerFromStaffHelp(ctx context.Context, src *Interaction, reply, who, imageURL string) (*Interaction, error) {
 	if src == nil {
 		return nil, fmt.Errorf("murojaat berilmagan")
 	}
-	return answerFromStaff(ctx, src.ConversationID, src.ClientID, nil, reply, who)
+	return answerFromStaff(ctx, src.ConversationID, src.ClientID, nil, reply, who, imageURL)
+}
+
+// AnswerFromStaffPost - guruhdagi boshqa xabarimizga (mijoz rasmi,
+// eslatma va h.k.) kelgan reply. Yopiladigan muammo yozuvi ham,
+// manba murojaat ham yo'q — faqat suhbat ma'lum.
+func AnswerFromStaffPost(ctx context.Context, p *TelegramPost, reply, who, imageURL string) (*Interaction, error) {
+	if p == nil {
+		return nil, fmt.Errorf("xabar yozuvi berilmagan")
+	}
+	return answerFromStaff(ctx, p.ConversationID, p.ClientID, nil, reply, who, imageURL)
 }
 
 // answerFromStaff - ikkala yo'l uchun umumiy qism: xodim matnini LLM
 // bilan mijoz tiliga moslab yozadi va odatdagi qoida bo'yicha yuboradi.
 func answerFromStaff(ctx context.Context, conversationID, clientID int64,
-	sns []string, reply, who string) (*Interaction, error) {
+	sns []string, reply, who, imageURL string) (*Interaction, error) {
 
 	if conversationID <= 0 {
 		return nil, fmt.Errorf("suhbat id yo'q")
@@ -64,6 +78,15 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 		Status:         StatusPending,
 		// Zaxira: xodim matni o'z holicha, buyurtma raqami bilan.
 		ChatReply: WithOrderSN(strings.TrimSpace(reply), sns),
+		// Rasm javob bilan birga ketadi: DeliverChat uni MATNDAN OLDIN
+		// yuboradi.
+		ImageURL: imageURL,
+	}
+	// Xodim faqat rasm yuborgan bo'lsa (izohsiz) — matn o'rniga qisqa
+	// tayyor jumla qo'yiladi: support serveri bo'sh xabarni qabul
+	// qilmaydi va mijoz rasmni izohsiz ko'rib chalkashmasin.
+	if strings.TrimSpace(reply) == "" && imageURL != "" {
+		in.ChatReply = WithOrderSN(photoOnlyReply, sns)
 	}
 
 	// Suhbat tarixi — til va kontekst uchun.
@@ -73,6 +96,17 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 	}
 	in.ClientMessage = lastClientMessage(msgs)
 	in.MessageIDs = JoinIDs(UnansweredClientIDs(msgs))
+
+	// Faqat rasm yuborilgan bo'lsa LLM chaqirilmaydi: qayta yozadigan
+	// matn yo'q, tayyor jumla ishlatiladi (token ham tejaladi).
+	if strings.TrimSpace(reply) == "" && imageURL != "" {
+		sendIfAuto(in, who)
+		if err := SaveInteraction(DB, in); err != nil {
+			return in, fmt.Errorf("bazaga yozish: %w", err)
+		}
+		log.Printf("xodim javobi: suhbat %d — faqat rasm, %s (%s)", conversationID, in.Status, who)
+		return in, nil
+	}
 
 	// LLM bilan mijoz tiliga moslab yozamiz.
 	usage, err := rewriteStaffReply(ctx, in, sns, reply, msgs)
@@ -105,7 +139,12 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 	reply string, msgs []Message) (Usage, error) {
 
-	if !AgentEnabled() {
+	// "Faqat mutaxassis javoblari" rejimining butun MA'NOSI shu:
+	// model aynan xodim javobini mijoz tiliga o'girish uchun ishlaydi.
+	// Shuning uchun bu yo'l `agent_enabled` o'chirilgan bo'lsa ham
+	// ochiq qoladi — aks holda rejim yoqilgan holda xodimning javobi
+	// mijozga umuman yetmay qolardi.
+	if !AgentEnabled() && !StaffOnlyMode() {
 		return Usage{}, fmt.Errorf("AI agent o'chirilgan")
 	}
 	llm := ActiveLLM()

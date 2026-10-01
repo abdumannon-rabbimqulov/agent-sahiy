@@ -70,6 +70,15 @@ function Item({ item, onDone }) {
         </>
       )}
 
+      {item.image_url && (
+        <>
+          <label>Rasm — matndan oldin yuboriladi</label>
+          <a href={item.image_url} target="_blank" rel="noreferrer">
+            <img src={item.image_url} alt="xodim yuborgan rasm" className="reply-img" />
+          </a>
+        </>
+      )}
+
       <label>Mijozga javob (chat)</label>
       <textarea value={chat} onChange={(e) => setChat(e.target.value)} />
 

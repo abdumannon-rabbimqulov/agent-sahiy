@@ -63,6 +63,11 @@ var ErrClientStillTyping = errors.New("mijoz hali yozib tugatmagan bo'lishi mumk
 // murojaat) javob yozilgan. Tayyor javob endi eskirgan — yuborilmaydi.
 var ErrAnsweredByStaff = errors.New("suhbatga biz tomondan javob berilgan — tayyor javob yuborilmadi")
 
+// ErrStaffOnly - "faqat mutaxassis javoblari" rejimi yoqilgan: AI
+// suhbatlarga o'zi kirmaydi, model faqat xodim javobini mijoz tiliga
+// o'girish uchun ishlatiladi (settings.go: StaffOnlyMode).
+var ErrStaffOnly = errors.New("faqat mutaxassis javoblari rejimi — AI suhbatga kirmaydi")
+
 // ErrAlreadyStudied - shu mijoz xabari allaqachon o'rganilgan (zanjir
 // bir marta yurgan). Mijoz yangi xabar yozmaguncha qayta o'rganilmaydi.
 var ErrAlreadyStudied = errors.New("bu mijoz xabari allaqachon o'rganilgan — yangi xabar yo'q")
@@ -126,6 +131,12 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// to'planmasin).
 	if !AgentEnabled() {
 		return nil, ErrAgentDisabled
+	}
+	// "Faqat mutaxassis javoblari" rejimi: yangi mijoz xabari modelga
+	// bormaydi. `force` — admin paneldan ataylab ishga tushirgani,
+	// u ishlayveradi.
+	if !force && StaffOnlyMode() {
+		return nil, ErrStaffOnly
 	}
 
 	in := &Interaction{
@@ -283,7 +294,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// OCR tushunmadi (past sifat, burchak, boshqa format va h.k.) —
 			// rasmni xodim o'z ko'zi bilan ko'rsin. Eng oxirgi (ko'pi bilan
 			// 3 ta) rasm guruhga yuboriladi.
-			sendUnreadableImages(clientID, img)
+			sendUnreadableImages(conversationID, clientID, img)
 		}
 
 		// Bosqich panelga yoziladi: suhbat tafsilotida qaysi rasm
@@ -482,6 +493,16 @@ func deliverChat(in *Interaction, recheck bool) error {
 	if recheck && !in.Forced && in.Source != SourceTelegram && alreadyAnswered(in.ConversationID) {
 		return ErrAnsweredByStaff
 	}
+	// Avval rasm, keyin matn: xodim guruhda ham shu tartibda yuboradi
+	// va mijoz izohni rasmga qarab o'qiydi. Rasm ketmasa matn ham
+	// yuborilmaydi — yarim javob chalkashtiradi.
+	if in.ImageURL != "" && !in.ImageSent {
+		if err := SendImageToClient(in.ConversationID, in.ImageURL); err != nil {
+			return fmt.Errorf("rasm: %w", err)
+		}
+		in.ImageSent = true
+		saveFlag(in, "image_sent", true)
+	}
 	if err := SendToClient(in.ConversationID, in.ChatReply); err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}
@@ -595,7 +616,7 @@ func DeliverStaffNotice(in *Interaction, issues []*OrderIssue) error {
 	if help == "" {
 		return nil
 	}
-	msgID, err := SendTelegramMessage(helpText(in), 0)
+	msgID, err := SendTelegramIssue(helpText(in))
 	if err != nil {
 		return fmt.Errorf("help: %w", err)
 	}
@@ -607,6 +628,7 @@ func DeliverStaffNotice(in *Interaction, issues []*OrderIssue) error {
 func markHelpSent(in *Interaction, msgID int64) {
 	in.HelpSent = true
 	in.HelpMessageID = msgID
+	RememberTelegramPost(msgID, in.ConversationID, in.ClientID, "help", in.ID)
 	if DB != nil && in.ID > 0 {
 		DB.Model(in).Updates(map[string]any{"help_sent": true, "help_message_id": msgID})
 	}
@@ -760,7 +782,7 @@ const MaxUnreadableImagesToGroup = 3
 // MaxUnreadableImagesToGroup ta) xodimlar guruhiga yuboradi — xodim o'z
 // ko'zi bilan ko'rib buyurtma raqamini aniqlay oladi. Xatolik bo'lsa
 // (masalan Telegram sozlanmagan) faqat logga yoziladi, zanjirni to'xtatmaydi.
-func sendUnreadableImages(clientID int64, img ImageNumbers) {
+func sendUnreadableImages(conversationID, clientID int64, img ImageNumbers) {
 	links := img.Links
 	if len(links) > MaxUnreadableImagesToGroup {
 		links = links[:MaxUnreadableImagesToGroup]
@@ -768,13 +790,21 @@ func sendUnreadableImages(clientID int64, img ImageNumbers) {
 	for i, link := range links {
 		var caption string
 		if i == 0 {
-			caption = fmt.Sprintf(
-				"🖼 Mijoz %d — rasm yubordi, lekin undan buyurtma/trek "+
-					"raqami avtomatik o'qilmadi. Xodim tekshirsin.", clientID)
+			// Sarlavha boshqa guruh xabarlari bilan bir xil: ichida
+			// "Suhbat: #<id>" turadi — xodim ham, kod ham (reply
+			// kelganda) qaysi suhbat ekanini shundan biladi.
+			caption = guruhSarlavha("🖼 Mijoz rasm yubordi — raqam avtomatik o'qilmadi",
+				clientID, clientID, conversationID) +
+				"\nRasmdagi buyurtma/trek raqamini xodim o'zi ko'rsin." +
+				guruhFooter(false)
 		}
-		if err := SendTelegramPhoto(link, caption); err != nil {
+		msgID, err := SendTelegramPhoto(link, caption)
+		if err != nil {
 			log.Printf("agent: mijoz %d — rasm guruhga yuborilmadi: %v", clientID, err)
+			continue
 		}
+		// Xodim shu RASMGA reply qilsa ham javob o'z suhbatini topsin.
+		RememberTelegramPost(msgID, conversationID, clientID, "image", 0)
 	}
 }
 
@@ -951,9 +981,44 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 					}
 				}
 			}
+			// Mijoz aniq buyurtma/trek raqami yozgan bo'lsa, yetkazma
+			// ro'yxati O'SHA buyurtmaning posilkasi bilan cheklanadi.
+			// Aks holda ro'yxatda mijozning boshqa posilkalari ham
+			// qoladi va model ularning izohini so'ralgan buyurtmaga
+			// ko'chirib yozadi ("filialdan olib ketgan bo'lishingiz
+			// mumkinmi?") — so'ralgan posilka esa hali Xitoyda.
+			askedOnly := false
+			if len(numbers) > 0 {
+				asked := trimAll(a.ExpressNum)
+				for _, v := range views {
+					if t := strings.TrimSpace(v.ExpressNum); t != "" {
+						asked = append(asked, t)
+					}
+				}
+				// Faqat bog'lanish aniq bo'lganda filtrlaymiz: adminka
+				// buyurtmani topgan (treki bor-yo'qligi endi ma'lum)
+				// yoki mijoz trek raqamining o'zini yozgan.
+				if len(views) > 0 || len(asked) > 0 {
+					kept := FilterDeliveryByTracks(rows, asked)
+					if len(kept) != len(rows) {
+						log.Printf("agent: suhbat %d — yetkazma ro'yxati so'ralgan buyurtma bilan cheklandi: %d/%d yozuv",
+							conversationID, len(kept), len(rows))
+					}
+					askedOnly = len(kept) == 0
+					rows = kept
+				}
+			}
 			deliveryRows, haveDelivery = rows, true
 			brief, bad := BriefDelivery(rows)
+			if askedOnly {
+				// Ro'yxat bo'shab qoldi — modelga nega bo'shligini va
+				// nima qilmaslik kerakligini aytib qo'yamiz.
+				brief.Note = askedOnlyNote
+			}
 			out["yetkazma"] = brief
+			// Kod topgan yetkazma holatlari (punktda qotib qolgan,
+			// muddati o'tgan) xodimlar guruhiga ham chiqadi.
+			alerts = append(alerts, brief.Alerts...)
 			mismatches = append(mismatches, bad...)
 			for _, m := range bad {
 				alerts = append(alerts, m.Text())

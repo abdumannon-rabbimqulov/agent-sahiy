@@ -100,6 +100,15 @@ export default function Detail() {
       <h2>Mijoz xabari</h2>
       <div className="card">{item.client_message || <span className="muted">—</span>}</div>
 
+      {item.image_url && (
+        <>
+          <h2>Rasm (matndan oldin yuboriladi)</h2>
+          <a href={item.image_url} target="_blank" rel="noreferrer">
+            <img src={item.image_url} alt="xodim yuborgan rasm" className="reply-img" />
+          </a>
+        </>
+      )}
+
       <h2>Mijozga javob (chat)</h2>
       <div className="card">
         {item.numbers_from_image && (

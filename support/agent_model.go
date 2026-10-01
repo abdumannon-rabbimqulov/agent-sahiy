@@ -39,6 +39,17 @@ type Interaction struct {
 	ChatReply string `gorm:"type:text" json:"chat_reply"`
 	HelpText  string `gorm:"type:text" json:"help_text"`
 
+	// ImageURL - mijozga javob bilan birga ketadigan rasm (xodim
+	// guruhda javobiga rasm biriktirgan bo'lsa). Rasm MATNDAN OLDIN
+	// yuboriladi — xodim guruhda ham shu tartibda yozadi: avval rasm,
+	// keyin izoh. Havola support omboriga yuklangan bo'ladi
+	// (storage.go), Telegram havolasi emas: uning ichida bot tokeni
+	// turadi.
+	ImageURL string `gorm:"size:512" json:"image_url,omitempty"`
+	// ImageSent - rasm mijozga yuborilganmi. Matn yuborishda xato
+	// bo'lsa qayta urinishda rasm IKKI marta ketib qolmasin.
+	ImageSent bool `gorm:"not null;default:false" json:"image_sent"`
+
 	// NumbersFromImage - javobdagi buyurtma/trek raqami mijoz yozgan
 	// matndan emas, rasmdan (OCR) olinganmi. Dashboardda "Mijozga javob"
 	// bo'limida belgi sifatida ko'rsatiladi — xodim javob qayerdan kelib
@@ -68,6 +79,11 @@ type Interaction struct {
 	// xabarga reply qilsa, javob shu murojaat bo'yicha mijozga ketadi
 	// (support/telegram_updates.go).
 	HelpMessageID int64 `gorm:"index" json:"help_message_id,omitempty"`
+	// HelpAnsweredAt, HelpAnsweredBy - guruhdagi yordam so'roviga
+	// mutaxassis qachon va kim reply qilgani. Bo'sh bo'lsa so'rov hali
+	// JAVOBSIZ — panelda "guruh javobi" hisoboti shu maydonga tayanadi.
+	HelpAnsweredAt *time.Time `gorm:"index" json:"help_answered_at,omitempty"`
+	HelpAnsweredBy string     `gorm:"size:64" json:"help_answered_by,omitempty"`
 
 	// Forced - qo'lda, tekshiruvsiz ishga tushirilganmi (oxirgi so'z
 	// biz tomondan bo'lsa ham). Panelda ajratib ko'rsatiladi.
@@ -138,6 +154,52 @@ type ConversationState struct {
 	LastHandledAt  *time.Time `json:"last_handled_at,omitempty"`
 	Skip           bool       `gorm:"not null;default:false" json:"skip"` // qo'lda o'chirib qo'yilgan
 	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// TelegramPost - xodimlar guruhiga BIZ yuborgan xabar va u qaysi
+// suhbatga tegishli ekani.
+//
+// Nega kerak: xodim guruhdagi istalgan xabarimizga reply qilishi
+// mumkin — "yordam kerak" matniga ham, muammo ro'yxatiga ham,
+// eslatmaga ham, mijoz yuborgan RASMGA ham. Ilgari faqat ikkita yo'l
+// tanilardi (order_issues.tg_message_id va interactions.help_message_id);
+// rasm xabariga yozilgan javob esa hech qayerga bog'lanmay, jimgina
+// yo'qolardi. Endi har bir xabar shu yerda qayd etiladi va javob
+// baribir o'z suhbatini topadi.
+type TelegramPost struct {
+	MessageID      int64     `gorm:"primaryKey" json:"message_id"`
+	ConversationID int64     `gorm:"index;not null" json:"conversation_id"`
+	ClientID       int64     `json:"client_id"`
+	InteractionID  uint      `json:"interaction_id,omitempty"`
+	Kind           string    `gorm:"size:16" json:"kind"` // help | issue | remind | image
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// RememberTelegramPost - guruhga ketgan xabarni qayd etadi. Xatolik
+// zanjirni to'xtatmaydi: bu faqat javobni topishga yordam beradi.
+func RememberTelegramPost(msgID, conversationID, clientID int64, kind string, interactionID uint) {
+	if DB == nil || msgID == 0 || conversationID <= 0 {
+		return
+	}
+	p := TelegramPost{
+		MessageID: msgID, ConversationID: conversationID,
+		ClientID: clientID, InteractionID: interactionID, Kind: kind,
+	}
+	if err := DB.Save(&p).Error; err != nil {
+		log.Printf("telegram: xabar %d qayd etilmadi: %v", msgID, err)
+	}
+}
+
+// FindTelegramPost - guruhdagi xabar qaysi suhbatga tegishli.
+func FindTelegramPost(msgID int64) *TelegramPost {
+	if DB == nil || msgID == 0 {
+		return nil
+	}
+	var p TelegramPost
+	if err := DB.First(&p, "message_id = ?", msgID).Error; err != nil {
+		return nil
+	}
+	return &p
 }
 
 // Setting - global sozlamalar (auto_reply, poll_enabled).

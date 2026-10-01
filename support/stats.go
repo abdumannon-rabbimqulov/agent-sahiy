@@ -43,11 +43,32 @@ type Stats struct {
 	CostMonth        float64 `json:"cost_month"`
 	TokensToday      int64   `json:"tokens_today"`
 
+	// Telegram guruhi — bugungi yordam so'rovlari.
+	//
+	// "So'ralgan" — guruhga ketgan xabar (AI xulosasi yoki muammoli
+	// buyurtma); "javob berilgan" — mutaxassis o'sha xabarga guruhda
+	// reply qilgan; "javobsiz" — hali reply kelmagani.
+	HelpToday           int64 `json:"help_today"`            // bugun guruhga ketgan yordam so'rovi
+	HelpAnsweredToday   int64 `json:"help_answered_today"`   // shundan javob olgani
+	HelpUnansweredToday int64 `json:"help_unanswered_today"` // shundan hali javobsizi
+	HelpUnansweredTotal int64 `json:"help_unanswered_total"` // hamma vaqt bo'yicha javobsiz qolgani
+	// StaffRepliesToday - bugun mutaxassislar guruhda bergan javoblar
+	// soni. Panelda bunday murojaat "xodim javobidan" deb belgilanadi
+	// (source = telegram). Bu son HelpAnsweredToday dan katta bo'lishi
+	// normal: bugungi javob kechagi so'rovga ham berilgan bo'lishi
+	// mumkin.
+	StaffRepliesToday int64 `json:"staff_replies_today"`
+
 	// Muammoli buyurtmalar (kunlik hisobot uchun)
 	IssuesOpen          int64   `json:"issues_open"`
 	IssuesOpenedToday   int64   `json:"issues_opened_today"`
 	IssuesResolvedToday int64   `json:"issues_resolved_today"`
 	IssuesAvgHours      float64 `json:"issues_avg_hours"`
+	// Guruh kesimi: bugun guruhga chiqarilgan muammolar va shundan
+	// xodim guruhda reply qilib yopganlari.
+	IssuesNotifiedToday int64 `json:"issues_notified_today"`
+	IssuesTelegramToday int64 `json:"issues_telegram_today"`
+	IssuesRemindedToday int64 `json:"issues_reminded_today"`
 }
 
 // IssueStats - muammolar bo'yicha umumiy hisob.
@@ -56,6 +77,13 @@ type IssueStats struct {
 	OpenedToday   int64   `json:"issues_opened_today"`
 	ResolvedToday int64   `json:"issues_resolved_today"`
 	AvgHours      float64 `json:"issues_avg_hours"`
+	// NotifiedToday - bugun guruhga chiqarilgan muammoli buyurtma,
+	// TelegramToday - shundan guruhda xodim reply qilib yopgani.
+	NotifiedToday int64 `json:"issues_notified_today"`
+	TelegramToday int64 `json:"issues_telegram_today"`
+	// RemindedToday - bugun guruhga takroriy eslatma ketgan muammolar
+	// (🔁): javob kelmagani uchun qayta so'ralgani.
+	RemindedToday int64 `json:"issues_reminded_today"`
 }
 
 // GetIssueStats - muammolar bo'yicha raqamlar.
@@ -66,7 +94,12 @@ func GetIssueStats(db *gorm.DB) (IssueStats, error) {
 		COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now())) AS opened_today,
 		COUNT(*) FILTER (WHERE resolved_at >= date_trunc('day', now())) AS resolved_today,
 		COALESCE(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600)
-			FILTER (WHERE resolved_at IS NOT NULL), 0) AS avg_hours
+			FILTER (WHERE resolved_at IS NOT NULL), 0) AS avg_hours,
+		COUNT(*) FILTER (WHERE tg_message_id <> 0
+			AND created_at >= date_trunc('day', now())) AS notified_today,
+		COUNT(*) FILTER (WHERE resolved_via = 'telegram'
+			AND resolved_at >= date_trunc('day', now())) AS telegram_today,
+		COUNT(*) FILTER (WHERE last_notified_at >= date_trunc('day', now())) AS reminded_today
 	`).Scan(&s).Error
 	return s, err
 }
@@ -98,6 +131,45 @@ func IssueDailyStats(db *gorm.DB, days int) ([]IssueDailyStat, error) {
 	return out, err
 }
 
+// GroupHelp - guruhdagi yordam so'rovlari kesimi.
+type GroupHelp struct {
+	Today           int64 `json:"help_today"`
+	AnsweredToday   int64 `json:"help_answered_today"`
+	UnansweredTotal int64 `json:"help_unanswered_total"`
+}
+
+// GroupHelpStats - guruhga ketgan yordam so'rovlaridan nechtasi javob
+// olgani.
+//
+// "Javob berilgan" ikki belgidan biri bilan aniqlanadi:
+//
+//   - help_answered_at — xodim guruhda o'sha xabarga reply qilgani
+//     (telegram_updates.go: markHelpAnsweredIn);
+//   - o'sha suhbatda KEYINROQ paydo bo'lgan "xodim javobidan"
+//     (source = telegram) murojaat — panelda aynan shu belgi ko'rinadi.
+//
+// Ikkinchi belgi tarixga ham ishlaydi: help_answered_at maydoni
+// keyinroq qo'shilgani uchun undan oldingi javoblar faqat shu yo'l
+// bilan ko'rinadi.
+func GroupHelpStats(db *gorm.DB) (GroupHelp, error) {
+	var g GroupHelp
+	err := db.Raw(`
+		SELECT
+		  COUNT(*) FILTER (WHERE h.created_at >= date_trunc('day', now()))          AS today,
+		  COUNT(*) FILTER (WHERE h.created_at >= date_trunc('day', now()) AND a.ok) AS answered_today,
+		  COUNT(*) FILTER (WHERE NOT a.ok)                                          AS unanswered_total
+		FROM interactions h
+		CROSS JOIN LATERAL (
+		  SELECT (h.help_answered_at IS NOT NULL OR EXISTS (
+		    SELECT 1 FROM interactions x
+		     WHERE x.conversation_id = h.conversation_id
+		       AND x.source = 'telegram'
+		       AND x.created_at > h.created_at)) AS ok
+		) a
+		WHERE h.help_sent`).Scan(&g).Error
+	return g, err
+}
+
 // GetStats umumiy hisobni bitta so'rovda yig'adi.
 func GetStats(db *gorm.DB) (Stats, error) {
 	var s Stats
@@ -111,6 +183,8 @@ func GetStats(db *gorm.DB) (Stats, error) {
 		COUNT(*) FILTER (WHERE status = 'failed')   AS failed,
 		COUNT(*) FILTER (WHERE status IN ('sent','approved') AND (help_text = '' OR help_text IS NULL)) AS ai_resolved,
 		COUNT(*) FILTER (WHERE help_text <> '')     AS needed_staff,
+		COUNT(*) FILTER (WHERE source = 'telegram'
+			AND created_at >= date_trunc('day', now())) AS staff_replies_today,
 		COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now()))                              AS total_today,
 		COUNT(*) FILTER (WHERE status = 'sent'     AND sent_at    >= date_trunc('day', now()))      AS sent_today,
 		COUNT(*) FILTER (WHERE status = 'approved' AND sent_at    >= date_trunc('day', now()))      AS approved_today,
@@ -131,6 +205,15 @@ func GetStats(db *gorm.DB) (Stats, error) {
 	}
 	s.TotalTokens = s.PromptTokens + s.CompletionTokens
 
+	gh, err := GroupHelpStats(db)
+	if err != nil {
+		return s, err
+	}
+	s.HelpToday = gh.Today
+	s.HelpAnsweredToday = gh.AnsweredToday
+	s.HelpUnansweredToday = gh.Today - gh.AnsweredToday
+	s.HelpUnansweredTotal = gh.UnansweredTotal
+
 	is, err := GetIssueStats(db)
 	if err != nil {
 		return s, err
@@ -139,6 +222,9 @@ func GetStats(db *gorm.DB) (Stats, error) {
 	s.IssuesOpenedToday = is.OpenedToday
 	s.IssuesResolvedToday = is.ResolvedToday
 	s.IssuesAvgHours = is.AvgHours
+	s.IssuesNotifiedToday = is.NotifiedToday
+	s.IssuesTelegramToday = is.TelegramToday
+	s.IssuesRemindedToday = is.RemindedToday
 	return s, nil
 }
 

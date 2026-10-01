@@ -70,14 +70,20 @@ type AdminkaOrder struct {
 	PackageName  string `json:"package_name"`  // posilka nomi
 	Quantity     int    `json:"quantity"`      // soni
 	PayStatus    int    `json:"pay_status"`    // 1 — to'langan, 0 — to'lanmagan
-	// B2CPercentage — mijoz turi shu maydondan aniqlanadi:
-	// noldan katta bo'lsa oddiy mijoz (B2C), nol bo'lsa ulgurji (B2B).
-	B2CPercentage float64 `json:"b2c_percentage"`
-	PaidAt        string  `json:"paid_at"`       // to'lov qilingan vaqt
-	CreatedAt     string  `json:"created_at"`    // buyurtma yaratilgan vaqt
-	ShippedAt     string  `json:"shipped_at"`    // yo'lga chiqqan sana
-	PackedAt      string  `json:"packed_at"`     // qadoqlangan vaqt
-	InStorageAt   string  `json:"in_storage_at"` // omborga kirgan vaqt
+	// PurchaseType — mijoz turi shu maydondan aniqlanadi:
+	// 1 — oddiy mijoz (B2C), 2 — ulgurji mijoz (B2B), 0 — noma'lum.
+	//
+	// Ilgari tur `skus[0].sku_info.B2C_percentage` bo'yicha chiqarilardi
+	// (noldan katta → B2C). U mahsulot ustamasi edi, mijoz turi emas:
+	// ulgurji mijozning ustamasi noldan katta bo'lsa u B2C ko'rinardi va
+	// modelga noto'g'ri tarif ketardi. Adminka buyurtmaning o'zida
+	// `purchase_type` beradi — tur shundan olinadi.
+	PurchaseType int    `json:"purchase_type"`
+	PaidAt       string `json:"paid_at"`       // to'lov qilingan vaqt
+	CreatedAt    string `json:"created_at"`    // buyurtma yaratilgan vaqt
+	ShippedAt    string `json:"shipped_at"`    // yo'lga chiqqan sana
+	PackedAt     string `json:"packed_at"`     // qadoqlangan vaqt
+	InStorageAt  string `json:"in_storage_at"` // omborga kirgan vaqt
 }
 
 // FetchOrders adminkadan buyurtmalarni oladi (GET).
@@ -175,11 +181,10 @@ func pickOrder(m map[string]any) AdminkaOrder {
 		PackageName: str(first(m, "express.package.package_name", "package_name")),
 		Quantity:    quantity(m),
 		PayStatus:   int(num64(first(m, "pay_status", "order.pay_status", "payment.status"))),
-		B2CPercentage: numFloat(first(m,
-			"skus.0.sku_info.B2C_percentage",
-			"skus.0.sku_info.b2c_percentage",
-			"B2C_percentage",
-		)),
+		PurchaseType: int(num64(first(m,
+			"purchase_type",
+			"express.package.order.purchase_type",
+		))),
 		PaidAt:      str(first(m, "paid_at", "order.paid_at", "payment.paid_at", "pay_time")),
 		CreatedAt:   str(get(m, "created_at")),
 		ShippedAt:   str(first(m, "express.package.order.shipped_at", "shipped_at")),

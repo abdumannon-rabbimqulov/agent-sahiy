@@ -111,6 +111,20 @@ export default function Settings() {
       {!s.agent_enabled && (
         <div className="err" style={{ marginBottom: 12 }}>
           AI agent hozir <strong>o'chirilgan</strong> — yangi mijoz xabarlariga javob tayyorlanmaydi.
+          {s.staff_only
+            ? ' Lekin "Faqat mutaxassis javoblari" rejimi yoqilgani uchun xodimning guruhdagi javobi mijozga moslab yuborilaveradi.'
+            : ' Xodim guruhda javob bersa ham, uni mijoz tiliga o\'girib bo\'lmaydi — javob panelda qoralama bo\'lib qoladi. Faqat yangi oqimni to\'xtatmoqchi bo\'lsangiz, buni yoqib qo\'ying va pastdagi "Faqat mutaxassis javoblari" ni yoqing.'}
+        </div>
+      )}
+      <Toggle
+        name="staff_only" value={s.staff_only} onChange={change}
+        title="Faqat mutaxassis javoblari"
+        desc="Yoqilsa: AI suhbatlarga o'zi KIRMAYDI — yangi mijoz xabariga javob tayyorlamaydi va guruhga yangi yordam so'rovi chiqmaydi. Model faqat bitta ish uchun ishlaydi: xodim guruhda javob berganda, uning matnini mijoz tiliga moslab yozadi (yuqoridagi «AI agent» o'chirilgan bo'lsa ham). Guruhda muammo to'planib qolganda yoqing — hal qilib bo'lgach o'chiring va hammasi odatdagidek davom etadi. Yangi oqimni to'xtatish uchun AI agentni o'chirish SHART EMAS, shu tugmaning o'zi yetarli."
+      />
+      {s.staff_only && (
+        <div className="err" style={{ marginBottom: 12 }}>
+          Hozir <strong>faqat mutaxassis javoblari</strong> rejimi — AI yangi murojaatlarga
+          o'zi javob tayyorlamaydi. Xodim guruhda javob bersa, u mijozga moslab yuboriladi.
         </div>
       )}
       <Toggle

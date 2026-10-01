@@ -25,21 +25,27 @@ const (
 	CustomerUnknown = "noma'lum"
 )
 
-// CustomerType - buyurtmalardagi B2C_percentage bo'yicha mijoz turi.
-// Noldan katta bo'lsa oddiy mijoz, aniq nol bo'lsa ulgurji; buyurtma
-// topilmasa yoki maydon bo'sh bo'lsa "noma'lum".
+// Adminkadagi purchase_type qiymatlari.
+const (
+	PurchaseTypeB2C = 1 // oddiy mijoz
+	PurchaseTypeB2B = 2 // ulgurji mijoz
+)
+
+// CustomerType - buyurtmalardagi purchase_type bo'yicha mijoz turi.
+// 1 — oddiy mijoz (B2C), 2 — ulgurji mijoz (B2B). Buyurtma topilmasa
+// yoki maydon bo'sh bo'lsa "noma'lum" — tur TAXMIN QILINMAYDI: noto'g'ri
+// tur modelga noto'g'ri yetkazish tarifini aytdiradi.
+//
+// Birinchi tur aytilgan buyurtma yetarli: bir mijozning hamma
+// buyurtmasi bir xil turda bo'ladi.
 func CustomerType(orders []AdminkaOrder) string {
-	found := false
 	for _, o := range orders {
-		if o.B2CPercentage > 0 {
+		switch o.PurchaseType {
+		case PurchaseTypeB2C:
 			return CustomerB2C
+		case PurchaseTypeB2B:
+			return CustomerB2B
 		}
-		if o.PayStatus > 0 || o.OrderSN != "" {
-			found = true
-		}
-	}
-	if found {
-		return CustomerB2B
 	}
 	return CustomerUnknown
 }
@@ -218,6 +224,9 @@ type PendingPickup struct {
 	Branch    string `json:"hozir_qayerda"`
 	Address   string `json:"shu_joyning_manzili,omitempty"`
 	ArrivedAt string `json:"kelgan,omitempty"`
+	// ArrivedDays - punktga kelganiga necha kun bo'lgani. Model sana
+	// ayirmasini o'zi hisoblay olmaydi — tayyor son beriladi.
+	ArrivedDays int `json:"kelganiga_kun,omitempty"`
 	// Region - mijozning viloyati (dashboarddagi `city`).
 	Region string `json:"mijoz_viloyati,omitempty"`
 	// Izoh - mijozga nima deyilishi kerakligi. Tayyor matn: model buni
@@ -252,6 +261,29 @@ const centralWarehouseRegionNote = "Buyurtma O'zbekistonga kelgan, hozir Markazi
 	"(Toshkentda) saralanmoqda. Tez orada mijoz viloyatidagi filialga jo'natiladi va mijoz " +
 	"o'sha filialdan oladi. Posilka HALI mijoz viloyatiga yetmagan — mijozga hozir " +
 	"\"borib olib keting\" DEMA, avval filialga yetib borishini kutish kerak."
+
+// courierOverdueNote - posilka kuryer viloyatidagi punktda, lekin
+// kelganiga DeliveryDays dan ko'p bo'lgan: kuryer hali olib bormagan.
+//
+// Bu holatda "tez orada yetkaziladi" deyish ham, "o'zingiz olib keting"
+// deyish ham noto'g'ri: birinchisi asossiz va'da, ikkinchisi esa bu
+// viloyatda umuman boshqa xizmat. Model ilgari aynan shu ikki gapni
+// yozardi — shuning uchun javob KODDA aytib qo'yiladi.
+const courierOverdueNote = "Posilka punktga kelganiga %d kun bo'ldi — kuryer odatda %d kun " +
+	"ichida yetkazadi, ya'ni MUDDAT O'TGAN. Mijozga \"o'zingiz borib oling\" ham, " +
+	"\"tez orada yetkaziladi\" ham DEMA va aniq muddat va'da qilma. Javob shunday bo'lsin: " +
+	"kechikkani uchun uzr so'ra, KURYER XIZMATI bilan bog'lanib tekshirishimizni va tez orada " +
+	"xabar berishimizni ayt. Murojaat xodimlarga topshirildi."
+
+// courierOverdueAlert - xuddi shu holat haqida xodimlar guruhiga
+// ketadigan qator.
+const courierOverdueAlert = "%s — posilka %s punktida %d kundan beri turibdi, kuryer hali " +
+	"olib bormagan (norma %d kun). Kuryer bilan bog'lanib tekshirish kerak"
+
+// courierLateAlert - kuryerga berilgan, lekin muddati o'tgan jo'natma
+// haqida xodimlar guruhiga ketadigan qator.
+const courierLateAlert = "%s — kuryerga berilganiga %d kun bo'ldi (norma %d kun), holati noaniq. " +
+	"Kuryer bilan bog'lanib tekshirish kerak"
 
 // courierPendingNote - posilka mijoz viloyatidagi haqiqiy punktda, lekin
 // bu viloyatda (Toshkent shahri/viloyati) yetkazishni kuryer bajaradi:
@@ -308,10 +340,19 @@ type DeliveryBrief struct {
 	PickedUp []PickupDone `json:"olib_ketilgan,omitempty"`
 	// Umuman yozuv yo'q.
 	Empty bool `json:"yozuv_yoq,omitempty"`
+	// Note - butun ro'yxatga tegishli tayyor ko'rsatma. Hozircha bitta
+	// holatda to'ldiriladi: mijoz aniq buyurtma raqami yozgan, lekin
+	// o'sha buyurtmaning posilkasi yetkazmada yo'q (askedOnlyNote).
+	Note string `json:"izoh,omitempty"`
 	// Kind - mijozning viloyatida yetkazish qanday ishlaydi. Tayyor
 	// matn: model o'zi taxmin qilmasin ("uyga olib boramiz" deb
 	// noto'g'ri va'da bermasin).
 	Kind string `json:"yetkazish_turi,omitempty"`
+	// Alerts - KOD topgan, xodimga aytilishi kerak bo'lgan holatlar
+	// (masalan posilka punktda muddatdan ortiq turgani). Modelga
+	// yuborilmaydi — har bir yozuvning o'z izohi bor; bu xodimlar
+	// guruhiga ketadi (agent.go).
+	Alerts []string `json:"-"`
 }
 
 // BranchMismatch - posilka mijoz viloyatidagi filialda emas.
@@ -436,6 +477,44 @@ const noCourierRegionNote = "Mijoz viloyatida KURYER yetkazish YO'Q (uyga yetkaz
 	"kabi gaplarni ISHLATMA. Mijozdan so'ra: buyurtmani O'ZINGIZ yoki yaqiningiz filialdan " +
 	"olib ketgan bo'lishi mumkinmi? Olmagan bo'lsa xodimlar tekshiradi — muddat va'da qilma."
 
+// askedOnlyNote - mijoz aniq buyurtma raqami yozgan, lekin AYNAN
+// o'sha buyurtmaning posilkasi yetkazma ro'yxatida chiqmagan holat.
+//
+// Nega kerak: yetkazma ro'yxati mijozning BARCHA posilkasini qaytaradi.
+// Mijoz Xitoydan chiqmagan buyurtmasi haqida so'raganda ham ro'yxatda
+// uning boshqa (allaqachon filialga yetgan) posilkalari turardi va model
+// o'shalarning izohini so'ralgan buyurtmaga ko'chirib, "filialdan olib
+// ketgan bo'lishingiz mumkinmi?" deb so'rardi — mijoz esa hali kelmagan
+// buyurtma haqida yozgan edi. Endi begona qatorlar olib tashlanadi va
+// o'rniga shu izoh qoladi.
+const askedOnlyNote = "Mijoz aniq buyurtma raqami yozgan, lekin AYNAN o'sha buyurtmaning " +
+	"posilkasi yetkazma ro'yxatida YO'Q — u hali O'zbekistonga kelmagan. Mijozning boshqa " +
+	"posilkalari bu savolga TEGISHLI EMAS va ro'yxatdan olib tashlandi. Shuning uchun " +
+	"mijozdan posilkani olgan-olmaganini SO'RAMA, filial, punkt yoki kuryer haqida gapirma — " +
+	"bularning hammasi boshqa buyurtmalarga tegishli."
+
+// FilterDeliveryByTracks - yetkazma yozuvlaridan faqat berilgan trek
+// raqamlariga tegishlilarini qoldiradi.
+//
+// `tracks` bo'sh bo'lsa hech narsa qolmaydi: bu "so'ralgan buyurtmaning
+// treki yo'q" degani — ya'ni posilka hali yo'lga chiqmagan va ro'yxatdagi
+// yozuvlarning hech biri unga tegishli emas.
+func FilterDeliveryByTracks(rows []DeliveryOrder, tracks []string) []DeliveryOrder {
+	want := make(map[string]bool, len(tracks))
+	for _, t := range tracks {
+		if t = strings.TrimSpace(t); t != "" {
+			want[t] = true
+		}
+	}
+	out := make([]DeliveryOrder, 0, len(rows))
+	for _, r := range rows {
+		if want[strings.TrimSpace(r.ExpressNum)] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // expressLineKind - express_line matnidan jo'natma turini aniqlaydi:
 // "pickup" (mijoz o'zi olib ketadi) yoki "delivery" (kuryer olib
 // boradi). Noma'lum bo'lsa "" qaytaradi.
@@ -523,11 +602,12 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		if !givenToCourier {
 			branch := firstNonEmpty(o.BranchName, o.LocationNumber)
 			row := PendingPickup{
-				ExpressNum: o.ExpressNum,
-				Branch:     branch,
-				Address:    trimText(plainVal(o.BranchAddress), 80),
-				ArrivedAt:  sanaMatnISO(o.CreatedAt),
-				Region:     region,
+				ExpressNum:  o.ExpressNum,
+				Branch:      branch,
+				Address:     trimText(plainVal(o.BranchAddress), 80),
+				ArrivedAt:   sanaMatnISO(o.CreatedAt),
+				ArrivedDays: daysSinceText(o.CreatedAt),
+				Region:      region,
 			}
 			// Izoh tanlash tartibi: avval xato holat, keyin "hali yo'lda",
 			// oxirida oddiy "kelib bo'ldi, olib keting". Izoh HECH QACHON
@@ -550,6 +630,12 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				}
 			case region != "" && !HomeDeliveryRegion(region):
 				row.Izoh = pickupNote
+			case row.ArrivedDays > DeliveryDays:
+				// Kuryer viloyati, lekin posilka punktda muddatdan
+				// ortiq turibdi — "kutmoqda" deb o'tib bo'lmaydi.
+				row.Izoh = fmt.Sprintf(courierOverdueNote, row.ArrivedDays, DeliveryDays)
+				out.Alerts = append(out.Alerts, fmt.Sprintf(courierOverdueAlert,
+					o.ExpressNum, branch, row.ArrivedDays, DeliveryDays))
 			default:
 				// Toshkent shahri/viloyati + haqiqiy punkt: posilka joyida,
 				// lekin bu viloyatda yetkazishni kuryer bajaradi.
@@ -567,7 +653,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 				Region:     region,
-				Izoh:       mismatchIzoh(mismatch, region),
+				Izoh:       mismatchIzoh(mismatch, region, true),
 			})
 			continue
 		}
@@ -578,7 +664,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			SentAt:     sanaMatnISO(o.DeliveredAt),
 			Days:       int(now.Sub(t).Hours() / 24),
 			Region:     region,
-			Izoh:       mismatchIzoh(mismatch, region),
+			Izoh:       mismatchIzoh(mismatch, region, false),
 		}
 		if row.Days < 0 {
 			row.Days = 0 // sana kelajakda — 0 kun deb hisoblaymiz
@@ -586,7 +672,12 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		if row.Days <= DeliveryDays {
 			out.InDelivery = append(out.InDelivery, row)
 		} else {
+			// Muddati o'tgan: holati noaniq — izoh shu qatorga ham
+			// qo'yiladi (viloyat izohi bo'lsa o'sha ustun turadi).
+			row.Izoh = mismatchIzoh(mismatch, region, true)
 			out.NeedCheck = append(out.NeedCheck, row)
+			out.Alerts = append(out.Alerts, fmt.Sprintf(courierLateAlert,
+				o.ExpressNum, row.Days, DeliveryDays))
 		}
 	}
 
@@ -617,8 +708,13 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 	return out, bad
 }
 
-// mismatchIzoh - viloyat mos kelmagan qatorga qo'yiladigan izoh.
-func mismatchIzoh(mismatch bool, region string) string {
+// mismatchIzoh - kuryerga berilgan qatorga qo'yiladigan izoh.
+//
+// `needCheck` — muddati o'tgan yoki sanasi o'qilmagan qator: holati
+// NOANIQ. Bunday qator izohsiz qolmasligi kerak — bo'sh bo'lsa model
+// o'zi xulosa chiqarib, mijozga "yetkazildi" yoki "o'zingiz olib
+// keting" deb yozib yuboradi.
+func mismatchIzoh(mismatch bool, region string, needCheck bool) string {
 	if mismatch {
 		// Viloyat mos emasligi hamma izohdan muhimroq.
 		return mismatchNote
@@ -626,8 +722,18 @@ func mismatchIzoh(mismatch bool, region string) string {
 	if region != "" && !HomeDeliveryRegion(region) {
 		return noCourierRegionNote
 	}
+	if needCheck {
+		return needCheckNote
+	}
 	return ""
 }
+
+// needCheckNote - kuryerga berilgan, lekin holati noaniq qator uchun
+// ko'rsatma (muddati o'tgan yoki sanasi yo'q).
+const needCheckNote = "Bu jo'natma kuryerga berilgan, lekin holati NOANIQ: yetkazilgan " +
+	"bo'lishi ham, kuryer qaytargan bo'lishi ham mumkin. Mijozga \"yetkazildi\" DEMA, " +
+	"\"o'zingiz borib oling\" ham DEMA va muddat va'da qilma. Javob: kechikkani uchun uzr " +
+	"so'ra, kuryer xizmati bilan bog'lanib tekshirishimizni va tez orada xabar berishimizni ayt."
 
 // capRows - ro'yxatni MaxDeliveryRows tagacha qisqartiradi.
 func capRows(rows []SentDelivery) []SentDelivery {

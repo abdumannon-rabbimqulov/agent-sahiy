@@ -42,8 +42,15 @@ func AgentSenderID() int64 {
 	return n
 }
 
-// SendMessage suhbatga agent nomidan xabar yuboradi.
+// SendMessage suhbatga agent nomidan matnli xabar yuboradi.
 func SendMessage(baseURL, token string, senderID, conversationID int64, text string) error {
+	return sendContent(baseURL, token, senderID, conversationID, text, "text")
+}
+
+// sendContent - SendMessage va SendImageToClient uchun umumiy qism.
+// `content` — "text" yoki ContentImage; rasmda `text` o'rniga havola
+// yuboriladi.
+func sendContent(baseURL, token string, senderID, conversationID int64, text, content string) error {
 	if senderID <= 0 {
 		return fmt.Errorf("AGENT_SENDER_ID berilmagan — .env ga agent yozadigan " +
 			"support akkaunt id'sini qo'ying (login javobidagi admin.id) va API'ni qayta ishga tushiring")
@@ -64,7 +71,7 @@ func SendMessage(baseURL, token string, senderID, conversationID int64, text str
 		Role:           "agent",
 		ConversationID: conversationID,
 		Text:           text,
-		Content:        "text",
+		Content:        content,
 		SupportField:   0,
 	})
 	if err != nil {
@@ -151,5 +158,22 @@ func ResolveChat(conversationID int64) error {
 func SendToClient(conversationID int64, text string) error {
 	return withTokenErr(func(baseURL, token string) error {
 		return SendMessage(baseURL, token, AgentSenderID(), conversationID, text)
+	})
+}
+
+// ContentImage - rasm xabarining `content` qiymati. Support serveri
+// rasmni shunday belgilaydi: matn o'rnida havola keladi va ilova uni
+// rasm qilib ko'rsatadi (mijoz yuborgan rasmlar ham shu ko'rinishda
+// qaytadi).
+const ContentImage = "image"
+
+// SendImageToClient - suhbatga rasm yuboradi (havola support omboriga
+// yuklangan bo'lishi kerak: storage.go).
+func SendImageToClient(conversationID int64, imageURL string) error {
+	if strings.TrimSpace(imageURL) == "" {
+		return fmt.Errorf("bo'sh rasm havolasi")
+	}
+	return withTokenErr(func(baseURL, token string) error {
+		return sendContent(baseURL, token, AgentSenderID(), conversationID, imageURL, ContentImage)
 	})
 }

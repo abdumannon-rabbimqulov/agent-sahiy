@@ -34,6 +34,10 @@ export default function Dashboard() {
 
   const max = Math.max(1, ...daily.map((d) => d.total))
   const resolvedPct = stats.total ? Math.round((stats.ai_resolved / stats.total) * 100) : 0
+  // Bugun guruhga ketgan yordam so'rovlarining necha foiziga javob kelgan.
+  const answeredPct = stats.help_today
+    ? Math.round((stats.help_answered_today / stats.help_today) * 100)
+    : 0
 
   return (
     <>
@@ -60,6 +64,20 @@ export default function Dashboard() {
         <Card k="Bugun tasdiqlangan" v={fmt.num(stats.approved_today)} s="admin yuborgan" />
         <Card k="Bugun avto yuborilgan" v={fmt.num(stats.sent_today)} s="AI o'zi yuborgan" />
         <Card k="Bugun rad etilgan" v={fmt.num(stats.rejected_today)} />
+      </div>
+
+      <h2>Telegram guruh — bugun</h2>
+      <p className="hint">Mutaxassislardan necha marta yordam so'ralgan va nechtasiga javob kelgan</p>
+      <div className="cards">
+        <Card k="Yordam so'ralgan" v={fmt.num(stats.help_today)} s="bugun guruhga ketgan" />
+        <Card k="Mutaxassis javob bergan" v={fmt.num(stats.staff_replies_today)}
+              s="bugun — «xodim javobidan»" />
+        <Card k="So'rovlardan javob olgan" v={fmt.num(stats.help_answered_today)}
+              s={`bugungi so'rovlarning ${answeredPct}%`} />
+        <Card k="Javobsiz" v={fmt.num(stats.help_unanswered_today)}
+              s={`jami javobsiz: ${fmt.num(stats.help_unanswered_total)}`} />
+        <Card k="Muammoli buyurtma guruhda" v={fmt.num(stats.issues_notified_today)}
+              s={`${fmt.num(stats.issues_telegram_today)} yopilgan · ${fmt.num(stats.issues_reminded_today)} eslatma`} />
       </div>
 
       <h2>Muammolar — kunlik</h2>

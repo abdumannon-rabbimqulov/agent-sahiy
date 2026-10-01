@@ -197,7 +197,7 @@ tejaladi, model ham chalkashmaydi:
 
 | Maydon | Qayerdan | Nima uchun |
 |---|---|---|
-| `mijoz_turi` | `skus[0].sku_info.B2C_percentage` (noldan katta → B2C, nol → B2B, buyurtma yo'q → noma'lum) | Yetkazish tarifini to'g'ri tushuntirish (promt #4) |
+| `mijoz_turi` | buyurtmaning o'zidagi `purchase_type` (`1` → B2C, `2` → B2B, yo'q/`0` → noma'lum) | Yetkazish tarifini to'g'ri tushuntirish (promt #4) |
 | `olinmagan` | yetkazmada `delivered: false` | Mijozga qaysi filialda ekanini aytish |
 | `yetkazilmoqda` | `delivered: true`, **3 kungacha** | "Yo'lda, kuryer bog'lanadi" deb aytish |
 | `tekshirish_kerak` | `delivered: true`, **3 kundan oshgan** | Holati noaniq — mijozdan so'rash va xodimga topshirish |
@@ -582,6 +582,7 @@ curl -X PUT http://localhost:8080/api/settings \
 | Sozlama | Ma'nosi |
 |---|---|
 | `agent_enabled` | **AI agentni to'xtatish tugmasi.** `false` — zanjir umuman yurmaydi: fon sikli ham, `/api/agent/run` ham modelga bormaydi, token sarflanmaydi, bazaga yangi yozuv qo'shilmaydi. Navbatdagi tayyor javoblarni tasdiqlash va yuborish ishlayveradi |
+| `staff_only` | **"Faqat mutaxassis javoblari" rejimi.** `agent_enabled` o'chirilgan bo'lsa ham xodim javobini mijoz tiliga o'girish ishlaydi — rejimning ma'nosi shu. `true` — AI suhbatlarga o'zi kirmaydi: fon sikli aylanmaydi, yangi mijoz xabariga zanjir yurmaydi, guruhga yangi yordam so'rovi chiqmaydi. Model FAQAT xodim guruhda javob berganda ishlaydi — uning matnini mijoz tiliga moslab yozadi. Guruhda muammo to'planib qolganda yoqiladi; hal qilingach o'chiriladi. `/api/agent/run` ga `{"force":true}` bilan baribir kirish mumkin |
 | `auto_reply` | `true` — mijozga javob (chat) tasdiqsiz ketadi; `false` — chat navbatda kutadi. `help` ga ta'sir qilmaydi |
 | `poll_enabled` | Fon siklini yoqish/o'chirish |
 | `auto_resolve` | Javobdan keyin suhbatni "hal qilindi" holatiga o'tkazish (default yoqilgan) |

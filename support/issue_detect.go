@@ -61,13 +61,30 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 
 		switch {
 		case v.Problem && open == nil:
+			last := LastIssue(DB, o.OrderSN)
+
 			// Yopilgan muammoni takror ko'tarmaymiz: buyurtma o'sha
 			// holatda qolgan bo'lsa xodimlar allaqachon ko'rgan.
-			// Faqat adminkadagi holat o'zgargan bo'lsa qayta ochamiz.
-			if last := LastIssue(DB, o.OrderSN); last != nil &&
-				last.State == IssueResolved && last.Status == o.Status {
+			if last != nil && last.State == IssueResolved && last.Status == o.Status {
 				views = append(views, v)
 				continue
+			}
+
+			// Shu buyurtma bo'yicha xodim ALLAQACHON javob berganmi.
+			//
+			// Adminkadagi holat o'zgarishi (3 → 4: "to'langan" →
+			// "kiritish uchun kutilmoqda") Xitoy tomonidagi oddiy
+			// bosqich — mijoz uchun YANGI muammo emas. Yuqoridagi
+			// tekshiruv faqat holat AYNAN bir xil qolganda ushlab
+			// qoladi, shuning uchun bitta buyurtma guruhga ikkinchi
+			// marta tushadi va xodim o'zi aytgan gapni qaytadan o'qiydi.
+			//
+			// Xabar yashirilmaydi — xodim muammo qaytganini ko'rsin —
+			// lekin ustiga darhol "TEPADA JAVOB BERILGAN" degan reply
+			// tushadi va yozuv yopiladi (noteAlreadyAnswered).
+			answered := last
+			if !AnsweredByStaff(answered) {
+				answered = nil
 			}
 
 			// Yangi muammo.
@@ -86,6 +103,14 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 			if err := DB.Create(is).Error; err != nil {
 				log.Printf("muammo: %s yozilmadi: %v", o.OrderSN, err)
 			} else {
+				// Takror bo'lsa xabar guruhga BARIBIR chiqadi (xodim
+				// muammo qaytganini ko'rsin), lekin darhol o'sha
+				// xabarga "tepada javob berilgan" degan reply tushadi
+				// va yozuv yopiladi — eslatma aylanishiga tushmaydi.
+				if answered != nil {
+					is.Repeat = repeatResolution(answered)
+					is.ResolvedBy = answered.ResolvedBy
+				}
 				fresh = append(fresh, is)
 				v.InReview = true
 			}
@@ -281,21 +306,80 @@ func notifyIssues(list []*OrderIssue, help string) (int64, error) {
 	if len(list) == 0 {
 		return 0, nil
 	}
-	msgID, err := SendTelegramMessage(issuesText(list, help), 0)
+	msgID, err := SendTelegramIssue(issuesText(list, help))
 	if err != nil {
 		log.Printf("muammo: %s guruhga yuborilmadi: %v", issueSNs(list), err)
 		return 0, err
 	}
 	now := time.Now()
 	for _, is := range list {
+		RememberTelegramPost(msgID, is.ConversationID, is.ClientID, "issue", 0)
 		is.TgMessageID = msgID
 		is.NotifyCount++
 		is.LastNotifiedAt = &now
 		DB.Model(is).Updates(map[string]any{
 			"tg_message_id": msgID, "notify_count": is.NotifyCount, "last_notified_at": &now,
 		})
+		noteAlreadyAnswered(is)
 	}
 	return msgID, nil
+}
+
+// repeatResolution - qayta chiqqan muammo uchun yechim matni: javob
+// qachon va kim tomonidan berilganiga havola.
+func repeatResolution(prev *OrderIssue) string {
+	when := ""
+	if prev.ResolvedAt != nil {
+		when = " (" + vaqtMatn(*prev.ResolvedAt) + ")"
+	}
+	who := prev.ResolvedBy
+	if who == "" {
+		who = "xodim"
+	}
+	txt := fmt.Sprintf("Bu buyurtma bo'yicha javob allaqachon berilgan%s — %s", when, who)
+	if r := strings.TrimSpace(prev.Resolution); r != "" {
+		txt += ": " + r
+	}
+	return txt
+}
+
+// answeredEarlier - shu buyurtma bo'yicha ilgari xodim javob bergan
+// yozuv (bo'lmasa nil). Hozirgi yozuvning o'zi hisobga olinmaydi.
+func answeredEarlier(db *gorm.DB, is *OrderIssue) *OrderIssue {
+	if is == nil || is.OrderSN == "" {
+		return nil
+	}
+	var prev OrderIssue
+	err := db.Where("order_sn = ? AND id <> ? AND state = ? AND resolved_via IN ?",
+		is.OrderSN, is.ID, IssueResolved,
+		[]string{ResolvedViaTelegram, ResolvedViaChat, ResolvedViaPanel}).
+		Order("id desc").First(&prev).Error
+	if err != nil {
+		return nil
+	}
+	return &prev
+}
+
+// noteAlreadyAnswered - guruhga qayta chiqqan muammoga "tepada javob
+// berilgan" deb reply qiladi va yozuvni yopadi.
+//
+// Xabarning o'zi yashirilmaydi: xodim muammo qaytganini ko'rishi kerak.
+// Lekin ustiga darhol belgi tushadi — kim, qachon javob bergani bilan
+// — va muammo eslatma aylanishiga tushmaydi.
+func noteAlreadyAnswered(is *OrderIssue) {
+	if is == nil || is.Repeat == "" {
+		return
+	}
+	text := "✅ " + is.OrderSN + " — TEPADA JAVOB BERILGAN.\n" + is.Repeat +
+		"\nQayta javob berish shart emas."
+	if _, err := SendTelegramMessage(text, is.TgMessageID); err != nil {
+		log.Printf("muammo: %s — \"tepada javob berilgan\" belgisi qo'yilmadi: %v", is.OrderSN, err)
+	}
+	if err := ResolveIssue(DB, is, is.Repeat, is.ResolvedBy, ResolvedViaRepeat); err != nil {
+		log.Printf("muammo: %s takror yozuvi yopilmadi: %v", is.OrderSN, err)
+		return
+	}
+	log.Printf("muammo: %s qayta chiqdi — tepadagi javobga havola qilindi", is.OrderSN)
 }
 
 // issueSNs - log uchun buyurtma raqamlari.
@@ -359,6 +443,18 @@ func ReviewOpenIssues(db *gorm.DB) error {
 					is.OrderSN, is.OwnerUserID, is.ClientID)
 				notifyResolved(is, res)
 			}
+			continue
+		}
+
+		// 0.1. Shu buyurtma bo'yicha oldinroq XODIM javob bergan
+		//      bo'lsa (boshqa yozuv), bu takror muammo — guruhni
+		//      qayta bezovta qilmaymiz.
+		if prev := answeredEarlier(db, is); prev != nil {
+			// Guruhdagi OXIRGI xabariga (odatda eslatmaga) "tepada
+			// javob berilgan" deb reply tushadi va muammo yopiladi.
+			is.Repeat = repeatResolution(prev)
+			is.ResolvedBy = prev.ResolvedBy
+			noteAlreadyAnswered(is)
 			continue
 		}
 
@@ -435,13 +531,14 @@ func sendRemind(db *gorm.DB, items []remindItem) {
 	if len(items) == 0 {
 		return
 	}
-	msgID, err := SendTelegramMessage(remindText(items), 0)
+	msgID, err := SendTelegramIssue(remindText(items))
 	if err != nil {
 		log.Printf("muammo: mijoz %d eslatmasi ketmadi: %v", items[0].Issue.ClientID, err)
 		return
 	}
 	now := time.Now()
 	for _, it := range items {
+		RememberTelegramPost(msgID, it.Issue.ConversationID, it.Issue.ClientID, "remind", 0)
 		db.Model(it.Issue).Updates(map[string]any{
 			"tg_message_id":    msgID, // reply endi shu yangi xabarga
 			"notify_count":     it.Issue.NotifyCount + 1,

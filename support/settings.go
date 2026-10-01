@@ -18,6 +18,10 @@ const (
 	SettingPollEnabled  = "poll_enabled"     // fon sikli ishlaydimi
 	SettingAutoResolve  = "auto_resolve"     // javobdan keyin suhbat yopiladimi
 	SettingHelpToTG     = "help_to_telegram" // help matni guruhga ketadimi
+	// SettingStaffOnly - "faqat mutaxassis javoblari" rejimi: AI yangi
+	// mijoz xabarlariga o'zi javob tayyorlamaydi, model faqat xodim
+	// guruhda javob berganda ishlaydi.
+	SettingStaffOnly = "staff_only"
 
 	// Tezlik sozlamalari — panel orqali o'zgartiriladi, darhol kuchga
 	// kiradi (fon sikli har aylanishda qaytadan o'qiydi).
@@ -120,6 +124,7 @@ func AllSettings() map[string]any {
 		SettingPollEnabled:  PollEnabled(),
 		SettingAutoResolve:  AutoResolveOn(),
 		SettingHelpToTG:     HelpToTelegramOn(),
+		SettingStaffOnly:    StaffOnlyMode(),
 		SettingPollInterval: PollInterval(),
 		SettingBatchSize:    BatchSize(),
 		SettingChatDelay:    ChatDelay(),
@@ -159,6 +164,20 @@ func AgentEnabled() bool { return GetBoolSetting(SettingAgentEnabled, true) }
 // AutoReplyOn - AI javobi tasdiqsiz ketadimi.
 func AutoReplyOn() bool { return GetBoolSetting(SettingAutoReply, false) }
 
+// StaffOnlyMode - "faqat mutaxassis javoblari" rejimi.
+//
+// Yoqilganda AI suhbatlarga O'ZI kirmaydi: yangi mijoz xabari uchun
+// zanjir yurmaydi, guruhga yangi yordam so'rovi ham chiqmaydi. Model
+// faqat bitta ish uchun ishlatiladi — xodim guruhda javob berganda,
+// uning matnini mijoz tiliga moslab yozish.
+//
+// Nega kerak: guruhda hal qilinmagan muammo ko'payib ketganda agentni
+// butunlay o'chirib bo'lmaydi (u holda xodim javoblari ham mijozga
+// yetmay qoladi). Bu rejimda yangi oqim to'xtaydi, xodimlar to'plangan
+// muammolarni hal qiladi, keyin rejim o'chiriladi va hammasi
+// odatdagidek davom etadi.
+func StaffOnlyMode() bool { return GetBoolSetting(SettingStaffOnly, false) }
+
 // PollEnabled - fon sikli yoqilganmi.
 func PollEnabled() bool { return GetBoolSetting(SettingPollEnabled, true) }
 
@@ -175,6 +194,7 @@ func seedSettings(db *gorm.DB) error {
 		SettingPollEnabled:  "true",
 		SettingAutoResolve:  "true",
 		SettingHelpToTG:     "true",
+		SettingStaffOnly:    "false",
 		SettingPollInterval: strconv.Itoa(envInt("POLL_INTERVAL_SEC", DefaultPollInterval)),
 		SettingBatchSize:    strconv.Itoa(envInt("RATE_LIMIT_COUNT", 5)),
 		SettingChatDelay:    strconv.Itoa(envInt("CHAT_DELAY_SEC", 0)),

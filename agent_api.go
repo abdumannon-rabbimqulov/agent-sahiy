@@ -271,6 +271,7 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		support.SettingPollEnabled:  true,
 		support.SettingAutoResolve:  true,
 		support.SettingHelpToTG:     true,
+		support.SettingStaffOnly:    true,
 	}
 	// Qat'iy ro'yxatdan tanlanadigan matn sozlamalari.
 	enums := map[string][]string{
@@ -348,6 +349,13 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !support.AgentEnabled() {
 		writeErr(w, http.StatusConflict, support.ErrAgentDisabled.Error())
+		return
+	}
+	// Faqat mutaxassis javoblari rejimida qo'lda ishga tushirish
+	// `force` bilan ishlaydi: admin ataylab so'rayapti.
+	if support.StaffOnlyMode() && !body.Force {
+		writeErr(w, http.StatusConflict, support.ErrStaffOnly.Error()+
+			` (baribir ishga tushirish uchun: {"force":true})`)
 		return
 	}
 

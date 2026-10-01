@@ -60,7 +60,9 @@ func StartPoller(ctx context.Context) {
 			case <-time.After(wait):
 			}
 
-			if !AgentEnabled() || !PollEnabled() {
+			// "Faqat mutaxassis javoblari" rejimida sikl umuman
+			// aylanmaydi: tashqi so'rov ham ketmaydi.
+			if !AgentEnabled() || !PollEnabled() || StaffOnlyMode() {
 				continue
 			}
 			if err := PollOnce(ctx); err != nil {
@@ -188,7 +190,8 @@ func PollOnce(ctx context.Context) error {
 				// YANGILAMAYMIZ, shu suhbat keyingi siklda xabar
 				// o'zgarmagan holda yana tekshiriladi.
 				continue
-			case errors.Is(err, ErrAlreadyAnswered), errors.Is(err, ErrAlreadyStudied):
+			case errors.Is(err, ErrAlreadyAnswered), errors.Is(err, ErrAlreadyStudied),
+				errors.Is(err, ErrStaffOnly):
 				// Oxirgi so'z biz tomondan bo'lsa yoki shu xabar
 				// allaqachon o'rganilgan bo'lsa — normal holat, log shart emas.
 			default:
@@ -345,6 +348,9 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 	var res ScanResult
 	if !AgentEnabled() {
 		return res, ErrAgentDisabled
+	}
+	if StaffOnlyMode() {
+		return res, ErrStaffOnly
 	}
 	if !scanning.CompareAndSwap(false, true) {
 		return res, errors.New("skanerlash allaqachon ketyapti")
