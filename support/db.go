@@ -36,7 +36,7 @@ func DSN() string {
 		get("DB_PASSWORD", "sahiy"),
 		get("DB_NAME", "sahiy"),
 		get("DB_SSLMODE", "disable"),
-		get("DB_TIMEZONE", "Asia/Tashkent"),
+		get("DB_TIMEZONE", DefaultTimezone),
 	)
 }
 

@@ -174,8 +174,19 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 	b.Write(raw)
 	// Mijoz bir nechta buyurtma haqida yozgan bo'lishi mumkin — javob
 	// qaysi buyurtma haqida ekani matnning o'zida ko'rinishi kerak.
-	b.WriteString("\n\nJavob matnida buyurtma raqamini (order_sn) albatta yoz — ")
-	b.WriteString("mijoz javob qaysi buyurtmasi haqida ekanini bilsin.")
+	//
+	// Lekin "albatta yoz" FAQAT raqam bor bo'lganda aytiladi. Ilgari bu
+	// buyruq har doim qo'shilardi va `order_sn` bo'sh bo'lganda model
+	// uni bajarishga urinib raqamni TO'QIB chiqarardi — mijozga
+	// "buyurtmangiz (DG…)" deb ketardi.
+	if len(sns) > 0 {
+		b.WriteString("\n\nJavob matnida buyurtma raqamini (order_sn) albatta yoz — ")
+		b.WriteString("mijoz javob qaysi buyurtmasi haqida ekanini bilsin.")
+	} else {
+		b.WriteString("\n\nBuyurtma raqami NOMA'LUM (order_sn bo'sh). Javobda raqam YOZMA ")
+		b.WriteString("va \"DG…\", \"(DG...)\" kabi o'rnini bosuvchi belgi ham qo'yma — ")
+		b.WriteString("raqamsiz, umumiy qilib yoz.")
+	}
 	userMsg := b.String()
 
 	out, usage, err := llm.Generate(ctx, p.Promt, userMsg)

@@ -324,6 +324,10 @@ func firstNonEmpty(vals ...string) string {
 
 func main() {
 	loadEnv(".env")
+	// Vaqt mintaqasi .env dan keyin, boshqa hamma ishdan oldin:
+	// kunlik hisoblagich va sana ayirmalari shunga tayanadi
+	// (support/timezone.go).
+	support.InitTimezone()
 
 	addr := os.Getenv("WEB_ADDR")
 	if addr == "" {
