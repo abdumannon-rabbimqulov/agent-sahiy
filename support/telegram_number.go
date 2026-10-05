@@ -62,14 +62,26 @@ func nextGroupNumber() int {
 // SendTelegramIssue - MUAMMO xabarini guruhga yuboradi: matn boshiga
 // kunlik tartib raqami qo'yiladi. Muammo bo'lmagan xabarlar to'g'ridan
 // to'g'ri SendTelegramMessage orqali ketadi va raqam olmaydi.
+//
+// Xabar KETMASA raqam qaytarib beriladi (releaseGroupNumber). Ilgari
+// bunday emas edi va hisoblagich YUBORILGAN emas, URINILGAN xabarlarni
+// sanardi: eslatma to'lqinida Telegram "429 Too Many Requests" qaytaradi,
+// o'nlab xabar guruhga umuman chiqmaydi, lekin raqamlari allaqachon
+// sarflangan bo'lardi. Shuning uchun kunlik son haqiqiy xabarlar sonidan
+// bir necha barobar katta chiqardi (misol: bir kunda 758).
 func SendTelegramIssue(text string) (int64, error) {
-	return SendTelegramMessage(withGroupNumber(text), 0)
+	n := nextGroupNumber()
+	msgID, err := SendTelegramMessage(withGroupNumber(text, n), 0)
+	if err != nil {
+		releaseGroupNumber(n)
+		return 0, err
+	}
+	return msgID, nil
 }
 
-// withGroupNumber - matn boshiga "#N " qo'yadi. Raqam olinmasa matn
-// o'zgarmaydi.
-func withGroupNumber(text string) string {
-	n := nextGroupNumber()
+// withGroupNumber - matn boshiga "#N " qo'yadi. Raqam olinmagan bo'lsa
+// (n <= 0) matn o'zgarmaydi.
+func withGroupNumber(text string, n int) string {
 	if n <= 0 {
 		return text
 	}
@@ -77,4 +89,26 @@ func withGroupNumber(text string) string {
 		return fmt.Sprintf("#%d", n)
 	}
 	return fmt.Sprintf("#%d %s", n, text)
+}
+
+// releaseGroupNumber - ishlatilmay qolgan raqamni qaytaradi.
+//
+// Shart `count = ?` ataylab: raqam faqat HALI ENG OXIRGI bo'lsa
+// qaytariladi. Oradan boshqa xabar o'tib ulgurgan bo'lsa hisoblagich
+// tegilmaydi — aks holda keyingi xabar allaqachon berilgan raqamni
+// ikkinchi marta olardi va guruhda ikkita "#12" paydo bo'lardi, reply
+// esa qaysi biriga tegishli ekani chalkashardi. Ya'ni eng yomoni —
+// ro'yxatda bitta raqam tushib qolishi.
+func releaseGroupNumber(n int) {
+	if DB == nil || n <= 0 {
+		return
+	}
+	day := time.Now().Format(counterDayLayout)
+	err := DB.Exec(`
+		UPDATE telegram_counters
+		   SET count = count - 1, updated_at = now()
+		 WHERE day = ? AND count = ?`, day, n).Error
+	if err != nil {
+		log.Printf("telegram: kunlik raqam %d qaytarilmadi: %v", n, err)
+	}
 }

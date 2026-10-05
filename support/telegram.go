@@ -3,14 +3,10 @@
 package support
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // DefaultTelegramAPI - Bot API bazasi.
@@ -45,22 +41,11 @@ func SendTelegramMessage(text string, replyTo int64) (int64, error) {
 	if replyTo > 0 {
 		payload["reply_to_message_id"] = replyTo
 	}
-	body, err := json.Marshal(payload)
+	// Yuborish navbat orqali ketadi: tezlik cheklanadi va 429 da
+	// qayta uriniladi (support/telegram_rate.go).
+	raw, err := telegramPost("sendMessage", payload)
 	if err != nil {
 		return 0, err
-	}
-
-	url := fmt.Sprintf("%s/bot%s/sendMessage", TelegramAPI(), token)
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).
-		Post(url, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return 0, fmt.Errorf("telegram: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("telegram (status %d): %s", resp.StatusCode, snippet(raw))
 	}
 
 	var out struct {
@@ -92,22 +77,9 @@ func SendTelegramPhoto(photoURL, caption string) (int64, error) {
 		"photo":   photoURL,
 	}
 	payload["caption"] = caption
-	body, err := json.Marshal(payload)
+	raw, err := telegramPost("sendPhoto", payload)
 	if err != nil {
 		return 0, err
-	}
-
-	url := fmt.Sprintf("%s/bot%s/sendPhoto", TelegramAPI(), token)
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).
-		Post(url, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return 0, fmt.Errorf("telegram: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("telegram (status %d): %s", resp.StatusCode, snippet(raw))
 	}
 
 	var out struct {

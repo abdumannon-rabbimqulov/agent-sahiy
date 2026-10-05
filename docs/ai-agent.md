@@ -659,6 +659,9 @@ Bir vaqtda faqat bitta skaner yuradi (ikkinchi so'rov `409` oladi).
 | `PROBLEM_DAYS` | 3 | To'lovdan necha kun o'tsa muammoli |
 | `PROBLEM_STATUSES` | `3,4` | Kuzatiladigan statuslar |
 | `ISSUE_REMIND_HOURS` | 24 | Eslatma oralig'i |
+| `TELEGRAM_MIN_GAP_MS` | 3000 | Guruhga ketma-ket ikki xabar orasidagi eng kam tanaffus (Telegram limiti ~20 xabar/daqiqa) |
+| `TELEGRAM_MAX_RETRY` | 3 | 429 (`Too Many Requests`) dan keyin qayta urinishlar soni |
+| `APP_TIMEZONE` | `Asia/Tashkent` | Dastur vaqt mintaqasi: kunlik hisoblagich va sana ayirmalari shunga tayanadi |
 | `CORS_ORIGIN` | `http://localhost:5173` | Frontend manzili |
 
 ## 5. Baza jadvallari
