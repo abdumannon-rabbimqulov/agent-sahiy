@@ -272,6 +272,7 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		support.SettingAutoResolve:  true,
 		support.SettingHelpToTG:     true,
 		support.SettingStaffOnly:    true,
+		support.SettingGreeting:     true,
 	}
 	// Qat'iy ro'yxatdan tanlanadigan matn sozlamalari.
 	enums := map[string][]string{

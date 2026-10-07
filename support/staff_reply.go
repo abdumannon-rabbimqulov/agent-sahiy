@@ -164,6 +164,13 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 		"order_sn":     strings.Join(sns, ", "),
 		"xodim_javobi": strings.TrimSpace(reply),
 	}
+	// Kunning birinchi javobi bo'lsa model javobni salom bilan boshlaydi
+	// (greeting.go). Oxirgi qaror baribir yuborish paytida qabul
+	// qilinadi — bu yerda faqat model matnni iliq boshlashi uchun.
+	salom := needGreeting(in.ClientID, in.ConversationID, msgs)
+	if salom {
+		info["salom"] = true
+	}
 	raw, _ := json.MarshalIndent(info, "", "  ")
 
 	var b strings.Builder
@@ -186,6 +193,9 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 		b.WriteString("\n\nBuyurtma raqami NOMA'LUM (order_sn bo'sh). Javobda raqam YOZMA ")
 		b.WriteString("va \"DG…\", \"(DG...)\" kabi o'rnini bosuvchi belgi ham qo'yma — ")
 		b.WriteString("raqamsiz, umumiy qilib yoz.")
+	}
+	if salom {
+		b.WriteString(staffGreetingNote)
 	}
 	userMsg := b.String()
 

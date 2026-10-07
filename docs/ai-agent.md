@@ -152,14 +152,55 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 { "adminka": [ … ], "dashboard": [ … ] }
 ```
 
-### Kod hech qanday qo'shimcha ko'rsatma bermaydi
+### Kod faqat HOLATGA bog'liq ko'rsatma qo'shadi
 
-`buildUserMessage` modelga faqat suhbat tarixi va "Tizimdagi ma'lumot"ni
-yuboradi — boshqa hech narsa. Salom, til va shu kabi barcha qoidalarni
-har bir promtning o'zi (DB, `promts` jadvali) belgilaydi. Ilgari kod
-salom uchun alohida ko'rsatma qo'shib yuborardi, lekin bu promtlarning
-o'z qoidalari bilan chalkashib ketishi mumkin edi — shuning uchun olib
-tashlandi.
+`buildUserMessage` modelga suhbat tarixi va "Tizimdagi ma'lumot"ni
+yuboradi. Til, ohang, javob uzunligi kabi doimiy qoidalarni kod EMAS, har
+bir promtning o'zi (DB, `promts` jadvali) belgilaydi — ilgari kod salom
+uchun shunday doimiy ko'rsatma qo'shardi va promtlarning o'z qoidalari
+bilan chalkashardi.
+
+"Tizimdagi ma'lumot" blokiga qo'shiladigan yagona narsa — kod aniqlagan
+HOLAT, model uni o'zi bilib olmaydi:
+
+- `cancelGuidance` — mijoz bekor qilish/pul qaytarish so'ragani
+  (`support/cancel.go`);
+- `greetingGuidance` — bu mijozga bugungi birinchi javobimiz, salom bilan
+  boshlanishi kerak (`support/greeting.go`, pastda);
+- `alertGuidance`, `foreignOrderNote`, `imageNoNumberHint` va
+  `support/context.go` dagi qator izohlari.
+
+### Salomlashish — kunda bir marta
+
+Mijoz bilan suhbat kun bo'yi davom etadi: har javobda salomlashish g'alati,
+umuman salomlashmaslik sovuq. Qoida: **bir mijozga kunda (Asia/Tashkent)
+birinchi ketgan javob** "Assalomu alaykum" (mijoz tilida) bilan boshlanadi.
+
+Ikki qatlam ishlaydi (`support/greeting.go`):
+
+1. **Model uchun belgi.** Zanjirda `greetingGuidance` dataCtx'ga qo'shiladi,
+   xodim javobi yo'lida esa `"salom": true` maydoni beriladi — model javobni
+   o'zi jonli jumla bilan boshlaydi.
+2. **Yuborish oldidan kod hakamlik qiladi** (`deliverChat`). Salom
+   yetishmasa `WithGreeting` qo'shadi, ortiqcha bo'lsa `WithoutGreeting`
+   olib tashlaydi. Nega aynan shu yerda: `auto_reply` default o'chiq, javob
+   qoralama bo'lib turadi — kechqurun yozilgani ertalab tasdiqlanishi yoki
+   bir mijozning ikki suhbatiga ikki qoralama tayyor bo'lishi mumkin.
+   Yagona hakam yuborish paytida bo'lgani uchun mijoz hech qachon ikki
+   marta salom olmaydi.
+
+"Bugun javob berdikmi" ikki manbadan tekshiriladi: bazada shu mijozga
+bugun ketgan matnli javob (`interactions.chat_reply <> ''` va `sent_at`
+bugungi) va suhbat tarixida bugun bizdan ketgan xabar (xodim support
+panelida o'zi javob bergan bo'lsa bazada yozuv qolmaydi). Shubha bo'lsa
+(baza yoki tarix o'qilmasa) salom berilmaydi — ikki marta salomlashgandan
+ko'ra bir kun salomsiz o'tgani yaxshi.
+
+Salom tili JAVOB MATNIDAN aniqlanadi (`greetLangOf`): lotin → "Assalomu
+alaykum", o'zbek kirill → "Ассалому алайкум", rus → "Здравствуйте" —
+shunda salom tananing o'zidan boshqa alifboda bo'lib qolmaydi.
+Xayrlashish (`farewell.go`, modelsiz tayyor matn) ham shu yo'ldan o'tadi.
+Tugma: `greeting_enabled` (default yoqilgan).
 
 ### Tizimdagi ma'lumot — saralangan
 
@@ -587,6 +628,7 @@ curl -X PUT http://localhost:8080/api/settings \
 | `poll_enabled` | Fon siklini yoqish/o'chirish |
 | `auto_resolve` | Javobdan keyin suhbatni "hal qilindi" holatiga o'tkazish (default yoqilgan) |
 | `help_to_telegram` | `help` matni Telegram guruhga "🆘 Yordam kerak" xabari bo'lib ketadimi (default yoqilgan) |
+| `greeting_enabled` | Kunda birinchi ketgan javob salom bilan boshlanadimi (default yoqilgan). Hisob mijoz bo'yicha — qarang "Salomlashish — kunda bir marta" |
 | `poll_interval_sec` | Sikllar orasidagi oraliq, 10–3600 s (sekinlashtirish uchun oshiring) |
 | `batch_size` | Bitta siklda nechta suhbat, 1–50 (qolganlari keyingi siklda) |
 | `chat_delay_sec` | Suhbatlar orasidagi tanaffus, 0–600 s |

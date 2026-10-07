@@ -101,12 +101,20 @@ func alreadyStudied(conversationID, lastID int64) bool {
 //
 // Xabarlarni olishda xato bo'lsa false qaytadi: aloqa uzilgani uchun
 // tayyor javobni ushlab qolmaymiz.
-func alreadyAnswered(conversationID int64) bool {
+//
+// Ikkinchi qiymat — olingan tarix: salom tekshiruvi (greeting.go) ham
+// shu xabarlarga tayanadi, ikkinchi so'rov kerak bo'lmasin.
+func alreadyAnswered(conversationID int64) (bool, []Message) {
 	msgs, err := fetchHistory(conversationID)
 	if err != nil {
 		log.Printf("agent: suhbat %d — yuborishdan oldingi tekshiruv o'tmadi: %v", conversationID, err)
-		return false
+		return false, nil
 	}
+	return lastWordOurs(msgs), msgs
+}
+
+// lastWordOurs - suhbatdagi oxirgi xabar biz tomondanmi.
+func lastWordOurs(msgs []Message) bool {
 	if len(msgs) == 0 {
 		return false
 	}
@@ -218,6 +226,13 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
 	)
+
+	// Salom: shu mijozga bugun birinchi javobimiz bo'lsa, model javobni
+	// salom bilan boshlashi kerak (greeting.go). Oxirgi qaror yuborish
+	// paytida qabul qilinadi (deliverChat) — bu faqat ton uchun ko'rsatma.
+	if needGreeting(clientID, conversationID, msgs) {
+		dataCtx = append(dataCtx, greetingGuidance)
+	}
 
 	// Bekor qilish / pul qaytarish so'rovi: modelga qat'iy taqiq
 	// beriladi va murojaat xodimlar guruhiga chiqadi (cancel.go).
@@ -490,8 +505,25 @@ func deliverChat(in *Interaction, recheck bool) error {
 	// yuborayotgani, va `SourceTelegram` — matn xodimning o'zinikidan
 	// kelib chiqqan (xodim guruhda reply qilgan), demak yuborilishi
 	// ataylab so'ralgan.
-	if recheck && !in.Forced && in.Source != SourceTelegram && alreadyAnswered(in.ConversationID) {
-		return ErrAnsweredByStaff
+	var msgs []Message
+	if recheck && !in.Forced && in.Source != SourceTelegram {
+		ours, history := alreadyAnswered(in.ConversationID)
+		if ours {
+			return ErrAnsweredByStaff
+		}
+		msgs = history
+	}
+
+	// Salom: kunning birinchi javobi bo'lsa qo'shiladi, aks holda model
+	// qo'ygan salom olib tashlanadi (greeting.go). Qaror aynan shu yerda,
+	// yuborish oldidan qabul qilinadi — qoralama kecha tayyorlangan yoki
+	// bir mijozning ikkinchi suhbatida allaqachon salomlashgan bo'lishi
+	// mumkin.
+	if text := applyGreeting(in, msgs); text != in.ChatReply {
+		in.ChatReply = text
+		// Yuborishdan OLDIN saqlanadi: transport xatosidan keyingi qayta
+		// urinishda matn o'zgarmasin (WithGreeting idempotent).
+		saveFlag(in, "chat_reply", text)
 	}
 	// Avval rasm, keyin matn: xodim guruhda ham shu tartibda yuboradi
 	// va mijoz izohni rasmga qarab o'qiydi. Rasm ketmasa matn ham

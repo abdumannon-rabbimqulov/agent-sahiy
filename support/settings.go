@@ -23,6 +23,10 @@ const (
 	// guruhda javob berganda ishlaydi.
 	SettingStaffOnly = "staff_only"
 
+	// SettingGreeting - kunning birinchi javobida salomlashish
+	// ("Assalomu alaykum") — greeting.go.
+	SettingGreeting = "greeting_enabled"
+
 	// Tezlik sozlamalari — panel orqali o'zgartiriladi, darhol kuchga
 	// kiradi (fon sikli har aylanishda qaytadan o'qiydi).
 	SettingPollInterval = "poll_interval_sec" // sikllar orasidagi oraliq
@@ -125,6 +129,7 @@ func AllSettings() map[string]any {
 		SettingAutoResolve:  AutoResolveOn(),
 		SettingHelpToTG:     HelpToTelegramOn(),
 		SettingStaffOnly:    StaffOnlyMode(),
+		SettingGreeting:     GreetingEnabled(),
 		SettingPollInterval: PollInterval(),
 		SettingBatchSize:    BatchSize(),
 		SettingChatDelay:    ChatDelay(),
@@ -181,6 +186,10 @@ func StaffOnlyMode() bool { return GetBoolSetting(SettingStaffOnly, false) }
 // PollEnabled - fon sikli yoqilganmi.
 func PollEnabled() bool { return GetBoolSetting(SettingPollEnabled, true) }
 
+// GreetingEnabled - kunning birinchi javobi salom bilan boshlanadimi
+// (greeting.go). Default yoqilgan.
+func GreetingEnabled() bool { return GetBoolSetting(SettingGreeting, true) }
+
 // HelpToTelegramOn - AI "xodim kerak" degan matn (help) Telegram
 // guruhga yuboriladimi. Yoqiq bo'lsa har bir shunday murojaat guruhga
 // tushadi; o'chirilsa help faqat bazada va panelda qoladi.
@@ -195,6 +204,7 @@ func seedSettings(db *gorm.DB) error {
 		SettingAutoResolve:  "true",
 		SettingHelpToTG:     "true",
 		SettingStaffOnly:    "false",
+		SettingGreeting:     "true",
 		SettingPollInterval: strconv.Itoa(envInt("POLL_INTERVAL_SEC", DefaultPollInterval)),
 		SettingBatchSize:    strconv.Itoa(envInt("RATE_LIMIT_COUNT", 5)),
 		SettingChatDelay:    strconv.Itoa(envInt("CHAT_DELAY_SEC", 0)),

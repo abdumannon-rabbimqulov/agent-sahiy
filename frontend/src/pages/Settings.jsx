@@ -138,6 +138,11 @@ export default function Settings() {
         desc="Yoqilsa: AI 'xodim kerak' degan har bir murojaat (help) Telegram guruhga '🆘 Yordam kerak' xabari bo'lib tushadi — muammoli buyurtma xabari bilan bir xil ko'rinishda, mijoz id si bilan. Xodim o'sha xabarga reply qilsa, javobi mijozga moslab yuboriladi. O'chirilsa help faqat panelda qoladi."
       />
       <Toggle
+        name="greeting_enabled" value={s.greeting_enabled} onChange={change}
+        title="Kunning birinchi javobida salomlashish"
+        desc="Yoqilsa: bir mijozga kun bo'yi birinchi ketgan javob 'Assalomu alaykum' (mijoz tilida) bilan boshlanadi, keyingi javoblarda salom bo'lmaydi. Hisob mijoz bo'yicha: mijozning bir necha suhbati bo'lsa ham kunda bir marta salomlashiladi."
+      />
+      <Toggle
         name="auto_resolve" value={s.auto_resolve} onChange={change}
         title="Javobdan keyin suhbatni yopish"
         desc="Mijozga javob ketgach suhbat support tizimida 'hal qilindi' holatiga o'tadi. Mijoz yana yozsa, support o'zi qayta ochadi."
