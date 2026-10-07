@@ -71,13 +71,18 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 		return nil, fmt.Errorf("suhbat id yo'q")
 	}
 
+	// Javobda ko'rsatiladigan raqamlar: xodim o'z matnida raqam yozgan
+	// bo'lsa o'shalar, aks holda guruh xabaridagilar (effectiveNumbers).
+	numSN, numEx := effectiveNumbers(reply, sns)
+	showNums := mergeNumbers(numSN, numEx, 2*staffNumbersMax)
+
 	in := &Interaction{
 		ConversationID: conversationID,
 		ClientID:       clientID,
 		Source:         SourceTelegram,
 		Status:         StatusPending,
 		// Zaxira: xodim matni o'z holicha, buyurtma raqami bilan.
-		ChatReply: WithOrderSN(strings.TrimSpace(reply), sns),
+		ChatReply: WithOrderSN(strings.TrimSpace(reply), showNums),
 		// Rasm javob bilan birga ketadi: DeliverChat uni MATNDAN OLDIN
 		// yuboradi.
 		ImageURL: imageURL,
@@ -86,8 +91,14 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 	// tayyor jumla qo'yiladi: support serveri bo'sh xabarni qabul
 	// qilmaydi va mijoz rasmni izohsiz ko'rib chalkashmasin.
 	if strings.TrimSpace(reply) == "" && imageURL != "" {
-		in.ChatReply = WithOrderSN(photoOnlyReply, sns)
+		in.ChatReply = WithOrderSN(photoOnlyReply, showNums)
 	}
+
+	// Xodim yozgan raqam guruh xabaridagi buyurtmalardan boshqa bo'lsa —
+	// xatoni xodimning o'zi darhol ko'rsin. Javob TO'SILMAYDI: raqamni
+	// odam ataylab yozgan va u bilan hech qanday qidiruv ketmaydi, faqat
+	// javob matnida chop etiladi.
+	in.NumberNote = foreignNumberNote(numSN, sns)
 
 	// Suhbat tarixi — til va kontekst uchun.
 	msgs, err := fetchHistory(conversationID)
@@ -114,14 +125,16 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 	// qoladi, xodim guruhda sababni ko'radi.
 	blocked := ""
 	if MentionsReorder(reply) {
-		blocked = ReorderBlocked(sns)
+		// Faqat DG raqamlari: trek raqami bo'yicha buyurtma topilmaydi
+		// va tekshiruv jim o'lib qolardi.
+		blocked = ReorderBlocked(numSN)
 		if blocked != "" {
 			log.Printf("xodim javobi: suhbat %d — %s", conversationID, blocked)
 		}
 	}
 
 	// LLM bilan mijoz tiliga moslab yozamiz.
-	usage, err := rewriteStaffReply(ctx, in, sns, reply, msgs)
+	usage, err := rewriteStaffReply(ctx, in, numSN, numEx, reply, msgs)
 	if err != nil {
 		in.Error = fmt.Sprintf("xodim javobini qayta yozib bo'lmadi: %v", err)
 		log.Printf("xodim javobi: %v — xodim matni qoralama bo'lib qoldi", err)
@@ -154,7 +167,7 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 
 // rewriteStaffReply - LLM chaqiruvi. Muvaffaqiyatli bo'lsa in.ChatReply
 // mijozga mos matn bilan almashadi.
-func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
+func rewriteStaffReply(ctx context.Context, in *Interaction, sns, express []string,
 	reply string, msgs []Message) (Usage, error) {
 
 	// "Faqat mutaxassis javoblari" rejimining butun MA'NOSI shu:
@@ -182,6 +195,11 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 		"order_sn":     strings.Join(sns, ", "),
 		"xodim_javobi": strings.TrimSpace(reply),
 	}
+	// Trek raqami ALOHIDA kalitda: `order_sn` ichiga qo'shilsa model uni
+	// "buyurtma raqamingiz" deb yozib yuboradi.
+	if len(express) > 0 {
+		info["trek_raqami"] = strings.Join(express, ", ")
+	}
 	// Kunning birinchi javobi bo'lsa model javobni salom bilan boshlaydi
 	// (greeting.go). Oxirgi qaror baribir yuborish paytida qabul
 	// qilinadi — bu yerda faqat model matnni iliq boshlashi uchun.
@@ -204,10 +222,17 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 	// buyruq har doim qo'shilardi va `order_sn` bo'sh bo'lganda model
 	// uni bajarishga urinib raqamni TO'QIB chiqarardi — mijozga
 	// "buyurtmangiz (DG…)" deb ketardi.
-	if len(sns) > 0 {
-		b.WriteString("\n\nJavob matnida buyurtma raqamini (order_sn) albatta yoz — ")
-		b.WriteString("mijoz javob qaysi buyurtmasi haqida ekanini bilsin.")
-	} else {
+	switch {
+	case len(sns) > 0:
+		b.WriteString("\n\nJavob matnida AYNAN shu buyurtma raqam(lar)ini yoz: ")
+		b.WriteString(strings.Join(sns, ", "))
+		b.WriteString(" — mijoz javob qaysi buyurtmasi haqida ekanini bilsin. ")
+		b.WriteString("Suhbat tarixidagi boshqa raqamlarni javobga qo'shma.")
+	case len(express) > 0:
+		b.WriteString("\n\nBuyurtma raqami noma'lum, lekin trek raqami bor: ")
+		b.WriteString(strings.Join(express, ", "))
+		b.WriteString(" — javobda AYNAN shu trek raqamini yoz, boshqa raqam qo'shma.")
+	default:
 		b.WriteString("\n\nBuyurtma raqami NOMA'LUM (order_sn bo'sh). Javobda raqam YOZMA ")
 		b.WriteString("va \"DG…\", \"(DG...)\" kabi o'rnini bosuvchi belgi ham qo'yma — ")
 		b.WriteString("raqamsiz, umumiy qilib yoz.")
@@ -243,7 +268,7 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns []string,
 		return usage, fmt.Errorf("model bo'sh javob qaytardi")
 	}
 	// Model raqamni tashlab ketsa — kod o'zi qo'shadi.
-	in.ChatReply = WithOrderSN(a.Chat, sns)
+	in.ChatReply = WithOrderSN(a.Chat, mergeNumbers(sns, express, 2*staffNumbersMax))
 	if a.Help != "" {
 		in.HelpText = a.Help
 	}
@@ -261,11 +286,19 @@ func issueNumbers(issues []OrderIssue) []string {
 	return out
 }
 
-// WithOrderSN - javob matnida buyurtma raqami borligini kafolatlaydi.
+// WithOrderSN - javob matnida buyurtma (yoki trek) raqami borligini
+// kafolatlaydi.
 //
 // Model (yoki xodim) raqamni yozmagan bo'lsa, matn oldiga qo'shiladi:
 // mijoz javob qaysi buyurtmasi haqida ekanini bilishi kerak. Matnda
-// allaqachon bor raqam takrorlanmaydi.
+// allaqachon bor raqam takrorlanmaydi — "DG 60732205", "dg-60732205" va
+// kirillcha "ДГ60732205" ham BOR deb hisoblanadi (containsNum).
+//
+// Raqam birinchi qator FAQAT SALOMDAN iborat bo'lsa, undan KEYIN
+// qo'yiladi. Ikki sabab: mijozga "Assalomu alaykum! / DG… — matn" tabiiy
+// o'qiladi, va yuborish paytidagi WithoutGreeting (greeting.go) "faqat
+// salom" qatorini butunlay o'chiradi — raqam o'sha qatorda tursa, u bilan
+// birga yo'qolib ketardi.
 func WithOrderSN(text string, sns []string) string {
 	text = strings.TrimSpace(text)
 	if text == "" || len(sns) == 0 {
@@ -273,12 +306,79 @@ func WithOrderSN(text string, sns []string) string {
 	}
 	var missing []string
 	for _, sn := range sns {
-		if !strings.Contains(text, sn) {
+		if sn = strings.TrimSpace(sn); sn != "" && !containsNum(text, sn) {
 			missing = append(missing, sn)
 		}
 	}
 	if len(missing) == 0 {
 		return text
 	}
-	return strings.Join(missing, ", ") + " — " + text
+	prefix := strings.Join(missing, ", ") + " — "
+
+	// Birinchi qator faqat salom bo'lsa — raqam undan keyin.
+	if line, rest, ok := strings.Cut(text, "\n"); ok && isGreetingOnly(line) {
+		return line + "\n" + prefix + strings.TrimLeft(rest, "\n")
+	}
+	return prefix + text
+}
+
+// staffNumbersMax - xodim javobidan olinadigan raqamlar chegarasi
+// (zanjirdagi bilan bir xil).
+const staffNumbersMax = 10
+
+// effectiveNumbers - javobda mijozga ko'rsatiladigan raqamlar.
+//
+// Xodim javobida raqam yozgan bo'lsa — FAQAT o'shalar ishlatiladi: guruh
+// xabari to'rt buyurtma haqida bo'lsa ham, xodim bittasini nomma-nom
+// aytgan bo'lsa javob aynan o'sha buyurtma haqida. Raqam yozmagan bo'lsa
+// eski qoida: guruh xabariga biriktirilgan raqamlar (`sns`).
+//
+// KeepMentioned bu yerda ataylab ISHLATILMAYDI: u model to'qigan raqamni
+// suhbat tarixi bo'yicha filtrlaydi, xodim xabari esa tarixda yo'q —
+// filtr xodim yozgan raqamni o'chirib tashlardi (aynan shu xato tufayli
+// mijozga raqamsiz javob ketardi).
+func effectiveNumbers(reply string, sns []string) (orderSN, express []string) {
+	sn, ex := numbersFromText(reply)
+	// Karta raqami trek bo'lib ketmasin: xodim pul qaytarish mavzusida
+	// karta raqamini yozishi mumkin, u mijozga "trek raqamingiz" bo'lib
+	// ko'rinmasligi kerak.
+	clean := make([]string, 0, len(ex))
+	for _, e := range ex {
+		if !cardLike(e) {
+			clean = append(clean, e)
+		}
+	}
+	ex = clean
+
+	if len(sn) == 0 && len(ex) == 0 {
+		return mergeNumbers(sns, nil, staffNumbersMax), nil
+	}
+	return mergeNumbers(sn, nil, staffNumbersMax), mergeNumbers(ex, nil, staffNumbersMax)
+}
+
+// foreignNumberNote - xodim yozgan raqamlardan qaysilari guruh xabaridagi
+// buyurtmalarga tegishli emasligi haqida qisqa eslatma (bo'sh satr —
+// hammasi joyida yoki taqqoslashga asos yo'q).
+func foreignNumberNote(staffSN, sns []string) string {
+	if len(sns) == 0 || len(staffSN) == 0 {
+		return ""
+	}
+	var foreign []string
+	for _, sn := range staffSN {
+		known := false
+		for _, s := range sns {
+			if containsNum(s, sn) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			foreign = append(foreign, sn)
+		}
+	}
+	if len(foreign) == 0 {
+		return ""
+	}
+	return "ℹ️ " + strings.Join(foreign, ", ") + " — bu xabardagi buyurtma emas, " +
+		"lekin javobda shu raqam ko'rsatiladi."
 }

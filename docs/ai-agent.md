@@ -553,12 +553,42 @@ holda tasdiqlash navbatiga. Bunday javoblar panelda `source: telegram`
 belgisi bilan ko'rinadi. Guruhdagi tasdiqda holat ham yoziladi
 ("mijozga yuborildi" / "admin tasdig'i kutilmoqda").
 
-**Javobda buyurtma raqami bo'ladi.** Modelga "javob matnida `order_sn`
-ni albatta yoz" deb aytiladi, model tashlab ketsa esa kod o'zi qo'shadi
+**Javobda buyurtma raqami bo'ladi.** Modelga "javob matnida AYNAN shu
+raqamlarni yoz" deb aytiladi, model tashlab ketsa esa kod o'zi qo'shadi
 (`WithOrderSN`): matnda yo'q raqamlar boshiga qo'yiladi —
-`DG60607041 — Buyurtmangiz ertaga jo'natiladi.` Matnda allaqachon bor
-raqam takrorlanmaydi. Mijoz javob qaysi buyurtmasi haqida ekanini bilishi
-kerak, ayniqsa bitta xabarda bir nechta buyurtma yopilganda.
+`DG60607041 — Buyurtmangiz ertaga jo'natiladi.` Mijoz javob qaysi
+buyurtmasi haqida ekanini bilishi kerak, ayniqsa bitta xabarda bir nechta
+buyurtma yopilganda.
+
+Qaysi raqam ko'rsatilishini `effectiveNumbers` (`support/staff_reply.go`)
+hal qiladi:
+
+- **xodim o'z javobida raqam yozgan bo'lsa — FAQAT o'shalar.** Guruh
+  xabari to'rt buyurtma haqida bo'lsa ham, xodim bittasini nomma-nom
+  aytgan bo'lsa javob aynan o'sha buyurtma haqida. Trek raqami (`JT…`,
+  uzun raqamli trek) ham shunday kafolatlanadi, lekin modelga ALOHIDA
+  `trek_raqami` kaliti bilan beriladi — aks holda model uni "buyurtma
+  raqamingiz" deb yozadi. Karta raqamiga o'xshagan 16 xonali raqam trek
+  deb olinmaydi;
+- **yozmagan bo'lsa** — guruh xabariga biriktirilgan raqamlar;
+- **hech qayerda raqam yo'q** — modelga "raqam YOZMA, `DG…` kabi o'rin
+  bosuvchi ham qo'yma" deyiladi (aks holda model raqamni to'qib chiqaradi).
+
+Ilgari shu uchinchi qoida ikkinchisining o'rniga ham ishlardi: "🆘 Yordam
+kerak" xabariga kelgan reply'da `order_sn` bo'sh bo'lgani uchun model
+XODIM YOZGAN raqamni ham tashlab ketardi — mijozga raqamsiz javob
+borardi. Endi xodim matnidagi raqam ham hisobga olinadi.
+
+Taqqoslash `containsNum` bilan: `DG 60732205`, `dg-60732205` va kirillcha
+`ДГ60732205` — hammasi "raqam matnda bor" deb hisoblanadi, ya'ni kod uni
+ikkinchi marta qo'shmaydi. Raqam birinchi qator faqat salomdan iborat
+bo'lsa undan KEYIN qo'yiladi — `WithoutGreeting` (salomlashish bo'limi)
+"faqat salom" qatorini o'chirganda raqam u bilan birga yo'qolmasin.
+
+Xodim yozgan raqam guruh xabaridagi buyurtmalardan boshqa bo'lsa, javob
+to'silmaydi (raqamni odam ataylab yozgan, u bilan qidiruv ham ketmaydi) —
+guruhdagi tasdiqqa "ℹ️ DG… — bu xabardagi buyurtma emas" degan qator
+qo'shiladi, xodim xatosini darhol ko'radi.
 
 LLM ishlamay qolsa (model o'chirilgan, balans tugagan, xato) javob
 YO'QOLMAYDI, lekin **mijozga ham ketmaydi**: xodim matni o'z holicha

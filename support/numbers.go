@@ -187,3 +187,64 @@ func normalizeNum(s string) string {
 	}
 	return b.String()
 }
+
+// containsNum - matnda shu raqam (DG… yoki trek) bormi.
+//
+// `strings.Contains` yetarli emas: model raqamni "DG 60732205",
+// "DG-60732205" yoki kirillcha "ДГ60732205" deb yozishi mumkin — uchala
+// holatda ham raqam MATNDA BOR, lekin oddiy taqqoslash "yo'q" deydi va
+// kod uni ikkinchi marta qo'shib yuboradi.
+//
+// Shuning uchun ikkala tomon ham bir ko'rinishga keltiriladi: ajratuvchilar
+// tashlanadi (normalizeNum) va kirillcha "ДГ" lotincha "DG" ga qaytariladi
+// (orderSNRe ham aynan shunday qaraydi).
+func containsNum(text, num string) bool {
+	n := normalizeNum(cyrToLatNum(num))
+	if n == "" {
+		return false
+	}
+	return strings.Contains(normalizeNum(cyrToLatNum(text)), n)
+}
+
+// cyrToLatNum - raqam yonidagi kirill harflarini lotinchaga qaytaradi
+// ("ДГ60732205" → "DG60732205"). Faqat buyurtma/trek raqamlarida
+// uchraydigan harflar.
+var cyrToLatNumRepl = strings.NewReplacer(
+	"Д", "D", "д", "D",
+	"Г", "G", "г", "G",
+	"Ж", "J", "ж", "J",
+	"Т", "T", "т", "T",
+	"С", "S", "с", "S",
+	"Р", "P", "р", "P",
+	"У", "Y", "у", "Y",
+	"В", "V", "в", "V",
+	"Е", "E", "е", "E",
+	"А", "A", "а", "A",
+	"К", "K", "к", "K",
+	"О", "O", "о", "O",
+	"М", "M", "м", "M",
+	"Н", "H", "н", "H",
+	"Х", "X", "х", "X",
+)
+
+func cyrToLatNum(s string) string { return cyrToLatNumRepl.Replace(s) }
+
+// cardLike - raqam bank kartasiga o'xshaydimi (16 xonali yoki O'zbekiston
+// kartalari prefiksi bilan boshlanadi).
+//
+// Nega kerak: trek raqami qoidasi (11+ xonali) kartani ham tutadi. Mijoz
+// yozgan matnda bu xavfsiz edi (raqam faqat qidiruvga ketardi), lekin
+// XODIM matnidagi raqam endi mijozga ko'rsatiladigan javobga tushadi —
+// karta raqami "trek raqamingiz" bo'lib ketmasligi kerak.
+func cardLike(num string) bool {
+	n := normalizeNum(num)
+	if len(n) != 16 {
+		return false
+	}
+	for _, r := range n {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}

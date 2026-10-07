@@ -120,6 +120,12 @@ type Interaction struct {
 	// emas, tekshirishni talab qiladigan aniq holat.
 	Alerts []string `gorm:"-" json:"alerts,omitempty"`
 
+	// NumberNote - xodim javobida yozgan buyurtma raqami guruh
+	// xabaridagi buyurtmalarga tegishli emasligi haqida eslatma.
+	// Bazada saqlanmaydi: guruhdagi tasdiq xabariga qo'shiladi, xodim
+	// o'zining xatosini darhol ko'rsin (support/staff_reply.go).
+	NumberNote string `gorm:"-" json:"-"`
+
 	// Overdue - "pending" holatida PendingOverdueHours dan ko'p vaqt
 	// turgan (mijoz qayta yozmagan, admin ham tasdiqlamagan). Bazada
 	// saqlanmaydi — ro'yxat chiqarilganda hisoblanadi.

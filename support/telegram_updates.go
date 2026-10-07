@@ -247,7 +247,16 @@ func handlePostReply(m *tgMsgUpdate, p *TelegramPost, who string) {
 // xodimning XOM matni mijozga yuborilmaydi (u ichki tilda yozilgan).
 // Xodim buni bilib tursin — javob "ketdi" deb o'ylab qolmasin.
 func staffReplyStatus(in *Interaction) string {
-	return staffImageNote(in) + staffSendStatus(in)
+	return staffNumberNote(in) + staffImageNote(in) + staffSendStatus(in)
+}
+
+// staffNumberNote - xodim yozgan raqam guruh xabaridagi buyurtmaga
+// tegishli bo'lmasa qisqa satr (support/staff_reply.go).
+func staffNumberNote(in *Interaction) string {
+	if in == nil || in.NumberNote == "" {
+		return ""
+	}
+	return in.NumberNote + "\n"
 }
 
 // staffImageNote - javobga rasm biriktirilgan bo'lsa qisqa satr. Xodim
