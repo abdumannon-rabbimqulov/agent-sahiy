@@ -427,6 +427,19 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// Taqiqqa qaramay model javobida bekor qilish haqida yozgan bo'lsa,
 	// javob mijozga AVTOMATIK ketmaydi: avval admin o'qib chiqsin.
 	holdForAdmin := false
+
+	// Model "boshqa tovar tanlang" tartibini yozgan bo'lsa, buyurtma
+	// holati shunga mos kelishi kerak (reorder.go): pul o'sha buyurtmada
+	// turgan bo'lsagina mijoz boshqa tovar tanlay oladi. Mos kelmasa
+	// javob mijozga avtomatik ketmaydi.
+	if in.ChatReply != "" && MentionsReorder(in.ChatReply) {
+		if note := ReorderBlocked(chatSN); note != "" {
+			holdForAdmin = true
+			alerts = append(alerts, note)
+			log.Printf("agent: suhbat %d — %s", conversationID, note)
+		}
+	}
+
 	if cancelAsk && MentionsCancel(in.ChatReply) {
 		holdForAdmin = true
 		alerts = append(alerts, cancelReplyAlert)

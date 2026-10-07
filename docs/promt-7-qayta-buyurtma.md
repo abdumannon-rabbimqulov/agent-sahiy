@@ -9,6 +9,13 @@ Shuning uchun matnda ALOHIDA aytilgan: 3 qadam xodim ularni yozmagan
 bo'lsa ham javobga kiradi — aks holda model xodim matnini shunchaki
 qayta yozib qo'yadi va qadamlar tushib qoladi.
 
+Qaysi buyurtmaga to'g'ri keladi: faqat holat **3** ("sotib olingan,
+to'langan") yoki **10** ("taqiqlangan tovar") bo'lsa — pul o'sha buyurtmada
+turgan bo'lishi kerak. Boshqa holatda (posilka yo'lga chiqqan, yetkazilgan,
+to'lov o'tmagan) bu ko'rsatma mijozni chalg'itadi. Tekshiruv KODDA:
+`support/reorder.go` holatni adminkadan jonli oladi va mos kelmasa javobni
+mijozga yubormaydi.
+
 ---
 
 ```

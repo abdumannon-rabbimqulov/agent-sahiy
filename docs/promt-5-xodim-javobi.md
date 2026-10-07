@@ -13,6 +13,15 @@ bir marta tekshiradi: salom yetishmasa o'zi qo'shadi, ortiqcha bo'lsa olib
 tashlaydi — shuning uchun promtdagi qoida buzilsa ham mijoz ikki marta salom
 olmaydi.
 
+Qayta buyurtma ("boshqa tovar tanlang") HAR QANDAY buyurtmaga to'g'ri
+kelmaydi: pul o'sha buyurtmada turgan bo'lishi kerak. Faqat ikki holatda
+mumkin — **3** ("sotib olingan, to'langan") va **10** ("taqiqlangan tovar").
+Buni KOD tekshiradi (`support/reorder.go`): xodim javobida "boshqa tovar
+tanlang" ma'nosi bo'lsa, buyurtma holati adminkadan jonli olinadi va mos
+kelmasa javob mijozga YUBORILMAYDI — qoralama panelda qoladi, xodim guruhda
+sababni ko'radi. Model bu tekshiruvni o'zi qila olmaydi (unga holat
+yuborilmaydi), shuning uchun promtda bu haqda qoida yo'q.
+
 Qo'shilgan narsa: "MAXSUS HOLAT" bo'limi. Unisiz 2-qoida ("o'zingdan
 qo'shma") va 7-qoida ("1-3 gap") modelga tartibni tushuntirishni
 taqiqlab qo'yardi va javob "boshqa tovar tanlang" bilan tugardi.

@@ -170,6 +170,31 @@ HOLAT, model uni o'zi bilib olmaydi:
 - `alertGuidance`, `foreignOrderNote`, `imageNoNumberHint` va
   `support/context.go` dagi qator izohlari.
 
+### Qayta buyurtma — faqat 3 va 10 holatlarida
+
+Taqiqlangan tovar o'rniga boshqasini tanlash tartibi (`support/reorder.go`)
+pul o'sha buyurtmada turganini talab qiladi. Shuning uchun u faqat ikki
+holatda to'g'ri:
+
+| Status | Nomi |
+|---|---|
+| `3` | sotib olingan, to'langan |
+| `10` | taqiqlangan tovar |
+
+`MentionsReorder` xodim javobida (yoki AI matnida) "boshqa tovar tanlang"
+ma'nosini topsa, `ReorderBlocked` buyurtma holatini **adminkadan jonli**
+oladi (muammo yozuvidagi status eskirgan bo'lishi mumkin). Holat mos
+kelmasa:
+
+- xodim javobi yo'lida — javob mijozga yuborilmaydi, qoralama panelda
+  qoladi va xodim guruhda sababni ko'radi ("⚠️ Qayta buyurtma holatga mos
+  emas: DG… — Xitoyda tranzaksiya yopilgan (holat 6)…");
+- AI zanjirida — javob avto-yuborilmaydi (`holdForAdmin`), holat esa
+  xodimlar guruhiga ogohlantirish bo'lib chiqadi.
+
+Adminka javob bermasa yoki buyurtma topilmasa javob TO'SILMAYDI (aloqa
+uzilgani uchun xodimning ishini ushlab qolmaymiz) — faqat logga yoziladi.
+
 ### Salomlashish — kunda bir marta
 
 Mijoz bilan suhbat kun bo'yi davom etadi: har javobda salomlashish g'alati,

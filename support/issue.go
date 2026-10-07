@@ -15,9 +15,10 @@ import (
 
 // Adminka status kodlari (ma'nosi ma'lum bo'lganlari).
 const (
-	StatusPaid     = 3 // sotib olingan, to'langan
-	StatusWaiting  = 4 // kiritish uchun kutilmoqda
-	StatusFinished = 6 // yakunlangan
+	StatusPaid     = 3  // sotib olingan, to'langan
+	StatusWaiting  = 4  // kiritish uchun kutilmoqda
+	StatusFinished = 6  // yakunlangan
+	StatusBanned   = 10 // taqiqlangan tovar — sotuvchi jo'natmaydi
 )
 
 // DefaultProblemDays - shu kundan ko'p turgan buyurtma muammoli hisoblanadi.
@@ -97,6 +98,8 @@ func StatusLabel(status int) string {
 		// Ataylab "yakunlangan" emas: bu Xitoy tomonidagi tranzaksiya
 		// yopilgani, mijozga yetkazilgani emas (qarang: StatusMeaning).
 		return "Xitoyda tranzaksiya yopilgan — yo'lga chiqqan"
+	case StatusBanned:
+		return "taqiqlangan tovar"
 	}
 	return fmt.Sprintf("holat %d", status)
 }
@@ -118,6 +121,9 @@ func StatusMeaning(status int) string {
 		return "to'lov o'tgan, Xitoyda tayyorlanmoqda"
 	case StatusWaiting:
 		return "Xitoy omborida kiritish uchun kutilmoqda"
+	case StatusBanned:
+		return "tovar TAQIQLANGAN — sotuvchi uni jo'natmaydi. Mijoz shu to'lov " +
+			"hisobidan boshqa tovar tanlashi kerak (qayta buyurtma tartibi)"
 	case StatusFinished:
 		return "Xitoy tomonida tranzaksiya yopilgan — posilka yo'lga chiqqan. " +
 			"BU MIJOZGA YETGANI EMAS: yetib kelgani faqat yetkazma (dashboard) " +

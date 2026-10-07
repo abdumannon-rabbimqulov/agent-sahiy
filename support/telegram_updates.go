@@ -263,6 +263,10 @@ func staffSendStatus(in *Interaction) string {
 	switch {
 	case in.Status == StatusSent:
 		return "mijozga yuborildi"
+	case strings.HasPrefix(in.Error, reorderBlockPrefix):
+		// Buyurtma holati "boshqa tovar tanlash" ga mos kelmaydi
+		// (reorder.go) — xodim sababni to'liq ko'rsin.
+		return "⚠️ " + in.Error + "\nPanelda ko'rib, kerak bo'lsa tahrirlab yuborasiz."
 	case in.Status == StatusPending && in.Error != "":
 		return "⚠️ AI javobni mijoz tiliga o'gira olmadi (" + in.Error + ").\n" +
 			"Xom matn mijozga YUBORILMADI — panelda tahrirlab yuborish kerak."
