@@ -18,6 +18,7 @@ const (
 	StatusPaid     = 3  // sotib olingan, to'langan
 	StatusWaiting  = 4  // kiritish uchun kutilmoqda
 	StatusFinished = 6  // yakunlangan
+	StatusShipped  = 7  // yo'lga chiqqan
 	StatusBanned   = 10 // taqiqlangan tovar — sotuvchi jo'natmaydi
 )
 
@@ -106,6 +107,8 @@ func StatusLabel(status int) string {
 		return "sotib olingan, to'langan"
 	case StatusWaiting:
 		return "kiritish uchun kutilmoqda"
+	case StatusShipped:
+		return "yo'lga chiqqan"
 	case StatusFinished:
 		// Ataylab "yakunlangan" emas: bu Xitoy tomonidagi tranzaksiya
 		// yopilgani, mijozga yetkazilgani emas (qarang: StatusMeaning).
@@ -133,6 +136,10 @@ func StatusMeaning(status int) string {
 		return "to'lov o'tgan, Xitoyda tayyorlanmoqda"
 	case StatusWaiting:
 		return "Xitoy omborida kiritish uchun kutilmoqda"
+	case StatusShipped:
+		return "posilka yo'lga chiqqan — holati yaxshi, kutish kerak. " +
+			"BU MIJOZGA YETGANI EMAS: yetib kelgani faqat yetkazma (dashboard) " +
+			"ma'lumotidan bilinadi"
 	case StatusBanned:
 		return "tovar TAQIQLANGAN — sotuvchi uni jo'natmaydi. Mijoz shu to'lov " +
 			"hisobidan boshqa tovar tanlashi kerak (qayta buyurtma tartibi)"
@@ -179,6 +186,37 @@ func parseAdminkaTime(s string) (time.Time, bool) {
 		}
 	}
 	return t, true
+}
+
+// StatusAdvanced - buyurtma adminkada OLDINGA siljiganmi.
+//
+// Ikki o'tish shunday hisoblanadi:
+//
+//	3 → 4   "sotib olingan, to'langan" → "kiritish uchun kutilmoqda"
+//	4 → 7   "kiritish uchun kutilmoqda" → "yo'lga chiqqan"
+//
+// (3 → 7 ham: buyurtma bitta bosqichni sakrab o'tgan bo'lsa ham
+// oldinga siljigani o'zgarmaydi.)
+//
+// Har ikkisi ham Xitoy tomonidagi KEYINGI bosqich: buyurtma qotib
+// qolmagan, ish davom etmoqda — demak muammo hal bo'lgan va xodim
+// aralashuvi kerak emas.
+//
+// Har qanday o'zgarish emas, AYNAN shu o'tishlar. Masalan 4 → 10
+// ("taqiqlangan tovar") ham o'zgarish, lekin u hal bo'lish emas —
+// aksincha, yomonlashish va xodim aralashuvini talab qiladi.
+//
+// Status 4 ning O'ZI muammo bo'lishdan to'xtamaydi: o'sha holatda
+// uzoq turib qolgan buyurtma baribir muammo sifatida ochiladi
+// (PROBLEM_STATUSES da 4 ham bor). Bu yerda gap faqat SILJISH haqida.
+func StatusAdvanced(was, now int) bool {
+	switch {
+	case was == StatusPaid && now == StatusWaiting:
+		return true
+	case (was == StatusPaid || was == StatusWaiting) && now == StatusShipped:
+		return true
+	}
+	return false
 }
 
 // IsPaid - buyurtma to'langanmi (pay_status: 1 — to'langan, 0 — yo'q).

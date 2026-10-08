@@ -41,8 +41,6 @@ func AdminkaFromEnv() Adminka {
 	return a
 }
 
-// OrderFilter — qidiruv shartlari. Uchtasidan bittasi to'ldiriladi:
-// UserID (Ilova Profil ID), OrderSN (DG...) yoki ExpressNum (trek raqami).
 type OrderFilter struct {
 	UserID     int64  `json:"user_id"`
 	OrderSN    string `json:"order_sn"`
@@ -72,12 +70,7 @@ type AdminkaOrder struct {
 	PayStatus    int    `json:"pay_status"`    // 1 — to'langan, 0 — to'lanmagan
 	// PurchaseType — mijoz turi shu maydondan aniqlanadi:
 	// 1 — oddiy mijoz (B2C), 2 — ulgurji mijoz (B2B), 0 — noma'lum.
-	//
-	// Ilgari tur `skus[0].sku_info.B2C_percentage` bo'yicha chiqarilardi
-	// (noldan katta → B2C). U mahsulot ustamasi edi, mijoz turi emas:
-	// ulgurji mijozning ustamasi noldan katta bo'lsa u B2C ko'rinardi va
-	// modelga noto'g'ri tarif ketardi. Adminka buyurtmaning o'zida
-	// `purchase_type` beradi — tur shundan olinadi.
+
 	PurchaseType int    `json:"purchase_type"`
 	PaidAt       string `json:"paid_at"`       // to'lov qilingan vaqt
 	CreatedAt    string `json:"created_at"`    // buyurtma yaratilgan vaqt

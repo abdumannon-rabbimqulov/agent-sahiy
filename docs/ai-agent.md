@@ -461,6 +461,8 @@ Adminka status kodlari:
 | 3 | sotib olingan, to'langan |
 | 4 | kiritish uchun kutilmoqda |
 | 6 | Xitoyda tranzaksiya yopilgan — posilka yo'lga chiqqan |
+| 7 | yo'lga chiqqan |
+| 10 | taqiqlangan tovar — sotuvchi jo'natmaydi |
 
 ### Status 6 "yetkazildi" DEGANI EMAS
 
@@ -510,6 +512,42 @@ Nima bo'ladi:
 muammoli bo'lsa, guruhga ularning har biri uchun alohida emas, hammasi
 raqamlangan ro'yxat bo'lib **bitta** xabarda ketadi (mijoz va suhbat
 raqami sarlavhada bir marta yoziladi).
+
+### Yo'lga chiqqanda mijozga xabar
+
+Buyurtma `4 → 7` ga o'tsa (`yo'lga chiqqan`) muammo yopiladi va mijozga
+tayyor matn yuboriladi (`noticeShipped`, `support/issue_detect.go`):
+
+> Xushxabar: `<DG…>` raqamli buyurtmangiz Xitoydan yo'lga chiqdi —
+> hozir yo'lda. O'zbekistonga yetib kelgach, filialdan olib ketishingiz
+> mumkin bo'ladi.
+
+Matn **tayyor**, model yozgani emas: bu oddiy holat xabari va unda
+o'ylab topadigan narsa yo'q. Muddat **va'da qilinmaydi**, "kelgach
+xabar beramiz" ham **yozilmaydi** — posilka kelganda avtomatik xabar
+yuborilmaydi, bajarilmaydigan va'da bergandan ko'ra aytmagan yaxshi.
+
+Xabar `auto_reply` sozlamasiga **bo'ysunadi**: avto-javob o'chiq bo'lsa
+tizim mijozga o'zidan yozmaydi (logga yoziladi). Bir marta ketadi —
+muammo shu qadamda yopiladi, keyingi sikllarda bu yozuv ko'rilmaydi.
+
+### Yuborishdan oldin qayta tekshiriladi
+
+Muammo zanjir **boshida** ochiladi — adminkadan o'sha paytda olingan
+ma'lumot bo'yicha. Guruhga esa zanjir **oxirida**, AI xulosasi bilan
+birga chiqadi. Oradagi vaqtda adminkadagi holat o'zgargan bo'lishi
+mumkin.
+
+Shuning uchun xabar ketishidan oldin har bir muammoning adminkadagi
+**hozirgi** holati qayta so'raladi (`DropResolvedIssues`) va hal
+bo'lganlari ro'yxatdan chiqariladi — xodim allaqachon hal bo'lgan
+buyurtmani qidirib o'tirmasin. Hal bo'lish sharti yuqoridagi bilan bir
+xil: 3 → 4 siljish yoki `IsProblem` ning `false` bo'lishi.
+
+Hammasi hal bo'lgan bo'lsa ro'yxat bo'shaydi va xabar odatdagi
+"🆘 Yordam kerak" ko'rinishida ketaveradi — AI xulosasi yo'qolib
+qolmasin. Adminka javob bermasa muammo ro'yxatda **qoladi**: holat
+noma'lum bo'lgani xabarni yashirish uchun asos emas.
 
 ### Guruhdagi xabarlar bir xil ko'rinishda
 
@@ -614,9 +652,20 @@ Guruhga YANGI xabar yubormaydi; faqat yopilgani haqida asl xabarga
    (`resolved_via: chat`). AI agentning o'z javobi (`AGENT_SENDER_ID`
    bilan yozilgan) bunga kirmaydi — "tekshirilmoqda" degan javob
    muammoni hal qilmaydi.
-4. **Adminkadagi holat o'zgarganmi** → o'zgargan bo'lsa yopiladi
-   (`resolved_via: auto`, guruhga "✅ holat o'zgardi" deb yoziladi).
-5. **Posilka yetkazmada chiqqanmi** → chiqqan bo'lsa muammo emas,
+4. **Buyurtma oldinga siljiganmi** (`StatusAdvanced`) → siljigan bo'lsa
+   yopiladi. Ikki o'tish shunday hisoblanadi: `3 → 4` va `4 → 7`
+   (`3 → 7` ham — bosqich sakrab o'tilgani siljishni bekor qilmaydi).
+   Buyurtma Xitoyda keyingi bosqichga o'tdi, ya'ni qotib qolmagan.
+   **`4 → 7` da mijozga ham xabar beriladi** — pastga qarang.
+
+   Bu **aynan shu o'tishlar**: `4 → 10` ("taqiqlangan tovar") ham
+   o'zgarish, lekin u hal bo'lish emas. Status 4 ning **o'zi** muammo
+   bo'lishdan to'xtamaydi — o'sha holatda uzoq turib qolgan buyurtma
+   baribir muammo sifatida ochiladi.
+5. **Adminkadagi holat boshqacha o'zgarganmi** → `IsProblem` endi
+   `false` bo'lsa yopiladi (`resolved_via: auto`, guruhga "✅ holat
+   o'zgardi" deb yoziladi).
+6. **Posilka yetkazmada chiqqanmi** → chiqqan bo'lsa muammo emas,
    yopiladi. Quyida: "Yetkazma bilan solishtirish".
 
 Shulardan birortasi ham to'g'ri kelmasa muammo **ochiq qolaveradi** va

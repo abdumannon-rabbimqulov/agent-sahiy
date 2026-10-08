@@ -116,6 +116,11 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 				v.InReview = true
 			}
 
+		case v.Problem && open != nil && StatusAdvanced(open.Status, o.Status):
+			// Holat 3 dan 4 ga o'tgan — buyurtma Xitoyda oldinga
+			// siljidi, muammo hal bo'ldi.
+			resolveAdvanced(DB, open, o.Status)
+
 		case v.Problem && open != nil:
 			// Muammo davom etmoqda — kun sonini yangilab qo'yamiz.
 			upd := map[string]any{
@@ -129,6 +134,11 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 			}
 			DB.Model(open).Updates(upd)
 			v.InReview = true
+
+		case !v.Problem && open != nil && StatusAdvanced(open.Status, o.Status):
+			// Buyurtma oldinga siljidi (3 → 4, 4 → 7). Yo'lga
+			// chiqqan bo'lsa mijozga ham xabar beriladi.
+			resolveAdvanced(DB, open, o.Status)
 
 		case !v.Problem && open != nil:
 			// Status o'zgardi — muammo o'z-o'zidan hal bo'ldi.
@@ -144,6 +154,130 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 	}
 
 	return views, fresh
+}
+
+// currentOrder - buyurtmaning adminkadagi HOZIRGI yozuvi.
+// Topilmasa yoki so'rov xato bersa nil.
+func currentOrder(adm Adminka, orderSN string) *AdminkaOrder {
+	rows, err := FetchOrders(adm, OrderFilter{OrderSN: orderSN, Size: 5})
+	if err != nil {
+		log.Printf("muammo: %s adminkadan olinmadi: %v", orderSN, err)
+		return nil
+	}
+	for i := range rows {
+		if rows[i].OrderSN == orderSN {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+// resolveAdvanced - adminkadagi holat oldinga siljigani uchun muammoni
+// yopadi (3 → 4, qarang: StatusAdvanced).
+//
+// Yangi holat yozuvga ham ko'chiriladi. Busiz keyingi tekshiruvda
+// "yopilgan muammo, holat o'sha" himoyasi (DetectIssues) ishlamay
+// qolardi: yozuvda 3 turgani uchun xuddi shu buyurtma endi status 4
+// bilan QAYTA ochilib, guruhga ikkinchi marta tushardi.
+func resolveAdvanced(db *gorm.DB, is *OrderIssue, now int) bool {
+	res := fmt.Sprintf("Adminkada holat o'zgardi: %q → %q — buyurtma Xitoyda "+
+		"keyingi bosqichga o'tdi, qotib qolmagan",
+		StatusLabel(is.Status), StatusLabel(now))
+
+	db.Model(is).Updates(map[string]any{
+		"status": now, "status_label": StatusLabel(now),
+	})
+	is.Status, is.StatusLabel = now, StatusLabel(now)
+
+	if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err != nil {
+		log.Printf("muammo: %s yopilmadi: %v", is.OrderSN, err)
+		return false
+	}
+	log.Printf("muammo: %s — adminkada holat oldinga siljidi, yopildi", is.OrderSN)
+	notifyResolved(is, res)
+	if now == StatusShipped {
+		noticeShipped(is)
+	}
+	return true
+}
+
+// shippedNotice - posilka yo'lga chiqqani haqida mijozga ketadigan
+// matn.
+//
+// Ataylab TAYYOR matn, model yozgani emas: bu oddiy holat xabari va
+// unda o'ylab topadigan narsa yo'q. Muddat VA'DA QILINMAYDI — posilka
+// qachon yetib kelishini hech kim bilmaydi; "kelgach xabar beramiz"
+// ham yozilmaydi, chunki kelganda avtomatik xabar yuborilmaydi va
+// bajarilmaydigan va'da bergandan ko'ra aytmagan yaxshi.
+const shippedNotice = "Xushxabar: %s raqamli buyurtmangiz Xitoydan yo'lga chiqdi — " +
+	"hozir yo'lda. O'zbekistonga yetib kelgach, filialdan olib ketishingiz mumkin bo'ladi."
+
+// noticeShipped - buyurtma yo'lga chiqqani haqida mijozga xabar beradi.
+//
+// AutoReplyOn() ga bo'ysunadi: avto-javob o'chiq bo'lsa tizim mijozga
+// o'zidan xabar yozmaydi — bu sozlamaning butun ma'nosi shunda.
+//
+// Xabar BIR MARTA ketadi: muammo shu qadamda yopiladi, ya'ni keyingi
+// sikllarda bu yozuv umuman ko'rilmaydi.
+func noticeShipped(is *OrderIssue) {
+	if is.ConversationID <= 0 {
+		return
+	}
+	if !AutoReplyOn() {
+		log.Printf("muammo: %s yo'lga chiqdi, lekin avto-javob o'chiq — mijozga yozilmadi",
+			is.OrderSN)
+		return
+	}
+	if err := SendToClient(is.ConversationID, fmt.Sprintf(shippedNotice, is.OrderSN)); err != nil {
+		log.Printf("muammo: %s — mijozga \"yo'lga chiqdi\" xabari ketmadi: %v",
+			is.OrderSN, err)
+		return
+	}
+	log.Printf("muammo: %s — mijozga \"yo'lga chiqdi\" xabari yuborildi (suhbat %d)",
+		is.OrderSN, is.ConversationID)
+}
+
+// DropResolvedIssues - guruhga YUBORISHDAN OLDIN har bir muammoning
+// adminkadagi HOZIRGI holatini qayta so'raydi va hal bo'lganlarini
+// ro'yxatdan olib tashlaydi (yozuvini yopib).
+//
+// Nega kerak: muammo zanjir BOSHIDA, adminkadan o'sha paytda olingan
+// ma'lumot bo'yicha ochiladi; guruhga esa zanjir OXIRIDA, AI xulosasi
+// bilan birga chiqadi. Oradagi vaqtda holat o'zgargan bo'lishi mumkin
+// — xodim allaqachon hal bo'lgan buyurtmani qidirib o'tirmasin.
+//
+// Adminka javob bermasa muammo ro'yxatda QOLADI: holat noma'lum
+// bo'lgani xabarni yashirish uchun asos emas.
+func DropResolvedIssues(list []*OrderIssue) []*OrderIssue {
+	if len(list) == 0 || DB == nil {
+		return list
+	}
+	adm := AdminkaFromEnv()
+	out := make([]*OrderIssue, 0, len(list))
+	for _, is := range list {
+		cur := currentOrder(adm, is.OrderSN)
+		if cur == nil {
+			out = append(out, is)
+			continue
+		}
+		switch {
+		case StatusAdvanced(is.Status, cur.Status):
+			if !resolveAdvanced(DB, is, cur.Status) {
+				out = append(out, is)
+			}
+		case !IsProblem(*cur):
+			res := fmt.Sprintf("Adminkada holat o'zgardi: %q → %q",
+				is.StatusLabel, StatusLabel(cur.Status))
+			if err := ResolveIssue(DB, is, res, "tizim", ResolvedViaAuto); err != nil {
+				out = append(out, is)
+				continue
+			}
+			log.Printf("muammo: %s — yuborishdan oldin hal bo'lgan deb yopildi", is.OrderSN)
+		default:
+			out = append(out, is)
+		}
+	}
+	return out
 }
 
 // NotifyIssues yangi ochilgan muammolarni guruhga chiqaradi.
@@ -432,19 +566,14 @@ func ReviewOpenIssues(db *gorm.DB) error {
 		}
 
 		// 2. Adminkadagi hozirgi holat.
-		rows, err := FetchOrders(adm, OrderFilter{OrderSN: is.OrderSN, Size: 5})
-		if err != nil {
-			log.Printf("muammo: %s adminkadan olinmadi: %v", is.OrderSN, err)
+		cur := currentOrder(adm, is.OrderSN)
+		if cur == nil {
 			continue
 		}
-		var cur *AdminkaOrder
-		for j := range rows {
-			if rows[j].OrderSN == is.OrderSN {
-				cur = &rows[j]
-				break
-			}
-		}
-		if cur == nil {
+		// Holat 3 dan 4 ga o'tgan — buyurtma oldinga siljidi,
+		// muammo hal bo'ldi (StatusAdvanced).
+		if StatusAdvanced(is.Status, cur.Status) {
+			resolveAdvanced(db, is, cur.Status)
 			continue
 		}
 		if cur.UserID > 0 && is.OwnerUserID != cur.UserID {

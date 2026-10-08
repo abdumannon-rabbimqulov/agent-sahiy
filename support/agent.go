@@ -641,6 +641,22 @@ func DeliverStaffNotice(in *Interaction, issues []*OrderIssue) error {
 		help = ""
 	}
 
+	// Guruhga YUBORISHDAN OLDIN har bir muammoning adminkadagi
+	// hozirgi holati qayta so'raladi: muammo zanjir boshida ochilgan,
+	// xabar esa zanjir oxirida ketadi va oradagi vaqtda holat
+	// o'zgargan bo'lishi mumkin. Hal bo'lganlari ro'yxatdan chiqadi
+	// (issue_detect.go: DropResolvedIssues).
+	//
+	// Hammasi hal bo'lgan bo'lsa ro'yxat bo'shaydi va xabar odatdagi
+	// "🆘 Yordam kerak" ko'rinishida ketaveradi — AI xulosasi yo'qolib
+	// qolmasin.
+	if before := len(issues); before > 0 {
+		issues = DropResolvedIssues(issues)
+		if n := before - len(issues); n > 0 {
+			log.Printf("telegram: %d ta muammo yuborishdan oldin hal bo'lgan deb yopildi", n)
+		}
+	}
+
 	// Muammoli buyurtma bor: xulosa ham shu xabarning ichiga kiradi.
 	if len(issues) > 0 {
 		msgID := NotifyIssues(issues, help)
