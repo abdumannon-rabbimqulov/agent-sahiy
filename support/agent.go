@@ -988,9 +988,14 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	// yetkazma ma'lumoti model so'ramagan bo'lsa ham olinadi: usiz
 	// posilka mijozga yetgan-yetmagani BILINMAYDI va model "buyurtmangiz
 	// yakunlangan" deb yozib yuborardi.
-	if a.Adminka && !a.Dashboard && needsArrivalCheck(views) {
+	//
+	// Yangi muammo ochilgan bo'lsa ham xuddi shunday: muammo qarori
+	// ADMINKA holatiga qarab chiqariladi, mijoz esa posilkani
+	// allaqachon olib ketgan bo'lishi mumkin. Tekshirmasdan guruhga
+	// chiqarilsa xodim mijoz qo'lidagi buyurtmani qidirib o'tiradi.
+	if a.Adminka && !a.Dashboard && (needsArrivalCheck(views) || issuesHaveTrack(issues)) {
 		a.Dashboard = true
-		log.Printf("agent: suhbat %d — tranzaksiya yopilgan buyurtma bor, yetkazma ham tekshirildi",
+		log.Printf("agent: suhbat %d — yetkazma ham tekshirildi (kelgan-kelmagani aniqlanishi kerak)",
 			conversationID)
 	}
 
@@ -1025,6 +1030,18 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 						"korsatma": foreignOrderNote,
 					}
 				}
+			}
+			// Mijoz posilkani ALLAQACHON olib ketgan bo'lsa, bu
+			// muammo emas: yangi ochilgan yozuv yopiladi va guruhga
+			// umuman chiqmaydi (issue_dashboard.go).
+			//
+			// Quyidagi "so'ralgan buyurtma" chegarasidan OLDIN
+			// turadi: u ro'yxatni qisqartiradi va olib ketilgani
+			// haqidagi yozuv tushib qolishi mumkin.
+			if kept, n := DropDeliveredIssues(issues, rows); n > 0 {
+				issues = kept
+				log.Printf("agent: suhbat %d — %d ta muammo guruhga chiqarilmadi: mijoz posilkani olib ketgan",
+					conversationID, n)
 			}
 			// Mijoz aniq buyurtma/trek raqami yozgan bo'lsa, yetkazma
 			// ro'yxati O'SHA buyurtmaning posilkasi bilan cheklanadi.

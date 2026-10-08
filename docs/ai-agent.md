@@ -533,6 +533,8 @@ Hal bo'lgach shu xabarga REPLY qilib yozing — javobingiz mijozga moslab yubori
 | ⚠️ Muammoli buyurtma(lar) | yangi muammo topilganda | muammo(lar) yopiladi + mijozga javob |
 | 🔁 Hali hal bo'lmagan | `ISSUE_REMIND_HOURS` o'tganda | xuddi shunday |
 | 🆘 Yordam kerak | model `help` qaytarganda | mijozga javob (yopiladigan buyurtma yo'q) |
+| 📦 Posilka KELGAN, adminka holati eskirgan | trek yetkazmada chiqdi (hali olib ketilmagan), adminka hamon "kutilmoqda" | muammo yopiladi + mijozga javob |
+| ⛔ XATOLIK: posilka boshqa akkauntda | yetkazmadagi `user_id` adminkadagisiga mos kelmadi | xuddi shunday |
 
 **Hal qilish — Telegram guruhdagi reply orqali.** Bot yozgan xabarga xodim
 reply qilsa, o'sha matn yechim bo'lib saqlanadi (`resolved_via: telegram`,
@@ -614,8 +616,52 @@ qayta ko'radi va faqat shundan keyin eslatma yuboradi:
    "tekshirilmoqda" degan javob muammoni hal qilmaydi.
 2. Adminkadagi holat o'zgarganmi → o'zgargan bo'lsa avtomatik yopiladi
    (`resolved_via: auto`, guruhga "✅ holat o'zgardi" deb yoziladi).
-3. `ISSUE_REMIND_HOURS` (24 soat) o'tgan bo'lsa — eslatma yuboriladi;
+3. **Posilka yetkazmada chiqqanmi** → quyida "Yetkazma bilan
+   solishtirish". Xabar ketsa shu siklda eslatma qo'shilmaydi.
+4. `ISSUE_REMIND_HOURS` (24 soat) o'tgan bo'lsa — eslatma yuboriladi;
    reply endi yangi xabarga qilinadi.
+
+### Yetkazma bilan solishtirish
+
+Adminkadagi "kiritish uchun kutilmoqda" (status 4) — **Xitoy tomonidagi**
+holat va u yangilanmay qolishi mumkin: posilka allaqachon O'zbekistonga
+kelib, dashboardda turadi, adminka esa hamon "kutilmoqda" deb ko'rsatadi.
+Bunday buyurtmaga "hali hal bo'lmagan" eslatmasini yuborish behuda.
+
+Shuning uchun treki bor har bir ochiq muammo uchun trek raqami
+yetkazmada qidiriladi (`CheckDashboard`, `support/issue_dashboard.go`) va
+ikki narsa tekshiriladi:
+
+1. **Mijoz olib ketganmi** (`delivered=true`). Olib ketgan bo'lsa bu
+   muammo EMAS: yozuv `resolved_via: auto` bilan yopiladi va guruhga
+   **umuman chiqmaydi**. Muammo qarori adminka holatiga qarab
+   chiqariladi (`IsProblem`), adminkadagi "kiritish uchun kutilmoqda"
+   esa Xitoy tomonidagi holat — u mijoz posilkani filialdan olib
+   ketganidan keyin ham o'zgarmay turishi mumkin.
+2. **Trek yetkazmada bormi.** Chiqsa, lekin hali olib ketilmagan bo'lsa
+   — posilka kelgan, adminka holati eskirgan: guruhga 📦 xabari ketadi.
+3. **Egasi bir xilmi.** Yetkazmadagi `user_id` adminkadagi `user_id`
+   bilan bir xil bo'lishi kerak. Mos kelmasa posilka boshqa odamning
+   akkauntiga biriktirilgan — bu ma'lumot xatosi, guruhga ⛔ xabari
+   ketadi. Bu tekshiruv `delivered=true` bo'lganda ham ishlaydi:
+   posilkani boshqa odam olib ketgan bo'lsa, aynan shuni aytish kerak.
+   Bir tomonda `user_id` bo'sh bo'lsa xato deb hisoblanmaydi: ikkala
+   API ham bu maydonni ba'zan bermaydi.
+
+📦 va ⛔ holatlarida muammo **yopilmaydi** — ochiq qoladi, ya'ni mijozga
+`tekshiruvda` orqali "tekshirilmoqda" deb aytiladi, javobni xodim beradi.
+
+Tekshiruv ikki joyda ishlaydi: `ReviewOpenIssues` da (ochiq muammolar
+sikli) va yangi muammo guruhga **chiqishidan oldin** agent zanjirida
+(`DropDeliveredIssues`) — shuning uchun mijoz qo'lidagi buyurtma ⚠️
+xabari bo'lib ham chiqmaydi. Shu sababli treki bor yangi muammo bo'lsa
+yetkazma ma'lumoti model so'ramagan bo'lsa ham olinadi.
+
+Xabar bir marta ketadi: natija `order_issues.dashboard_alert`
+(`arrived` / `owner_mismatch`) da saqlanadi va faqat natija **o'zgarsa**
+yangi xabar chiqadi — aks holda ochiq muammo har `ISSUE_REVIEW_SEC` da
+guruhni bezovta qilardi. Bitta trekka yetkazmada bir nechta qator kelsa,
+egasi **mos kelgani** asosiy hisoblanadi.
 
 ### Buyurtma egasi
 

@@ -92,6 +92,7 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 				OrderSN:        o.OrderSN,
 				ClientID:       clientID,
 				OwnerUserID:    o.UserID,
+				ExpressNum:     strings.TrimSpace(o.ExpressNum),
 				ConversationID: conversationID,
 				Status:         o.Status,
 				StatusLabel:    v.StatusLabel,
@@ -406,7 +407,9 @@ func notifyResolved(is *OrderIssue, res string) {
 // ReviewOpenIssues ochiq muammolarni qayta ko'rib chiqadi:
 //  1. adminkadagi holat o'zgarganmi — o'zgargan bo'lsa yopadi;
 //  2. mijozga biz javob berganmizmi — chatdan tekshiradi;
-//  3. shundan keyingina va ISSUE_REMIND_HOURS o'tgan bo'lsa eslatma yuboradi.
+//  3. posilka yetkazmada (dashboardda) chiqqanmi va egasi adminkadagi
+//     bilan bir xilmi — mos kelmasa guruhga xabar beradi;
+//  4. shundan keyingina va ISSUE_REMIND_HOURS o'tgan bo'lsa eslatma yuboradi.
 func ReviewOpenIssues(db *gorm.DB) error {
 	var open []OrderIssue
 	if err := db.Where("state = ?", IssueOpen).Order("id asc").Find(&open).Error; err != nil {
@@ -418,6 +421,8 @@ func ReviewOpenIssues(db *gorm.DB) error {
 
 	adm := AdminkaFromEnv()
 	remind := time.Duration(RemindHours()) * time.Hour
+	// Yetkazma tokeni faqat treki bor buyurtma uchraganda olinadi.
+	var dash deliveryAuth
 
 	// Eslatmalar ham mijoz bo'yicha to'planadi: bitta odam uchun bitta
 	// xabar ketadi, har bir buyurtma uchun alohida emas. Kalit — buyurtma
@@ -491,6 +496,12 @@ func ReviewOpenIssues(db *gorm.DB) error {
 			db.Model(is).Update("owner_user_id", cur.UserID)
 			is.OwnerUserID = cur.UserID
 		}
+		// Trek Xitoyda keyinroq beriladi — eski yozuvlarda bo'sh
+		// bo'lishi mumkin, shuning uchun har ko'rishda to'ldiriladi.
+		if t := strings.TrimSpace(cur.ExpressNum); t != "" && is.ExpressNum != t {
+			db.Model(is).Update("express_num", t)
+			is.ExpressNum = t
+		}
 		if !IsProblem(*cur) {
 			res := fmt.Sprintf("Adminkada holat o'zgardi: %q → %q",
 				is.StatusLabel, StatusLabel(cur.Status))
@@ -501,7 +512,38 @@ func ReviewOpenIssues(db *gorm.DB) error {
 			continue
 		}
 
-		// 3. Eslatma vaqti kelganmi.
+		// 3. Yetkazma (dashboard) tomoni: adminka hamon "kutilmoqda"
+		//    deb turgani posilka Xitoyda ekanini BILDIRMAYDI — trek
+		//    allaqachon yetkazmada chiqqan bo'lishi mumkin. Shu holat
+		//    va egasi (user_id) mos kelmagani guruhga alohida xabar
+		//    bo'lib chiqadi (issue_dashboard.go).
+		if trackKey(cur.ExpressNum) != "" {
+			svc, token, err := dash.get()
+			if err != nil {
+				log.Printf("muammo: yetkazma tokeni olinmadi: %v", err)
+			} else if chk, err := CheckDashboard(svc, token, *cur); err != nil {
+				log.Printf("muammo: %s — yetkazma tomoni tekshirilmadi: %v",
+					is.OrderSN, err)
+			} else if chk.Delivered() && !chk.Mismatch {
+				// Mijoz posilkani olib ketgan — muammo qolmadi.
+				// Adminkadagi holat hamon "kutilmoqda" bo'lishi
+				// mumkin, lekin u Xitoy tomonidagi holat va bu
+				// yerda hech narsani o'zgartirmaydi.
+				res := deliveredResolutionFor(is, chk)
+				if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err == nil {
+					log.Printf("muammo: %s — mijoz posilkani olib ketgan, yopildi", is.OrderSN)
+					notifyResolved(is, res)
+				}
+				continue
+			} else if notifyDashboardAlert(is, chk, DaysSincePaid(*cur)) {
+				// Xabar hozir ketdi — oddiy eslatma shu siklda
+				// qo'shilmaydi, aks holda bitta muammo bo'yicha
+				// guruhga ketma-ket ikkita xabar tushardi.
+				continue
+			}
+		}
+
+		// 4. Eslatma vaqti kelganmi.
 		if is.LastNotifiedAt != nil && time.Since(*is.LastNotifiedAt) < remind {
 			continue
 		}

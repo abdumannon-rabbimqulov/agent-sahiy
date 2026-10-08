@@ -59,6 +59,12 @@ type OrderIssue struct {
 	// odam (ClientID) esa boshqa bo'lsa alohida yoziladi.
 	OwnerUserID int64 `gorm:"index" json:"owner_user_id,omitempty"`
 
+	// ExpressNum - buyurtmaning trek raqami (Xitoyda berilgan).
+	// Yetkazma (dashboard) yozuvlari bilan FAQAT shu raqam orqali
+	// bog'lanadi: mijoz posilkani olib ketganmi degan savolga javob
+	// shundan chiqadi (issue_dashboard.go).
+	ExpressNum string `gorm:"size:64;index" json:"express_num,omitempty"`
+
 	Status        int    `json:"status"`
 	StatusLabel   string `gorm:"size:64" json:"status_label"`
 	DaysSincePaid int    `json:"days_since_paid"`
@@ -71,6 +77,15 @@ type OrderIssue struct {
 	TgMessageID    int64      `gorm:"index" json:"tg_message_id,omitempty"`
 	NotifyCount    int        `json:"notify_count"`
 	LastNotifiedAt *time.Time `json:"last_notified_at,omitempty"`
+
+	// DashboardAlert - yetkazma (dashboard) bilan solishtirish natijasi
+	// guruhga qaysi nom bilan chiqqani: "arrived" (posilka kelgan,
+	// adminka holati eskirgan) yoki "owner_mismatch" (egasi mos
+	// kelmadi). Saqlanishi SHU UCHUN kerak: ochiq muammo har
+	// ISSUE_REVIEW_SEC da qayta ko'riladi, bu maydonsiz bitta xabar
+	// guruhga kuniga o'nlab marta tushardi (issue_dashboard.go).
+	DashboardAlert   string     `gorm:"size:32" json:"dashboard_alert,omitempty"`
+	DashboardAlertAt *time.Time `json:"dashboard_alert_at,omitempty"`
 
 	Resolution  string     `gorm:"type:text" json:"resolution,omitempty"`
 	ResolvedBy  string     `gorm:"size:64" json:"resolved_by,omitempty"`
