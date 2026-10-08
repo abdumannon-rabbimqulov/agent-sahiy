@@ -24,9 +24,6 @@ const (
 // DefaultProblemDays - shu kundan ko'p turgan buyurtma muammoli hisoblanadi.
 const DefaultProblemDays = 3
 
-// DefaultRemindHours - hal bo'lmagan muammo qaytadan eslatiladigan oraliq.
-const DefaultRemindHours = 24
-
 // adminkaTimeLayout - adminka qaytaradigan sana ko'rinishi.
 const adminkaTimeLayout = "2006-01-02 15:04:05"
 
@@ -149,19 +146,6 @@ func StatusMeaning(status int) string {
 
 // ProblemDays - .env dagi PROBLEM_DAYS (default 3).
 func ProblemDays() int { return envInt("PROBLEM_DAYS", DefaultProblemDays) }
-
-// RemindHours - .env dagi ISSUE_REMIND_HOURS (default 24).
-func RemindHours() int {
-	v := envStr("ISSUE_REMIND_HOURS", "")
-	if v == "" {
-		return DefaultRemindHours
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return DefaultRemindHours
-	}
-	return n
-}
 
 // ProblemStatuses - kuzatiladigan statuslar (.env: PROBLEM_STATUSES="3,4").
 func ProblemStatuses() []int {

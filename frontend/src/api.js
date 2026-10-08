@@ -43,6 +43,8 @@ export const api = {
 
   stats: () => request('/api/stats'),
   daily: (days = 14) => request(`/api/stats/daily?days=${days}`),
+  // Kunlik hisobot: "bugungi" kartalarning har kun uchun varianti.
+  report: (days = 30) => request(`/api/stats/report?days=${days}`),
   clients: (days = 30, limit = 20) => request(`/api/stats/clients?days=${days}&limit=${limit}`),
 
   // q — id bo'yicha qidiruv: murojaat, suhbat yoki mijoz id'si.

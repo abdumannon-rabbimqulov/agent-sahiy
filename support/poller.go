@@ -80,8 +80,8 @@ func StartPoller(ctx context.Context) {
 // muammoda bu ~2.5 daqiqa. Ilgari u PollOnce oxirida turardi va har
 // siklni shu vaqtga bloklardi: `poll_interval_sec` 30 bo'lsa ham bitta
 // sikl 3 daqiqaga cho'zilardi, mijoz esa javobni shuncha kutardi.
-// Muammolarni tekshirish shoshilinch ish emas — eslatma vaqti soatlar
-// bilan o'lchanadi (ISSUE_REMIND_HOURS), shuning uchun u o'z tezligida
+// Muammolarni tekshirish shoshilinch ish emas — u faqat hal bo'lgan
+// muammolarni yopadi, guruhga xabar yubormaydi; shuning uchun o'z tezligida
 // (ISSUE_REVIEW_SEC, default 600s) yuradi.
 //
 // Sikl `agent_enabled` o'chirilganda ham ishlaydi: xodim yopgan muammo
@@ -109,7 +109,7 @@ func StartIssueReviewer(ctx context.Context) {
 // eskirgan (tasdiqlanmagan) javoblar.
 func reviewIssuesOnce() {
 	// Ochiq muammolarni qayta ko'rib chiqamiz: holat o'zgarganmi,
-	// mijozga javob berilganmi va eslatma vaqti kelganmi.
+	// mijozga javob berilganmi, posilka yetkazmada chiqqanmi.
 	if err := ReviewOpenIssues(DB); err != nil {
 		log.Printf("muammolar: ko'rib chiqish: %v", err)
 	}

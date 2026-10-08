@@ -1000,10 +1000,29 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		if err != nil {
 			out["dashboard_error"] = err.Error()
 		} else {
-			// Yetkazma faqat trek raqami bilan qidiriladi; DG buyurtma
-			// raqami bu yerda ishlamaydi, shuning uchun trek bo'lmasa
-			// mijozning barcha yetkazmalari olinadi.
+			// Yetkazma faqat trek raqami bilan qidiriladi — DG
+			// buyurtma raqami bu yerda ishlamaydi.
+			//
+			// Mijoz buyurtma raqamini AYTGAN bo'lsa (len(numbers) > 0),
+			// faqat O'SHA buyurtmalarning treklari qidiriladi: `views`
+			// shu raqamlar bo'yicha topilgan buyurtmalardan iborat.
+			// Mijozning boshqa posilkalari bu savolga tegishli emas va
+			// ularni ham olib kelish model uchun shovqin — u begona
+			// posilkaning izohini so'ralgan buyurtmaga ko'chirib
+			// yozardi.
+			//
+			// Raqam aytmagan bo'lsa — odatdagi tekshiruv: mijozning
+			// butun yetkazma ro'yxati `user_id` bo'yicha olinadi.
 			tracks := trimAll(a.ExpressNum)
+			if len(numbers) > 0 {
+				for _, v := range views {
+					if t := strings.TrimSpace(v.ExpressNum); t != "" {
+						tracks = append(tracks, t)
+					}
+				}
+			}
+			tracks = dedupTracks(tracks)
+
 			var rows []DeliveryOrder
 			var errs []string
 			if len(tracks) == 0 {
@@ -1014,8 +1033,31 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
 				rows, errs = appendResult(rows, errs, r, err)
 			}
-			// Trek raqami bo'yicha qidiruv ham butun bazadan ketadi —
-			// begona posilka bu yerda ham chiqarib tashlanadi.
+			// Status 4 ("kiritish uchun kutilmoqda") — adminka Xitoy
+			// tomonidagi holatni ko'rsatadi va u yangilanmay qolishi
+			// mumkin: posilka allaqachon O'zbekistonda bo'lishi
+			// mumkin. `user_id` bo'yicha olingan ro'yxat buni har doim
+			// ham ko'rsatmaydi (yozuv boshqa akkauntda bo'lsa unga
+			// tushmaydi), shuning uchun har bir shunday buyurtmaning
+			// O'Z treki bo'yicha alohida so'rov yuboriladi.
+			//
+			// Topilmaganlari uchungina so'raladi — odatda qo'shimcha
+			// so'rov umuman ketmaydi.
+			for _, n := range waitingTracks(views, rows, tracks) {
+				r, err := fetchDeliveryRetry(svc, token, DeliveryFilter{TrackNumber: n, Size: DefaultOrdersPerCall})
+				rows, errs = appendResult(rows, errs, r, err)
+				log.Printf("agent: suhbat %d — status 4 buyurtma treki yetkazmada qidirildi: %s",
+					conversationID, n)
+			}
+			rows = dedupDelivery(rows)
+			// Topilgan yozuv MIJOZNIKIMI — shu yerda tekshiriladi.
+			// Trek bo'yicha qidiruv butun bazadan ketadi, shuning
+			// uchun kelgan qator boshqa odamning akkauntida bo'lishi
+			// mumkin. Bunday qator mijozga KO'RSATILMAYDI: u modeldan
+			// olib tashlanadi va `begona_buyurtma` ga yoziladi, ya'ni
+			// buyurtma "yetkazmada topilmadi" holicha qoladi va ochiq
+			// muammo bo'lib xodimga chiqadi. Mos kelsa — qator
+			// qoladi va model mijozga posilka kelganini aytadi.
 			if bad := onlyOwnDelivery(&rows, clientID); len(bad) > 0 {
 				log.Printf("agent: suhbat %d — begona yetkazma(lar) chiqarib tashlandi: %v (mijoz %d)",
 					conversationID, bad, clientID)
@@ -1026,20 +1068,14 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 					}
 				}
 			}
-			// Adminkadagi HAR QANDAY statusdagi buyurtma yetkazma
-			// yozuvlari bilan trek raqami orqali solishtiriladi:
-			// adminka holati eskirgan bo'lishi mumkin, haqiqiy holat
-			// faqat shu yerdan bilinadi (issue_dashboard.go).
-			//
-			// Quyidagi "so'ralgan buyurtma" chegarasidan OLDIN
-			// turadi: u ro'yxatni qisqartiradi va kerakli yozuv
+			// Quyidagi ikki qadam "so'ralgan buyurtma" chegarasidan
+			// OLDIN turadi: u ro'yxatni qisqartiradi va kerakli yozuv
 			// tushib qolishi mumkin.
-			checks := CrossCheckOrders(views, rows)
-			// Egasi mos kelmagani — qo'lda tuzatishni talab qiladigan
-			// XATO. Statusidan qat'i nazar xodimga chiqadi.
-			deliveryAlerts := MismatchAlerts(checks)
+			var deliveryAlerts []DeliveryAlert
 			// Posilkasi yetkazmada chiqqan buyurtma MUAMMO EMAS:
 			// yangi ochilgan yozuv yopiladi va guruhga chiqmaydi.
+			// Egasi mos kelmagani esa yopilmaydi — u odatdagi
+			// "⚠️ Muammoli buyurtma" bo'lib xodimga chiqadi.
 			if kept, n := DropArrivedIssues(issues, rows); n > 0 {
 				issues = kept
 				log.Printf("agent: suhbat %d — %d ta muammo guruhga chiqarilmadi: posilka yetkazmada bor",
@@ -1051,26 +1087,20 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 			// qoladi va model ularning izohini so'ralgan buyurtmaga
 			// ko'chirib yozadi ("filialdan olib ketgan bo'lishingiz
 			// mumkinmi?") — so'ralgan posilka esa hali Xitoyda.
+			//
+			// Qidiruvning o'zi allaqachon shu treklar bilan cheklangan
+			// (yuqoridagi `tracks`), lekin API o'xshash raqamlarni ham
+			// qaytarishi mumkin — shuning uchun natija yana bir marta
+			// filtrdan o'tadi.
 			askedOnly := false
-			if len(numbers) > 0 {
-				asked := trimAll(a.ExpressNum)
-				for _, v := range views {
-					if t := strings.TrimSpace(v.ExpressNum); t != "" {
-						asked = append(asked, t)
-					}
+			if len(numbers) > 0 && (len(views) > 0 || len(tracks) > 0) {
+				kept := FilterDeliveryByTracks(rows, tracks)
+				if len(kept) != len(rows) {
+					log.Printf("agent: suhbat %d — yetkazma ro'yxati so'ralgan buyurtma bilan cheklandi: %d/%d yozuv",
+						conversationID, len(kept), len(rows))
 				}
-				// Faqat bog'lanish aniq bo'lganda filtrlaymiz: adminka
-				// buyurtmani topgan (treki bor-yo'qligi endi ma'lum)
-				// yoki mijoz trek raqamining o'zini yozgan.
-				if len(views) > 0 || len(asked) > 0 {
-					kept := FilterDeliveryByTracks(rows, asked)
-					if len(kept) != len(rows) {
-						log.Printf("agent: suhbat %d — yetkazma ro'yxati so'ralgan buyurtma bilan cheklandi: %d/%d yozuv",
-							conversationID, len(kept), len(rows))
-					}
-					askedOnly = len(kept) == 0
-					rows = kept
-				}
+				askedOnly = len(kept) == 0
+				rows = kept
 			}
 			deliveryRows, haveDelivery = rows, true
 			brief, bad := BriefDelivery(rows)
@@ -1389,4 +1419,80 @@ func onlyOwnDelivery(rows *[]DeliveryOrder, clientID int64) []string {
 	}
 	*rows = out
 	return foreign
+}
+
+// dedupTracks - takrorlangan trek raqamlarini tashlaydi (katta-kichik
+// harf va bo'shliq hisobga olinmaydi). Bir xil trek ikki marta
+// so'ralmasin: har bir trek — alohida API so'rovi.
+func dedupTracks(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range in {
+		key := trackKey(t)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, strings.TrimSpace(t))
+	}
+	return out
+}
+
+// dedupDelivery - bir xil yetkazma yozuvini ikki marta qoldirmaydi.
+// Bitta posilka ham `user_id`, ham trek bo'yicha qidiruvdan kelishi
+// mumkin; bitta trekka bir nechta HAQIQIY qator bo'lishi ham mumkin,
+// shuning uchun kalit — trek va yozuv egasi birgalikda.
+func dedupDelivery(rows []DeliveryOrder) []DeliveryOrder {
+	type key struct {
+		Track string
+		User  int64
+	}
+	seen := map[key]bool{}
+	out := make([]DeliveryOrder, 0, len(rows))
+	for _, d := range rows {
+		k := key{trackKey(d.ExpressNum), d.UserID}
+		if k.Track != "" && seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, d)
+	}
+	return out
+}
+
+// waitingTracks - adminkada status 4 ("kiritish uchun kutilmoqda") deb
+// turgan, treki bor, lekin olingan yetkazma ro'yxatida HALI
+// CHIQMAGAN buyurtmalarning treklari.
+//
+// Aynan shular uchun qo'shimcha so'rov yuboriladi: adminkadagi holat
+// Xitoy tomonidagi va eskirgan bo'lishi mumkin, posilka esa
+// allaqachon kelgan — lekin yozuv boshqa akkauntda bo'lsa mijozning
+// `user_id` si bo'yicha olingan ro'yxatga tushmaydi.
+func waitingTracks(views []OrderView, have []DeliveryOrder, queried []string) []string {
+	// `queried` — allaqachon so'ralgan treklar. Natija bermagan bo'lsa
+	// ham qayta so'ralmaydi: javob o'zgarmaydi, so'rov esa behuda.
+	found := make(map[string]bool, len(have)+len(queried))
+	for _, d := range have {
+		if t := trackKey(d.ExpressNum); t != "" {
+			found[t] = true
+		}
+	}
+	for _, q := range queried {
+		if t := trackKey(q); t != "" {
+			found[t] = true
+		}
+	}
+	var out []string
+	for _, v := range views {
+		if v.Status != StatusWaiting {
+			continue
+		}
+		t := trackKey(v.ExpressNum)
+		if t == "" || found[t] {
+			continue
+		}
+		found[t] = true // bir xil trek ikki marta so'ralmasin
+		out = append(out, strings.TrimSpace(v.ExpressNum))
+	}
+	return out
 }

@@ -509,13 +509,11 @@ Nima bo'ladi:
 **Bitta mijoz — bitta xabar.** Bir mijozning bir necha buyurtmasi birdan
 muammoli bo'lsa, guruhga ularning har biri uchun alohida emas, hammasi
 raqamlangan ro'yxat bo'lib **bitta** xabarda ketadi (mijoz va suhbat
-raqami sarlavhada bir marta yoziladi). Takroriy eslatmalar ham xuddi
-shunday: eslatma vaqti kelgan buyurtmalar mijoz bo'yicha guruhlanib
-bitta xabarga yig'iladi.
+raqami sarlavhada bir marta yoziladi).
 
 ### Guruhdagi xabarlar bir xil ko'rinishda
 
-Guruhga uch turdagi xabar boradi va **uchalasi ham bir xil tuzilishda**
+Guruhga IKKI turdagi xabar boradi va **ikkalasi ham bir xil tuzilishda**
 (`support/notify_text.go`):
 
 ```
@@ -531,9 +529,7 @@ Hal bo'lgach shu xabarga REPLY qilib yozing — javobingiz mijozga moslab yubori
 | Belgi | Qachon | Reply nima qiladi |
 |---|---|---|
 | ⚠️ Muammoli buyurtma(lar) | yangi muammo topilganda | muammo(lar) yopiladi + mijozga javob |
-| 🔁 Hali hal bo'lmagan | `ISSUE_REMIND_HOURS` o'tganda | xuddi shunday |
 | 🆘 Yordam kerak | model `help` qaytarganda | mijozga javob (yopiladigan buyurtma yo'q) |
-| ⛔ XATOLIK: posilka boshqa akkauntda | yetkazmadagi `user_id` adminkadagisiga mos kelmadi | muammo yopiladi + mijozga javob |
 
 **Hal qilish — Telegram guruhdagi reply orqali.** Bot yozgan xabarga xodim
 reply qilsa, o'sha matn yechim bo'lib saqlanadi (`resolved_via: telegram`,
@@ -606,21 +602,32 @@ agentni yoqib qo'ying.
 Guruh javoblari `TG_POLL_SEC` (30 s) da bir marta `getUpdates` bilan
 o'qiladi; oxirgi `update_id` `settings` jadvalida saqlanadi.
 
-**Takroriy eslatma** — har siklda `ReviewOpenIssues` ochiq muammolarni
-qayta ko'radi va faqat shundan keyin eslatma yuboradi:
+**Ochiq muammolarni ko'rib chiqish** — har siklda `ReviewOpenIssues`
+ochiq muammolarni qayta ko'radi va hal bo'lganlarini **yopadi**.
+Guruhga YANGI xabar yubormaydi; faqat yopilgani haqida asl xabarga
+"✅ …" deb reply qiladi:
 
-1. **Xodim mijozga chatda javob berganmi** → bergan bo'lsa muammo
-   yopiladi (`resolved_via: chat`) va eslatma yuborilmaydi. AI agentning
-   o'z javobi (`AGENT_SENDER_ID` bilan yozilgan) bunga kirmaydi —
-   "tekshirilmoqda" degan javob muammoni hal qilmaydi.
-2. Adminkadagi holat o'zgarganmi → o'zgargan bo'lsa avtomatik yopiladi
+1. **Muammo boshqa odamning buyurtmasimi** → bo'lsa yopiladi.
+2. **Shu buyurtma bo'yicha xodim allaqachon javob berganmi** → bergan
+   bo'lsa yopiladi (`resolved_via: repeat`).
+3. **Xodim mijozga chatda javob berganmi** → bergan bo'lsa yopiladi
+   (`resolved_via: chat`). AI agentning o'z javobi (`AGENT_SENDER_ID`
+   bilan yozilgan) bunga kirmaydi — "tekshirilmoqda" degan javob
+   muammoni hal qilmaydi.
+4. **Adminkadagi holat o'zgarganmi** → o'zgargan bo'lsa yopiladi
    (`resolved_via: auto`, guruhga "✅ holat o'zgardi" deb yoziladi).
-3. **Posilka yetkazmada chiqqanmi** → chiqqan bo'lsa muammo emas,
-   avtomatik yopiladi; egasi mos kelmasa guruhga ⛔ xabari ketadi va
-   shu siklda eslatma qo'shilmaydi. Quyida: "Yetkazma bilan
-   solishtirish".
-4. `ISSUE_REMIND_HOURS` (24 soat) o'tgan bo'lsa — eslatma yuboriladi;
-   reply endi yangi xabarga qilinadi.
+5. **Posilka yetkazmada chiqqanmi** → chiqqan bo'lsa muammo emas,
+   yopiladi. Quyida: "Yetkazma bilan solishtirish".
+
+Shulardan birortasi ham to'g'ri kelmasa muammo **ochiq qolaveradi** va
+guruhga qayta chiqmaydi — xodim uni panelda, ochiq muammolar
+ro'yxatida ko'radi.
+
+> Ilgari bu yerdan takroriy eslatma ("🔁 Hali hal bo'lmagan") ketardi:
+> javob kelmagan muammo har `ISSUE_REMIND_HOURS` da guruhga qayta
+> tushardi. Guruhda bitta muammo bo'yicha o'nlab xabar to'planib
+> qolardi va yangi, hali ko'rilmagan muammolar ular orasida
+> yo'qolardi. Shuning uchun eslatma butunlay olib tashlandi.
 
 ### Yetkazma bilan solishtirish
 
@@ -630,11 +637,37 @@ allaqachon O'zbekistonda, filialda yoki mijozning qo'lida bo'lishi
 mumkin. Buyurtmaning haqiqiy holati faqat bitta narsadan bilinadi:
 **trek raqami yetkazmada chiqdimi.**
 
-Shuning uchun treki bor **har qanday statusdagi** buyurtma yetkazma
-yozuvlari bilan solishtiriladi (`CrossCheckOrders`,
-`support/issue_dashboard.go`). Yetkazma ro'yxati bir marta olinadi va
-shu yerda taqsimlanadi — har bir buyurtma uchun alohida so'rov
-yuborilmaydi.
+#### Yetkazma qanday so'raladi
+
+Yetkazma API'si **faqat trek raqami** yoki `user_id` bo'yicha
+qidiradi — DG buyurtma raqami u yerda ishlamaydi. So'rov uch xil
+yo'l bilan yig'iladi (`support/agent.go`, `a.Dashboard` bloki):
+
+1. **Mijoz buyurtma raqamini AYTGAN bo'lsa** — faqat **o'sha**
+   buyurtmalarning treklari so'raladi. Mijozning boshqa posilkalari bu
+   savolga tegishli emas: ilgari ular ham ro'yxatga tushar va model
+   begona posilkaning izohini so'ralgan buyurtmaga ko'chirib yozardi
+   ("filialdan olib ketgan bo'lishingiz mumkinmi?" — so'ralgan posilka
+   esa hali Xitoyda).
+2. **Aytmagan bo'lsa** — odatdagi tekshiruv: mijozning butun yetkazma
+   ro'yxati `user_id` bo'yicha bitta so'rovda olinadi.
+3. **Status 4 ("kiritish uchun kutilmoqda") qo'shimcha** — bunday
+   buyurtmaning treki yuqoridagi natijada chiqmagan bo'lsa, uning
+   **o'z treki** bo'yicha alohida so'rov yuboriladi (`waitingTracks`).
+   Nega kerak: yozuv boshqa odamning akkauntida bo'lsa `user_id`
+   bo'yicha olingan ro'yxatga **tushmaydi**, ya'ni posilka kelgan
+   bo'lsa ham "yetkazmada yo'q" ko'rinardi. Faqat topilmaganlari uchun
+   so'raladi, shuning uchun odatda qo'shimcha so'rov umuman ketmaydi.
+
+**Topilgan yozuv mijoznikimi** — `onlyOwnDelivery` tekshiradi. Trek
+bo'yicha qidiruv butun bazadan ketadi, shuning uchun kelgan qator
+boshqa odamning akkauntida bo'lishi mumkin:
+
+- **Mos kelsa** → qator qoladi, model mijozga posilka kelganini
+  aytadi (qaysi filialda, olib ketilganmi).
+- **Mos kelmasa** → qator mijozga **ko'rsatilmaydi**, `begona_buyurtma`
+  ga yoziladi. Buyurtma "yetkazmada topilmadi" holicha qoladi va ochiq
+  "⚠️ Muammoli buyurtma" bo'lib xodimga chiqadi.
 
 Ikki qoida:
 
@@ -655,16 +688,11 @@ Bitta trekka yetkazmada bir nechta qator kelsa, egasi **mos kelgani**
 asosiy hisoblanadi — aks holda tasodifiy birinchi qatorga qarab
 "xatolik" deb xabar ketardi.
 
-**Xato qayerga chiqadi.** Agent zanjirida — `alerts` ro'yxatiga
-(`MismatchAlerts`), ya'ni mavjud guruh xabari ichida, alohida xabar
-emas. Ochiq muammolar siklida (`ReviewOpenIssues`) ilinadigan xabar
-bo'lmaydi, shuning uchun u yerda alohida ⛔ xabari chiqadi; natija
-`order_issues.dashboard_alert` da saqlanadi va faqat u **o'zgarsa**
-yangi xabar ketadi — busiz ochiq muammo har `ISSUE_REVIEW_SEC` da
-guruhni bezovta qilardi.
-
-Mijozga ikkala holatda ham `tekshiruvda` orqali "tekshirilmoqda"
-deyiladi, javobni xodim beradi.
+**Xato qayerga chiqadi.** Alohida xabar BO'LMAYDI — guruhga faqat
+"⚠️" va "🆘" boradi. Egasi mos kelmagan buyurtma shunchaki
+**yopilmaydi**: u odatdagi "⚠️ Muammoli buyurtma" bo'lib ochiq
+qolaveradi va xodim uni panelda ko'radi. Mijozga `tekshiruvda` orqali
+"tekshirilmoqda" deyiladi, javobni xodim beradi.
 
 ### Eski yetkazmalar — xodimga chiqmaydi
 
@@ -692,6 +720,50 @@ bo'yicha chiqadi.
 Bu filtr faqat XODIMGA ketadigan ogohlantirishga tegishli. Modelga
 ko'rsatiladigan ma'lumot (har bir yozuvning izohi) o'zgarmaydi: mijoz
 so'rasa javob to'g'ri bo'lishi kerak.
+
+### Kunlik hisobot
+
+Tarix **alohida saqlanmaydi va saqlanishi shart emas**: `interactions`
+va `order_issues` jadvallarida har bir yozuvning sanasi turadi
+(`created_at`, `sent_at`, `updated_at`, `resolved_at`), hech narsa
+o'chirilmaydi va ustiga yozilmaydi. Paneldagi "bugungi hisobot" —
+shunchaki `WHERE created_at >= date_trunc('day', now())` filtri. Ya'ni
+istalgan kunning raqamini o'sha ma'lumotdan qayta hisoblash mumkin.
+
+`GET /api/stats/report?days=30` (`DailyReports`,
+`support/daily_report.go`) aynan shuni qiladi: bitta so'rovda har kun
+uchun kartalardagi hamma ko'rsatkichni qaytaradi — murojaatlar
+(jami / avto / tasdiqlangan / rad etilgan / token / xarajat), Telegram
+guruh (so'ralgan / javob olgan / javobsiz) va muammoli buyurtmalar
+(yangi / hal qilingan / kun oxirida ochiq / o'rtacha hal qilish vaqti /
+guruhga chiqarilgani). Ma'lumot bo'lmagan kun ham qatorda turadi —
+nollar bilan. Eng ko'pi 365 kun.
+
+Qaysi sana bo'yicha sanalgani ko'rsatkichdan ko'rsatkichga farq qiladi
+va bu ataylab, `GetStats` dagi bilan bir xil: murojaat `created_at`,
+yuborilgani `sent_at`, rad etilgani `updated_at` bo'yicha — kecha
+kelgan murojaatni bugun tasdiqlash mumkin, u bugungi ish hisoblanadi.
+
+Ikkita farqni bilib qo'yish kerak:
+
+- **O'rtacha hal qilish vaqti.** Kartadagi son — butun davr bo'yicha
+  o'rtacha, jadvaldagi — o'sha kuni yopilgan muammolarniki. Ikkisi
+  har xil bo'lishi normal.
+- **Eslatmalar (`issues_reminded`) TAXMINIY.**
+  `order_issues.last_notified_at` bitta maydon va har eslatmada ustiga
+  yoziladi — bazada faqat ENG OXIRGI eslatma sanasi qoladi. Bitta
+  muammo 1- va 5-kuni eslatilgan bo'lsa, faqat 5-kunda ko'rinadi.
+  Bugungi son to'g'ri, o'tgan kunlarniki kamaytirilgan bo'lishi
+  mumkin. To'g'ri tarix uchun eslatmalarni alohida jadvalga yozish
+  kerak. Shu sababli bu ustun panel jadvalida ko'rsatilmaydi.
+
+**JIT o'chiriladi.** So'rov `SET LOCAL jit = off` bilan bitta
+tranzaksiya ichida ketadi. Sababi: rejalashtiruvchi CTE'lar
+zanjiridagi qatorlar sonini juda yuqori baholaydi va baho
+`jit_above_cost` dan oshib ketadi — Postgres so'rovni mashina kodiga
+kompilyatsiya qila boshlaydi. O'lchov: kompilyatsiya ~470 ms, bajarish
+~5 ms. JIT o'chirilgach so'rov 500 ms dan 30 ms ga tushdi va oraliq
+uzunligiga deyarli bog'liq emas.
 
 ### Buyurtma egasi
 
@@ -831,7 +903,6 @@ Bir vaqtda faqat bitta skaner yuradi (ikkinchi so'rov `409` oladi).
 | `HTTP_RETRY_MAX_MS` | 20000 | Kutishning yuqori chegarasi (`Retry-After` uzun bo'lsa ham) |
 | `PROBLEM_DAYS` | 3 | To'lovdan necha kun o'tsa muammoli |
 | `PROBLEM_STATUSES` | `3,4` | Kuzatiladigan statuslar |
-| `ISSUE_REMIND_HOURS` | 24 | Eslatma oralig'i |
 | `STALE_DELIVERY_DAYS` | 10 | Yetkazmaga kelganiga shuncha kundan oshgan posilka ogohlantirishi xodimga chiqmaydi (mijoz o'zi so'ramasa); 0 — o'chirilgan |
 | `TELEGRAM_MIN_GAP_MS` | 3000 | Guruhga ketma-ket ikki xabar orasidagi eng kam tanaffus (Telegram limiti ~20 xabar/daqiqa) |
 | `TELEGRAM_MAX_RETRY` | 3 | 429 (`Too Many Requests`) dan keyin qayta urinishlar soni |

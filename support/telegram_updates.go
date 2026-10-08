@@ -147,7 +147,7 @@ func PollTelegramReplies() error {
 // handleTelegramReply - bitta update. Bot xabariga reply bo'lsa, o'sha
 // xabar qaysi turga tegishliligi aniqlanadi:
 //
-//   - "⚠️ Muammoli buyurtma(lar)" / "🔁 Hali hal bo'lmagan" — ochiq
+//   - "⚠️ Muammoli buyurtma(lar)" — ochiq
 //     muammo(lar) yopiladi va mijozga javob tayyorlanadi;
 //   - "🆘 Yordam kerak" — yopiladigan buyurtma yo'q, mijozga javob
 //     xuddi shu yo'l bilan tayyorlanadi.
@@ -343,10 +343,10 @@ func handleIssueReply(m *tgMsgUpdate, issues []OrderIssue, who string) {
 
 	// Shu suhbat bo'yicha guruhga ketgan yordam so'rovlari endi javob
 	// olgan hisoblanadi. Xabar id'si bo'yicha emas, SUHBAT bo'yicha
-	// belgilanadi: xodim ko'pincha 🔁 eslatma xabariga reply qiladi,
-	// uning id'si esa asl "yordam kerak" xabarinikidan boshqa
-	// (sendRemind har eslatmada yangi id yozadi) — shuning uchun
-	// hisobotda javoblar umuman ko'rinmay qolardi.
+	// belgilanadi: xodim "⚠️ Muammoli buyurtma" xabariga reply
+	// qiladi, uning id'si esa asl "🆘 Yordam kerak" xabarinikidan
+	// boshqa — shuning uchun hisobotda javoblar umuman ko'rinmay
+	// qolardi.
 	seen := map[int64]bool{}
 	for i := range issues {
 		cid := issues[i].ConversationID

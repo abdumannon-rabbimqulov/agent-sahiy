@@ -58,6 +58,22 @@ th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--lin
 th { background: #fafbfc; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
 tr:last-child td { border-bottom: none; }
 
+/* Kunlik hisobot: ustun ko'p — tor ekranda jadval o'zi suriladi. */
+.scroll-x { overflow-x: auto; }
+.report { min-width: 980px; }
+.report th, .report td { padding: 7px 10px; font-size: 13px; white-space: nowrap; }
+/* Guruh sarlavhalari (Muammolar / Murojaatlar / Telegram) markazda va
+   bir-biridan chiziq bilan ajratilgan — qaysi ustun qaysi bo'limga
+   tegishli ekani ko'rinib tursin. */
+.report thead tr:first-child th { text-align: center; border-left: 1px solid var(--line); }
+.report thead tr:first-child th:first-child { border-left: none; }
+
+/* Oraliq tanlash tugmalari */
+.range { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.range button { padding: 5px 11px; font-size: 13px; background: var(--panel);
+                border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.range button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* Elementlar */
 button {
   font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent);

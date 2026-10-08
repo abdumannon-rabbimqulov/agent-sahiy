@@ -1,9 +1,9 @@
 // Telegram guruhga ketadigan xabarlarning YAGONA ko'rinishi.
 //
-// Guruhga uch turdagi xabar boradi: yangi muammoli buyurtma (⚠️),
-// takroriy eslatma (🔁) va AI "xodim kerak" degani (🆘). Uchalasi ham
-// bir xil tuzilishda bo'lishi kerak — xodim xabarni qayerdan boshlab
-// o'qishni o'ylab o'tirmasin:
+// Guruhga IKKI turdagi xabar boradi: yangi muammoli buyurtma (⚠️) va
+// AI "xodim kerak" degani (🆘). Ikkalasi ham bir xil tuzilishda
+// bo'lishi kerak — xodim xabarni qayerdan boshlab o'qishni o'ylab
+// o'tirmasin:
 //
 //	<belgi> <sarlavha>
 //	Mijoz: <id>            (egasi so'ragandan farq qilsa — "(so'ragan: id)")

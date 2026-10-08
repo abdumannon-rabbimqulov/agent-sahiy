@@ -363,6 +363,7 @@ func main() {
 	// Statistika
 	mux.HandleFunc("GET /api/stats", support.RequireAuth(statsHandler))
 	mux.HandleFunc("GET /api/stats/daily", support.RequireAuth(dailyStatsHandler))
+	mux.HandleFunc("GET /api/stats/report", support.RequireAuth(dailyReportHandler))
 	mux.HandleFunc("GET /api/stats/clients", support.RequireAuth(clientStatsHandler))
 
 	// AI javoblari va tasdiqlash navbati

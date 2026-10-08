@@ -81,8 +81,12 @@ type IssueStats struct {
 	// TelegramToday - shundan guruhda xodim reply qilib yopgani.
 	NotifiedToday int64 `json:"issues_notified_today"`
 	TelegramToday int64 `json:"issues_telegram_today"`
-	// RemindedToday - bugun guruhga takroriy eslatma ketgan muammolar
-	// (🔁): javob kelmagani uchun qayta so'ralgani.
+	// RemindedToday - bugun guruhga chiqarilgan muammolar
+	// (last_notified_at bo'yicha).
+	//
+	// ESKIRGAN: takroriy eslatma ("🔁") olib tashlangandan keyin bu
+	// son NotifiedToday bilan bir xil bo'lib qoldi — last_notified_at
+	// endi faqat birinchi "⚠️" xabarida yoziladi.
 	RemindedToday int64 `json:"issues_reminded_today"`
 }
 

@@ -18,19 +18,20 @@
 //  2. EGASI mos kelmasa — yetkazmadagi `user_id` adminkadagi `user_id`
 //     bilan bir xil emas — bu ma'lumot XATOSI: posilka boshqa odamning
 //     akkauntiga biriktirilgan. U o'zidan hal bo'lmaydi va qo'lda
-//     tuzatishni talab qiladi, shuning uchun xodimga chiqadi. Bu
-//     tekshiruv ham har qanday statusda ishlaydi.
+//     tuzatishni talab qiladi. Bunday buyurtma yuqoridagi 1-qoidadan
+//     MUSTASNO: yetkazmada chiqqan bo'lsa ham muammo yopilmaydi,
+//     odatdagi "⚠️ Muammoli buyurtma" bo'lib ochiq qolaveradi.
+//     Tekshiruv har qanday statusda ishlaydi.
 package support
 
 import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 )
 
 // DashAlertOwner - yetkazmadagi user_id adminkadagisiga mos kelmadi
-// (OrderIssue.DashboardAlert). Guruhga chiqadigan yagona natija.
+// (OrderIssue.DashboardAlert).
 const DashAlertOwner = "owner_mismatch"
 
 // DashboardCheck - bitta buyurtmaning yetkazma tomonidagi holati.
@@ -51,12 +52,17 @@ func (c *DashboardCheck) Arrived() bool { return c != nil && c.Found }
 // Delivered - mijoz posilkani ALLAQACHON olib ketganmi.
 func (c *DashboardCheck) Delivered() bool { return c.Arrived() && c.Row.Delivered }
 
-// Alert - shu natija xodimga chiqishi kerakmi va qanday nom bilan.
-// Chiqmasa bo'sh satr.
+// Alert - shu natija e'tiborga olinishi kerakmi va qanday nom bilan.
+// Bo'lmasa bo'sh satr.
 //
-// Yetkazmada chiqqan posilkaning o'zi xabar emas: u normal holat —
-// posilka kelgan, filialda kutmoqda yoki mijoz olib ketgan. Xabarga
+// Yetkazmada chiqqan posilkaning o'zi hodisa emas: u normal holat —
+// posilka kelgan, filialda kutmoqda yoki mijoz olib ketgan. E'tiborga
 // arzigulik yagona narsa — EGASI mos kelmagani.
+//
+// Bu ALOHIDA guruh xabarini tug'dirmaydi: guruhga faqat ikki turdagi
+// xabar boradi ("⚠️ Muammoli buyurtma" va "🆘 Yordam kerak"). Egasi
+// mos kelmasa muammo shunchaki OCHIQ qoladi (DropArrivedIssues uni
+// yopmaydi) va odatdagi "⚠️" xabari bo'lib chiqadi.
 func (c *DashboardCheck) Alert() string {
 	if c.Arrived() && c.Mismatch {
 		return DashAlertOwner
@@ -111,48 +117,6 @@ func compareDashboard(o AdminkaOrder, rows []DeliveryOrder) *DashboardCheck {
 	// hisoblanmaydi: ikkala API ham bu maydonni ba'zan bermaydi.
 	chk.Mismatch = chk.Found && chk.OwnerID > 0 && chk.DashID > 0 && chk.DashID != chk.OwnerID
 	return chk
-}
-
-// CrossCheckOrders - adminkadagi HAMMA buyurtmani (statusidan qat'i
-// nazar) yetkazma yozuvlari bilan solishtiradi. Treksiz buyurtmalar
-// tashlab ketiladi: ular hali Xitoyda, solishtirishga narsa yo'q.
-//
-// Yetkazma ro'yxati bir marta olinadi va shu yerda taqsimlanadi —
-// har bir buyurtma uchun alohida so'rov yuborilmaydi.
-func CrossCheckOrders(views []OrderView, rows []DeliveryOrder) []*DashboardCheck {
-	out := make([]*DashboardCheck, 0, len(views))
-	for _, v := range views {
-		if chk := compareDashboard(v.AdminkaOrder, rows); chk != nil {
-			out = append(out, chk)
-		}
-	}
-	return out
-}
-
-// MismatchAlerts - egasi mos kelmagan buyurtmalar uchun xodimga
-// ketadigan ogohlantirishlar (agent.go dagi `alerts` ro'yxatiga
-// qo'shiladi: bunday holat guruhga alohida xabar emas, mavjud xabar
-// ichida chiqadi).
-//
-// Yetkazma yozuvining yoshi ham qaytariladi: qolgan ogohlantirishlar
-// kabi bu ham eskirgan bo'lsa to'siladi (DropStaleAlerts) — mijoz
-// o'zi so'ramagan oylik yozuv bo'yicha xodim qiladigan ish yo'q.
-func MismatchAlerts(checks []*DashboardCheck) []DeliveryAlert {
-	var out []DeliveryAlert
-	for _, c := range checks {
-		if c.Alert() != DashAlertOwner {
-			continue
-		}
-		out = append(out, DeliveryAlert{
-			ExpressNum: c.Track,
-			Days:       daysSinceText(c.Row.CreatedAt),
-			Text: fmt.Sprintf(
-				"%s — XATOLIK: posilka boshqa akkauntga biriktirilgan. "+
-					"Adminkada egasi %d, yetkazmada %d (trek %s). Qo'lda tuzatish kerak.",
-				firstNonEmpty(c.OrderSN, c.Track), c.OwnerID, c.DashID, c.Track),
-		})
-	}
-	return out
 }
 
 // arrivedResolution - "yetkazmada bor" deb yopilgan muammoning yechim
@@ -211,82 +175,6 @@ func DropArrivedIssues(list []*OrderIssue, rows []DeliveryOrder) ([]*OrderIssue,
 		dropped++
 	}
 	return out, dropped
-}
-
-// dashboardAlertText - guruhga ketadigan xabar matni (egasi mos
-// kelmagani). Ochiq muammolar siklida ishlatiladi: u yerda ilinadigan
-// mavjud xabar bo'lmaydi, shuning uchun alohida xabar chiqariladi.
-func dashboardAlertText(is *OrderIssue, chk *DashboardCheck, days int) string {
-	var b strings.Builder
-	b.WriteString(guruhSarlavha(
-		fmt.Sprintf("⛔ XATOLIK: posilka boshqa akkauntda — %s", is.OrderSN),
-		issueOwner(is), is.ClientID, is.ConversationID))
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "Adminka holati: %s · to'langaniga %d kun\n", is.StatusLabel, days)
-	fmt.Fprintf(&b, "Trek: %s\n", chk.Track)
-	fmt.Fprintf(&b, "Adminkada egasi: %d\n", chk.OwnerID)
-	fmt.Fprintf(&b, "Yetkazmada egasi: %d — MOS KELMAYDI\n", chk.DashID)
-
-	d := chk.Row
-	if d.FullName != "" {
-		fmt.Fprintf(&b, "Yetkazmada qabul qiluvchi: %s\n", trimText(d.FullName, 60))
-	}
-	if d.BranchName != "" {
-		fmt.Fprintf(&b, "Filial: %s\n", trimText(d.BranchName, 60))
-	}
-	if d.Delivered {
-		fmt.Fprintf(&b, "Olib ketilgan: ha (%s) — posilkani BOSHQA odam olgan\n", d.DeliveredAt)
-	} else {
-		b.WriteString("Olib ketilgan: yo'q\n")
-	}
-	if chk.Rows > 1 {
-		fmt.Fprintf(&b, "Eslatma: shu trekka yetkazmada %d ta yozuv bor\n", chk.Rows)
-	}
-
-	b.WriteString("\nAdminka va yetkazmada buyurtma egasi boshqa-boshqa — " +
-		"qo'lda tuzatish kerak. Mijozga \"tekshirilmoqda\" deb aytiladi.\n")
-	b.WriteString(guruhFooter(false))
-	return b.String()
-}
-
-// notifyDashboardAlert - solishtirish natijasini guruhga BIR MARTA
-// chiqaradi. Qaytadigan qiymat: xabar ketdimi.
-//
-// Takror yuborilmaydi: yozuvda natija saqlanadi va faqat u O'ZGARSA
-// yangi xabar ketadi. Aks holda ochiq muammo har `ISSUE_REVIEW_SEC` da
-// — ya'ni kuniga o'nlab marta — guruhni bezovta qilardi.
-func notifyDashboardAlert(is *OrderIssue, chk *DashboardCheck, days int) bool {
-	kind := chk.Alert()
-	if kind == "" || is.DashboardAlert == kind {
-		return false
-	}
-
-	msgID, err := SendTelegramIssue(dashboardAlertText(is, chk, days))
-	if err != nil {
-		log.Printf("muammo: %s — yetkazma solishtiruvi guruhga yuborilmadi: %v",
-			is.OrderSN, err)
-		return false
-	}
-
-	now := time.Now()
-	RememberTelegramPost(msgID, is.ConversationID, is.ClientID, "issue", 0)
-	is.TgMessageID = msgID
-	is.NotifyCount++
-	is.LastNotifiedAt = &now
-	is.DashboardAlert = kind
-	is.DashboardAlertAt = &now
-	// Reply endi shu xabarga tushadi; last_notified_at yangilangani
-	// uchun oddiy eslatma ham ISSUE_REMIND_HOURS kutadi — bitta muammo
-	// bo'yicha ketma-ket ikkita xabar chiqmaydi.
-	DB.Model(is).Updates(map[string]any{
-		"tg_message_id":      msgID,
-		"notify_count":       is.NotifyCount,
-		"last_notified_at":   &now,
-		"dashboard_alert":    kind,
-		"dashboard_alert_at": &now,
-	})
-	log.Printf("muammo: %s — yetkazma solishtiruvi guruhga chiqdi (%s)", is.OrderSN, kind)
-	return true
 }
 
 // deliveryAuth - yetkazma tokenini BIRINCHI kerak bo'lganda oladi.

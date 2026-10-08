@@ -251,54 +251,6 @@ func aiXulosa(help string) string {
 	return "\nAI xulosasi:\n" + help + "\n"
 }
 
-// remindKey - eslatma guruhining kaliti: buyurtma egasi + so'ragan mijoz.
-type remindKey struct {
-	Owner  int64
-	Client int64
-}
-
-// remindItem - eslatmaga tushadigan bitta muammo va uning yangi holati.
-type remindItem struct {
-	Issue    *OrderIssue
-	Days     int
-	Answered bool
-	LastAt   time.Time
-}
-
-// remindText - takroriy eslatma matni: bitta mijozning eslatma vaqti
-// kelgan hamma muammosi bitta xabarda.
-func remindText(items []remindItem) string {
-	if len(items) == 0 {
-		return ""
-	}
-	first := items[0].Issue
-
-	var b strings.Builder
-	title := fmt.Sprintf("🔁 Hali hal bo'lmagan — %s (%d-eslatma)",
-		first.OrderSN, first.NotifyCount+1)
-	if len(items) > 1 {
-		title = fmt.Sprintf("🔁 Hali hal bo'lmagan — %d ta buyurtma", len(items))
-	}
-	b.WriteString(guruhSarlavha(title, issueOwner(first), first.ClientID, first.ConversationID))
-	// Mijozga javob berilgani suhbatga tegishli — hamma buyurtma uchun bir xil.
-	if items[0].Answered {
-		fmt.Fprintf(&b, "Mijozga javob: berilgan (%s)\n", vaqtMatn(items[0].LastAt))
-	} else {
-		b.WriteString("Mijozga javob: BERILMAGAN\n")
-	}
-
-	for i, it := range items {
-		b.WriteString("\n")
-		if len(items) > 1 {
-			fmt.Fprintf(&b, "%d) %s (%d-eslatma)\n", i+1, it.Issue.OrderSN, it.Issue.NotifyCount+1)
-		}
-		fmt.Fprintf(&b, "Holat: %s · to'langaniga %d kun\n", it.Issue.StatusLabel, it.Days)
-	}
-
-	b.WriteString(guruhFooter(len(items) > 1))
-	return b.String()
-}
-
 // notifyIssues guruhga BITTA xabar yuboradi va uning message_id sini
 // ro'yxatdagi hamma muammoga yozib qo'yadi — reply shu xabarga qilinadi
 // va hammasini birdan yopadi. Telegram ishlamasa muammolar baribir
@@ -404,12 +356,24 @@ func notifyResolved(is *OrderIssue, res string) {
 	}
 }
 
-// ReviewOpenIssues ochiq muammolarni qayta ko'rib chiqadi:
-//  1. adminkadagi holat o'zgarganmi — o'zgargan bo'lsa yopadi;
-//  2. mijozga biz javob berganmizmi — chatdan tekshiradi;
-//  3. posilka yetkazmada (dashboardda) chiqqanmi va egasi adminkadagi
-//     bilan bir xilmi — mos kelmasa guruhga xabar beradi;
-//  4. shundan keyingina va ISSUE_REMIND_HOURS o'tgan bo'lsa eslatma yuboradi.
+// ReviewOpenIssues ochiq muammolarni qayta ko'rib chiqadi va hal
+// bo'lganlarini YOPADI:
+//  1. muammo boshqa odamning buyurtmasimi;
+//  2. shu buyurtma bo'yicha xodim allaqachon javob berganmi;
+//  3. mijozga biz javob berganmizmi — chatdan tekshiradi;
+//  4. adminkadagi holat o'zgarganmi;
+//  5. posilka yetkazmada (dashboardda) chiqqanmi.
+//
+// Guruhga YANGI XABAR YUBORMAYDI. Faqat yopilgani haqida asl xabarga
+// "✅ …" deb reply qiladi (notifyResolved).
+//
+// Ilgari bu yerdan takroriy eslatma ("🔁 Hali hal bo'lmagan") ketardi:
+// javob kelmagan muammo har ISSUE_REMIND_HOURS da guruhga qayta
+// tushardi. Guruhda bitta muammo bo'yicha o'nlab xabar to'planib
+// qolardi va yangi, hali ko'rilmagan muammolar ular orasida yo'qolardi.
+// Endi guruhga ikki turdagina xabar boradi: "⚠️ Muammoli buyurtma" va
+// "🆘 Yordam kerak". Javobsiz qolgan muammolar panelda ko'rinadi
+// (ochiq muammolar ro'yxati va "javobsiz" hisobi).
 func ReviewOpenIssues(db *gorm.DB) error {
 	var open []OrderIssue
 	if err := db.Where("state = ?", IssueOpen).Order("id asc").Find(&open).Error; err != nil {
@@ -420,17 +384,8 @@ func ReviewOpenIssues(db *gorm.DB) error {
 	}
 
 	adm := AdminkaFromEnv()
-	remind := time.Duration(RemindHours()) * time.Hour
 	// Yetkazma tokeni faqat treki bor buyurtma uchraganda olinadi.
 	var dash deliveryAuth
-
-	// Eslatmalar ham mijoz bo'yicha to'planadi: bitta odam uchun bitta
-	// xabar ketadi, har bir buyurtma uchun alohida emas. Kalit — buyurtma
-	// EGASI va uni so'ragan mijoz birgalikda: bitta xabardagi hamma
-	// buyurtma bir odamniki bo'lsin va "mijozga javob berilgan/berilmagan"
-	// satri ham o'sha suhbatga to'g'ri kelsin.
-	due := map[remindKey][]remindItem{}
-	var order []remindKey
 
 	for i := range open {
 		is := &open[i]
@@ -514,8 +469,8 @@ func ReviewOpenIssues(db *gorm.DB) error {
 
 		// 3. Yetkazma (dashboard) tomoni: adminkadagi holat nima deb
 		//    tursa ham, posilka allaqachon O'zbekistonga kelgan
-		//    bo'lishi mumkin — bunda muammo yopiladi. Egasi (user_id)
-		//    mos kelmasa esa guruhga xabar chiqadi (issue_dashboard.go).
+		//    bo'lishi mumkin — bunda muammo yopiladi
+		//    (issue_dashboard.go).
 		if trackKey(cur.ExpressNum) != "" {
 			svc, token, err := dash.get()
 			if err != nil {
@@ -535,59 +490,19 @@ func ReviewOpenIssues(db *gorm.DB) error {
 					notifyResolved(is, res)
 				}
 				continue
-			} else if notifyDashboardAlert(is, chk, DaysSincePaid(*cur)) {
-				// Xabar hozir ketdi — oddiy eslatma shu siklda
-				// qo'shilmaydi, aks holda bitta muammo bo'yicha
-				// guruhga ketma-ket ikkita xabar tushardi.
-				continue
 			}
+			// Egasi mos kelmagan buyurtma ATAYLAB yopilmaydi: u
+			// ochiq "⚠️ Muammoli buyurtma" bo'lib turaveradi, ya'ni
+			// xodim uni panelda ko'radi va mijozga "tekshirilmoqda"
+			// deyiladi. Alohida "⛔ XATOLIK" xabari yuborilmaydi —
+			// guruhga faqat ikki turdagi xabar boradi.
 		}
 
-		// 4. Eslatma vaqti kelganmi.
-		if is.LastNotifiedAt != nil && time.Since(*is.LastNotifiedAt) < remind {
-			continue
-		}
-
-		key := remindKey{Owner: issueOwner(is), Client: is.ClientID}
-		if _, ok := due[key]; !ok {
-			order = append(order, key)
-		}
-		due[key] = append(due[key], remindItem{
-			Issue:    is,
-			Days:     DaysSincePaid(*cur),
-			Answered: answered,
-			LastAt:   lastAt,
-		})
-	}
-
-	for _, key := range order {
-		sendRemind(db, due[key])
+		// Muammo hali ham ochiq — guruhga qayta xabar yuborilmaydi.
+		// Xodim uni panelda, ochiq muammolar ro'yxatida ko'radi.
 	}
 
 	return nil
-}
-
-// sendRemind - bitta mijozning eslatmalarini bitta xabar qilib yuboradi
-// va yangi message_id ni hamma muammoga yozadi (reply endi shu xabarga).
-func sendRemind(db *gorm.DB, items []remindItem) {
-	if len(items) == 0 {
-		return
-	}
-	msgID, err := SendTelegramIssue(remindText(items))
-	if err != nil {
-		log.Printf("muammo: mijoz %d eslatmasi ketmadi: %v", items[0].Issue.ClientID, err)
-		return
-	}
-	now := time.Now()
-	for _, it := range items {
-		RememberTelegramPost(msgID, it.Issue.ConversationID, it.Issue.ClientID, "remind", 0)
-		db.Model(it.Issue).Updates(map[string]any{
-			"tg_message_id":    msgID, // reply endi shu yangi xabarga
-			"notify_count":     it.Issue.NotifyCount + 1,
-			"last_notified_at": &now,
-			"days_since_paid":  it.Days,
-		})
-	}
 }
 
 // staffAnswered - mijozga XODIM javob berganmi va qachon.

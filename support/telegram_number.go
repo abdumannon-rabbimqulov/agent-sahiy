@@ -6,7 +6,7 @@
 // (27-sentabrda #1…#40 bo'lsa, 28-sentabrda yana #1 dan).
 //
 // Raqam FAQAT xodim hal qilishi kerak bo'lgan muammoga beriladi —
-// yangi muammo (⚠️ / 🆘) va takroriy eslatma (🔁). Tasdiq ("✅ hal
+// yangi muammo (⚠️) va AI "xodim kerak" degani (🆘). Tasdiq ("✅ hal
 // qilindi deb belgilandi"), ogohlantirish va rasm xabarlari
 // raqamlanmaydi: ilgari ular ham sanalgani uchun raqamlar orasi
 // uzilib ketardi va "#8" muammo emas, tasdiq bo'lib chiqardi.

@@ -97,6 +97,18 @@ func dailyStatsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// dailyReportHandler: GET /api/stats/report?days=30 — panel
+// kartalaridagi "bugungi" ko'rsatkichlarning har kun uchun varianti.
+func dailyReportHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := support.DailyReports(support.DB,
+		queryInt(r, "days", support.DefaultReportDays))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
 // clientStatsHandler: GET /api/stats/clients?days=30&limit=50
 func clientStatsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := support.ClientStats(support.DB, queryInt(r, "days", 30), queryInt(r, "limit", 50))

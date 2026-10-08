@@ -1,9 +1,6 @@
 package support
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // Trek yo'q — solishtirishga hech narsa yo'q.
 func TestCompareDashboardNoTrack(t *testing.T) {
@@ -122,48 +119,6 @@ func TestCompareDashboardUnknownOwnerIsNotError(t *testing.T) {
 	}
 	if got := chk.Alert(); got != "" {
 		t.Fatalf("xabar kutilmagan, keldi %q", got)
-	}
-}
-
-// CrossCheckOrders HAR QANDAY statusdagi buyurtmani solishtiradi,
-// treksizlarini esa tashlab ketadi.
-func TestCrossCheckOrdersAllStatuses(t *testing.T) {
-	views := []OrderView{
-		{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111", Status: StatusWaiting}},
-		{AdminkaOrder: AdminkaOrder{OrderSN: "DG2", UserID: 7, ExpressNum: "YT222", Status: StatusFinished}},
-		{AdminkaOrder: AdminkaOrder{OrderSN: "DG3", UserID: 7, Status: StatusPaid}}, // treksiz
-	}
-	rows := []DeliveryOrder{
-		{ExpressNum: "YT111", UserID: 7},
-		{ExpressNum: "YT222", UserID: 9},
-	}
-	checks := CrossCheckOrders(views, rows)
-	if len(checks) != 2 {
-		t.Fatalf("treksiz buyurtma tashlanishi kerak: %d ta keldi", len(checks))
-	}
-	if checks[0].Mismatch || !checks[1].Mismatch {
-		t.Fatalf("status 4 toza, status 6 da xato kutilgan: %+v / %+v", checks[0], checks[1])
-	}
-}
-
-// MismatchAlerts faqat egasi mos kelmaganlarni matn qiladi.
-func TestMismatchAlerts(t *testing.T) {
-	views := []OrderView{
-		{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"}},
-		{AdminkaOrder: AdminkaOrder{OrderSN: "DG2", UserID: 7, ExpressNum: "YT222"}},
-	}
-	rows := []DeliveryOrder{
-		{ExpressNum: "YT111", UserID: 7},
-		{ExpressNum: "YT222", UserID: 9},
-	}
-	got := MismatchAlerts(CrossCheckOrders(views, rows))
-	if len(got) != 1 {
-		t.Fatalf("bitta xato kutilgan, keldi %d: %v", len(got), got)
-	}
-	for _, want := range []string{"DG2", "7", "9", "YT222"} {
-		if !strings.Contains(got[0].Text, want) {
-			t.Fatalf("matnda %q yo'q: %q", want, got[0].Text)
-		}
 	}
 }
 
