@@ -512,11 +512,10 @@ func ReviewOpenIssues(db *gorm.DB) error {
 			continue
 		}
 
-		// 3. Yetkazma (dashboard) tomoni: adminka hamon "kutilmoqda"
-		//    deb turgani posilka Xitoyda ekanini BILDIRMAYDI — trek
-		//    allaqachon yetkazmada chiqqan bo'lishi mumkin. Shu holat
-		//    va egasi (user_id) mos kelmagani guruhga alohida xabar
-		//    bo'lib chiqadi (issue_dashboard.go).
+		// 3. Yetkazma (dashboard) tomoni: adminkadagi holat nima deb
+		//    tursa ham, posilka allaqachon O'zbekistonga kelgan
+		//    bo'lishi mumkin — bunda muammo yopiladi. Egasi (user_id)
+		//    mos kelmasa esa guruhga xabar chiqadi (issue_dashboard.go).
 		if trackKey(cur.ExpressNum) != "" {
 			svc, token, err := dash.get()
 			if err != nil {
@@ -524,14 +523,15 @@ func ReviewOpenIssues(db *gorm.DB) error {
 			} else if chk, err := CheckDashboard(svc, token, *cur); err != nil {
 				log.Printf("muammo: %s — yetkazma tomoni tekshirilmadi: %v",
 					is.OrderSN, err)
-			} else if chk.Delivered() && !chk.Mismatch {
-				// Mijoz posilkani olib ketgan — muammo qolmadi.
-				// Adminkadagi holat hamon "kutilmoqda" bo'lishi
-				// mumkin, lekin u Xitoy tomonidagi holat va bu
-				// yerda hech narsani o'zgartirmaydi.
-				res := deliveredResolutionFor(is, chk)
+			} else if chk.Arrived() && !chk.Mismatch {
+				// Posilka O'zbekistonga kelgan (filialda yoki mijoz
+				// olib ketgan) — muammo qolmadi. Adminkadagi holat
+				// hamon "kutilmoqda" bo'lishi mumkin, lekin u Xitoy
+				// tomonidagi holat va bu yerda hech narsani
+				// o'zgartirmaydi.
+				res := arrivedResolution(is, chk)
 				if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err == nil {
-					log.Printf("muammo: %s — mijoz posilkani olib ketgan, yopildi", is.OrderSN)
+					log.Printf("muammo: %s — posilka yetkazmada bor, yopildi", is.OrderSN)
 					notifyResolved(is, res)
 				}
 				continue

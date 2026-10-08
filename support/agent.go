@@ -988,14 +988,9 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	// yetkazma ma'lumoti model so'ramagan bo'lsa ham olinadi: usiz
 	// posilka mijozga yetgan-yetmagani BILINMAYDI va model "buyurtmangiz
 	// yakunlangan" deb yozib yuborardi.
-	//
-	// Yangi muammo ochilgan bo'lsa ham xuddi shunday: muammo qarori
-	// ADMINKA holatiga qarab chiqariladi, mijoz esa posilkani
-	// allaqachon olib ketgan bo'lishi mumkin. Tekshirmasdan guruhga
-	// chiqarilsa xodim mijoz qo'lidagi buyurtmani qidirib o'tiradi.
-	if a.Adminka && !a.Dashboard && (needsArrivalCheck(views) || issuesHaveTrack(issues)) {
+	if a.Adminka && !a.Dashboard && needsArrivalCheck(views) {
 		a.Dashboard = true
-		log.Printf("agent: suhbat %d — yetkazma ham tekshirildi (kelgan-kelmagani aniqlanishi kerak)",
+		log.Printf("agent: suhbat %d — treki bor buyurtma bor, yetkazma ham tekshirildi",
 			conversationID)
 	}
 
@@ -1031,16 +1026,23 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 					}
 				}
 			}
-			// Mijoz posilkani ALLAQACHON olib ketgan bo'lsa, bu
-			// muammo emas: yangi ochilgan yozuv yopiladi va guruhga
-			// umuman chiqmaydi (issue_dashboard.go).
+			// Adminkadagi HAR QANDAY statusdagi buyurtma yetkazma
+			// yozuvlari bilan trek raqami orqali solishtiriladi:
+			// adminka holati eskirgan bo'lishi mumkin, haqiqiy holat
+			// faqat shu yerdan bilinadi (issue_dashboard.go).
 			//
 			// Quyidagi "so'ralgan buyurtma" chegarasidan OLDIN
-			// turadi: u ro'yxatni qisqartiradi va olib ketilgani
-			// haqidagi yozuv tushib qolishi mumkin.
-			if kept, n := DropDeliveredIssues(issues, rows); n > 0 {
+			// turadi: u ro'yxatni qisqartiradi va kerakli yozuv
+			// tushib qolishi mumkin.
+			checks := CrossCheckOrders(views, rows)
+			// Egasi mos kelmagani — qo'lda tuzatishni talab qiladigan
+			// XATO. Statusidan qat'i nazar xodimga chiqadi.
+			deliveryAlerts := MismatchAlerts(checks)
+			// Posilkasi yetkazmada chiqqan buyurtma MUAMMO EMAS:
+			// yangi ochilgan yozuv yopiladi va guruhga chiqmaydi.
+			if kept, n := DropArrivedIssues(issues, rows); n > 0 {
 				issues = kept
-				log.Printf("agent: suhbat %d — %d ta muammo guruhga chiqarilmadi: mijoz posilkani olib ketgan",
+				log.Printf("agent: suhbat %d — %d ta muammo guruhga chiqarilmadi: posilka yetkazmada bor",
 					conversationID, n)
 			}
 			// Mijoz aniq buyurtma/trek raqami yozgan bo'lsa, yetkazma
@@ -1079,12 +1081,29 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 			}
 			out["yetkazma"] = brief
 			// Kod topgan yetkazma holatlari (punktda qotib qolgan,
-			// muddati o'tgan) xodimlar guruhiga ham chiqadi.
-			alerts = append(alerts, brief.Alerts...)
+			// muddati o'tgan, egasi mos kelmagan, posilka boshqa
+			// viloyatga tushgan) xodimlar guruhiga ham chiqadi.
+			//
+			// Lekin OLDIN yoshi bo'yicha filtrdan o'tadi: yetkazmaga
+			// kelganiga STALE_DELIVERY_DAYS dan oshgan posilka mijoz
+			// o'zi so'ramagan bo'lsa chiqmaydi. Busiz bitta mijozning
+			// o'nlab eski yozuvi guruhga qator-qator yog'ilib, hozir
+			// hal qilinishi kerak bo'lgan holatni ko'zdan yashirardi
+			// (stale_alerts.go).
+			deliveryAlerts = append(deliveryAlerts, brief.Alerts...)
 			mismatches = append(mismatches, bad...)
 			for _, m := range bad {
-				alerts = append(alerts, m.Text())
+				deliveryAlerts = append(deliveryAlerts, DeliveryAlert{
+					ExpressNum: m.ExpressNum, Days: m.Days, Text: m.Text(),
+				})
 			}
+			kept, stale := DropStaleAlerts(deliveryAlerts, AskedTracks(numbers, views))
+			if stale > 0 {
+				log.Printf("agent: suhbat %d — %d ta ogohlantirish xodimga chiqarilmadi: "+
+					"yetkazmaga kelganiga %d kundan oshgan, mijoz o'zi so'ramagan",
+					conversationID, stale, StaleDeliveryDays())
+			}
+			alerts = append(alerts, kept...)
 			// Mijozning qo'liga tegmagan yetkazmasi: filialda kutayotgani,
 			// yo'ldagisi va holati noaniq bo'lgani — uchalasi ham
 			// "hali olinmagan" hisoblanadi.
@@ -1131,12 +1150,21 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	return string(raw), pending, alerts, issues
 }
 
-// needsArrivalCheck - ro'yxatda "tranzaksiya yopilgan" (status 6),
-// treki bor buyurtma bormi. Bunday buyurtma yo'lga chiqqan, lekin
-// kelgan-kelmagani faqat yetkazma ro'yxatidan bilinadi.
+// needsArrivalCheck - ro'yxatda treki bor buyurtma bormi.
+//
+// STATUSGA QARALMAYDI. Adminkadagi holat Xitoy tomonidagi holat va u
+// yangilanmay qolishi mumkin: "kiritish uchun kutilmoqda" deb turgan
+// posilka allaqachon filialda yoki mijozning qo'lida bo'lishi mumkin.
+// Buyurtmaning haqiqiy holati faqat bitta narsadan bilinadi — trek
+// raqami yetkazmada chiqdimi. Shuning uchun treki bor har qanday
+// buyurtma uchun yetkazma ma'lumoti olinadi.
+//
+// Ilgari bu faqat status 6 ("tranzaksiya yopilgan") uchun ishlardi va
+// status 3/4 dagi buyurtma yetkazmada turgan bo'lsa ham "muammoli"
+// bo'lib guruhga chiqardi.
 func needsArrivalCheck(views []OrderView) bool {
 	for _, v := range views {
-		if v.Status == StatusFinished && strings.TrimSpace(v.ExpressNum) != "" {
+		if strings.TrimSpace(v.ExpressNum) != "" {
 			return true
 		}
 	}

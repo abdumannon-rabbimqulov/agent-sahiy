@@ -1,6 +1,9 @@
 package support
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Trek yo'q — solishtirishga hech narsa yo'q.
 func TestCompareDashboardNoTrack(t *testing.T) {
@@ -9,40 +12,55 @@ func TestCompareDashboardNoTrack(t *testing.T) {
 	}
 }
 
-// Trek bor, lekin yetkazmada chiqmadi — posilka hali Xitoyda, xabar yo'q.
+// Trek bor, lekin yetkazmada chiqmadi — posilka hali Xitoyda.
 func TestCompareDashboardNotFound(t *testing.T) {
 	chk := compareDashboard(
 		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"}, nil)
-	if chk == nil || chk.Found {
-		t.Fatalf("yetkazmada yo'q: found=false kutilgan, keldi %+v", chk)
+	if chk.Arrived() {
+		t.Fatalf("yetkazmada yo'q: kelmagan bo'lishi kerak, keldi %+v", chk)
 	}
 	if got := chk.Alert(); got != "" {
 		t.Fatalf("xabar kutilmagan, keldi %q", got)
 	}
 }
 
-// Trek yetkazmada chiqdi va egasi bir xil — "posilka kelgan" xabari.
-func TestCompareDashboardArrived(t *testing.T) {
+// Trek yetkazmada chiqdi, mijoz hali olib ketmagan — bu MUAMMO EMAS,
+// xabar ham ketmaydi. Adminka holati nima deb tursa ham.
+func TestCompareDashboardArrivedIsNotAlert(t *testing.T) {
 	chk := compareDashboard(
-		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: " yt111 "},
-		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 7, BranchName: "Chilonzor"}})
-	if chk == nil || !chk.Found || chk.Mismatch {
-		t.Fatalf("kelgan, egasi bir xil kutilgan, keldi %+v", chk)
+		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: " yt111 ", Status: StatusWaiting},
+		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 7, BranchName: "SHOTA"}})
+	if !chk.Arrived() || chk.Delivered() || chk.Mismatch {
+		t.Fatalf("kelgan, olib ketilmagan, egasi bir xil kutilgan, keldi %+v", chk)
 	}
-	if got := chk.Alert(); got != DashAlertArrived {
-		t.Fatalf("Alert: %q kutilgan, keldi %q", DashAlertArrived, got)
+	if got := chk.Alert(); got != "" {
+		t.Fatalf("kelgan posilka uchun xabar kutilmagan, keldi %q", got)
 	}
 	if chk.Track != "YT111" {
 		t.Fatalf("trek normallashtirilmadi: %q", chk.Track)
 	}
 }
 
-// Egasi mos kelmadi — xatolik xabari.
+// Mijoz olib ketgan — ham muammo emas, ham xabar emas.
+func TestCompareDashboardDeliveredIsNotAlert(t *testing.T) {
+	chk := compareDashboard(
+		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
+		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 7, Delivered: true,
+			DeliveredAt: "2026-09-01 10:00:00", BranchName: "SHOTA"}})
+	if !chk.Delivered() {
+		t.Fatalf("olib ketilgan deb aniqlanishi kerak, keldi %+v", chk)
+	}
+	if got := chk.Alert(); got != "" {
+		t.Fatalf("xabar kutilmagan, keldi %q", got)
+	}
+}
+
+// Egasi mos kelmadi — yagona xabarga arzigulik holat.
 func TestCompareDashboardOwnerMismatch(t *testing.T) {
 	chk := compareDashboard(
 		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
 		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 9}})
-	if chk == nil || !chk.Mismatch {
+	if !chk.Mismatch {
 		t.Fatalf("egasi mos kelmasligi kutilgan, keldi %+v", chk)
 	}
 	if got := chk.Alert(); got != DashAlertOwner {
@@ -50,6 +68,17 @@ func TestCompareDashboardOwnerMismatch(t *testing.T) {
 	}
 	if chk.DashID != 9 || chk.OwnerID != 7 {
 		t.Fatalf("egalar noto'g'ri olindi: %+v", chk)
+	}
+}
+
+// Olib ketilgan bo'lsa ham egasi mos kelmasa xabar ketadi: posilkani
+// boshqa odam olgan.
+func TestCompareDashboardDeliveredToOtherOwnerAlerts(t *testing.T) {
+	chk := compareDashboard(
+		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
+		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 9, Delivered: true}})
+	if got := chk.Alert(); got != DashAlertOwner {
+		t.Fatalf("Alert: %q kutilgan, keldi %q", DashAlertOwner, got)
 	}
 }
 
@@ -63,7 +92,7 @@ func TestCompareDashboardPrefersMatchingOwner(t *testing.T) {
 			{ExpressNum: "YT111", UserID: 9, FullName: "begona"},
 			{ExpressNum: "YT111", UserID: 7, FullName: "o'zi"},
 		})
-	if chk == nil || chk.Mismatch {
+	if chk.Mismatch {
 		t.Fatalf("egasi mos kelgan qator tanlanishi kerak, keldi %+v", chk)
 	}
 	if chk.Row.FullName != "o'zi" || chk.Rows != 2 {
@@ -71,13 +100,13 @@ func TestCompareDashboardPrefersMatchingOwner(t *testing.T) {
 	}
 }
 
-// O'xshash, lekin boshqa trek yetkazmadan kelsa hisobga olinmaydi:
-// qidiruv butun baza bo'yicha ketadi.
+// O'xshash, lekin boshqa trek hisobga olinmaydi: qidiruv butun baza
+// bo'yicha ketadi.
 func TestCompareDashboardIgnoresOtherTracks(t *testing.T) {
 	chk := compareDashboard(
 		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
 		[]DeliveryOrder{{ExpressNum: "YT1119", UserID: 9}})
-	if chk == nil || chk.Found {
+	if chk.Arrived() {
 		t.Fatalf("boshqa trek hisobga olinmasligi kerak, keldi %+v", chk)
 	}
 }
@@ -88,80 +117,94 @@ func TestCompareDashboardUnknownOwnerIsNotError(t *testing.T) {
 	chk := compareDashboard(
 		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
 		[]DeliveryOrder{{ExpressNum: "YT111"}})
-	if chk == nil || chk.Mismatch {
+	if chk.Mismatch {
 		t.Fatalf("egasi noma'lum: xato kutilmagan, keldi %+v", chk)
 	}
-	if got := chk.Alert(); got != DashAlertArrived {
-		t.Fatalf("Alert: %q kutilgan, keldi %q", DashAlertArrived, got)
-	}
-}
-
-// Mijoz olib ketgan posilka guruhga CHIQMAYDI.
-func TestCompareDashboardDeliveredNoAlert(t *testing.T) {
-	chk := compareDashboard(
-		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
-		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 7, Delivered: true,
-			DeliveredAt: "2026-09-01 10:00:00", BranchName: "SHOTA"}})
-	if chk == nil || !chk.Delivered() {
-		t.Fatalf("olib ketilgan deb aniqlanishi kerak, keldi %+v", chk)
-	}
 	if got := chk.Alert(); got != "" {
-		t.Fatalf("olib ketilgan posilka uchun xabar kutilmagan, keldi %q", got)
+		t.Fatalf("xabar kutilmagan, keldi %q", got)
 	}
 }
 
-// Olib ketilgan bo'lsa ham egasi mos kelmasa — bu xato, xabar ketadi:
-// posilkani boshqa odam olib ketgan.
-func TestCompareDashboardDeliveredToOtherOwnerAlerts(t *testing.T) {
-	chk := compareDashboard(
-		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
-		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 9, Delivered: true}})
-	if got := chk.Alert(); got != DashAlertOwner {
-		t.Fatalf("Alert: %q kutilgan, keldi %q", DashAlertOwner, got)
+// CrossCheckOrders HAR QANDAY statusdagi buyurtmani solishtiradi,
+// treksizlarini esa tashlab ketadi.
+func TestCrossCheckOrdersAllStatuses(t *testing.T) {
+	views := []OrderView{
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111", Status: StatusWaiting}},
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG2", UserID: 7, ExpressNum: "YT222", Status: StatusFinished}},
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG3", UserID: 7, Status: StatusPaid}}, // treksiz
+	}
+	rows := []DeliveryOrder{
+		{ExpressNum: "YT111", UserID: 7},
+		{ExpressNum: "YT222", UserID: 9},
+	}
+	checks := CrossCheckOrders(views, rows)
+	if len(checks) != 2 {
+		t.Fatalf("treksiz buyurtma tashlanishi kerak: %d ta keldi", len(checks))
+	}
+	if checks[0].Mismatch || !checks[1].Mismatch {
+		t.Fatalf("status 4 toza, status 6 da xato kutilgan: %+v / %+v", checks[0], checks[1])
 	}
 }
 
-// Yetkazmada bor, lekin hali olib ketilmagan — 📦 xabari ketadi.
-func TestCompareDashboardArrivedNotTakenAlerts(t *testing.T) {
-	chk := compareDashboard(
-		AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"},
-		[]DeliveryOrder{{ExpressNum: "YT111", UserID: 7, BranchName: "SHOTA"}})
-	if chk.Delivered() {
-		t.Fatalf("olib ketilmagan bo'lishi kerak: %+v", chk)
+// MismatchAlerts faqat egasi mos kelmaganlarni matn qiladi.
+func TestMismatchAlerts(t *testing.T) {
+	views := []OrderView{
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", UserID: 7, ExpressNum: "YT111"}},
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG2", UserID: 7, ExpressNum: "YT222"}},
 	}
-	if got := chk.Alert(); got != DashAlertArrived {
-		t.Fatalf("Alert: %q kutilgan, keldi %q", DashAlertArrived, got)
+	rows := []DeliveryOrder{
+		{ExpressNum: "YT111", UserID: 7},
+		{ExpressNum: "YT222", UserID: 9},
 	}
-}
-
-// issuesHaveTrack - treksiz ro'yxat uchun yetkazma so'ralmaydi.
-func TestIssuesHaveTrack(t *testing.T) {
-	if issuesHaveTrack(nil) {
-		t.Fatal("bo'sh ro'yxat: false kutilgan")
+	got := MismatchAlerts(CrossCheckOrders(views, rows))
+	if len(got) != 1 {
+		t.Fatalf("bitta xato kutilgan, keldi %d: %v", len(got), got)
 	}
-	if issuesHaveTrack([]*OrderIssue{{OrderSN: "DG1"}, {OrderSN: "DG2", ExpressNum: "  "}}) {
-		t.Fatal("treksiz ro'yxat: false kutilgan")
-	}
-	if !issuesHaveTrack([]*OrderIssue{{OrderSN: "DG1"}, {OrderSN: "DG2", ExpressNum: "YT111"}}) {
-		t.Fatal("treki bor ro'yxat: true kutilgan")
+	for _, want := range []string{"DG2", "7", "9", "YT222"} {
+		if !strings.Contains(got[0].Text, want) {
+			t.Fatalf("matnda %q yo'q: %q", want, got[0].Text)
+		}
 	}
 }
 
-// DropDeliveredIssues - olib ketilmaganlar ro'yxatda qoladi, bazaga
-// tegilmaydi (DB bu testda nil).
-func TestDropDeliveredIssuesKeepsNotTaken(t *testing.T) {
+// DropArrivedIssues - yetkazmada chiqmagan muammo ro'yxatda qoladi
+// (bazaga tegilmaydi, DB bu testda nil).
+func TestDropArrivedIssuesKeepsNotArrived(t *testing.T) {
 	list := []*OrderIssue{{OrderSN: "DG1", ExpressNum: "YT111"}}
-	kept, n := DropDeliveredIssues(list, []DeliveryOrder{{ExpressNum: "YT111"}})
+	kept, n := DropArrivedIssues(list, []DeliveryOrder{{ExpressNum: "YT999"}})
 	if n != 0 || len(kept) != 1 {
-		t.Fatalf("olib ketilmagan muammo qolishi kerak: n=%d, kept=%d", n, len(kept))
+		t.Fatalf("kelmagan muammo qolishi kerak: n=%d, kept=%d", n, len(kept))
 	}
 }
 
-// Yetkazma ro'yxati bo'sh bo'lsa ham ro'yxat o'zgarmaydi.
-func TestDropDeliveredIssuesEmptyDelivery(t *testing.T) {
+// Egasi mos kelmagan muammo tashlanmaydi: xato aynan shu yerda.
+func TestDropArrivedIssuesKeepsMismatch(t *testing.T) {
+	list := []*OrderIssue{{OrderSN: "DG1", ExpressNum: "YT111", OwnerUserID: 7}}
+	kept, n := DropArrivedIssues(list, []DeliveryOrder{{ExpressNum: "YT111", UserID: 9}})
+	if n != 0 || len(kept) != 1 {
+		t.Fatalf("egasi mos kelmagan muammo qolishi kerak: n=%d, kept=%d", n, len(kept))
+	}
+}
+
+// Yetkazma ro'yxati bo'sh bo'lsa ro'yxat o'zgarmaydi.
+func TestDropArrivedIssuesEmptyDelivery(t *testing.T) {
 	list := []*OrderIssue{{OrderSN: "DG1", ExpressNum: "YT111"}}
-	kept, n := DropDeliveredIssues(list, nil)
+	kept, n := DropArrivedIssues(list, nil)
 	if n != 0 || len(kept) != 1 {
 		t.Fatalf("yetkazma bo'sh: ro'yxat o'zgarmasligi kerak: n=%d, kept=%d", n, len(kept))
+	}
+}
+
+// needsArrivalCheck statusga QARAMAYDI — treki bor buyurtma yetarli.
+func TestNeedsArrivalCheckIgnoresStatus(t *testing.T) {
+	if needsArrivalCheck([]OrderView{
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", Status: StatusPaid}},
+	}) {
+		t.Fatal("treksiz ro'yxat: false kutilgan")
+	}
+	if !needsArrivalCheck([]OrderView{
+		{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", Status: StatusWaiting, ExpressNum: "YT111"}},
+	}) {
+		t.Fatal("status 4, treki bor: true kutilgan")
 	}
 }

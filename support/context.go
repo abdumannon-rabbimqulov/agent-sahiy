@@ -351,8 +351,21 @@ type DeliveryBrief struct {
 	// Alerts - KOD topgan, xodimga aytilishi kerak bo'lgan holatlar
 	// (masalan posilka punktda muddatdan ortiq turgani). Modelga
 	// yuborilmaydi — har bir yozuvning o'z izohi bor; bu xodimlar
-	// guruhiga ketadi (agent.go).
-	Alerts []string `json:"-"`
+	// guruhiga ketadi (agent.go), eski posilkalarniki esa oldin
+	// filtrdan o'tadi (DropStaleAlerts).
+	Alerts []DeliveryAlert `json:"-"`
+}
+
+// DeliveryAlert - xodimga chiqadigan bitta ogohlantirish va u QAYSI
+// posilkaga tegishli ekani.
+//
+// Matnning o'zi yetmaydi: eski posilkalarning ogohlantirishi xodimga
+// chiqmasligi kerak (DropStaleAlerts), buning uchun esa yozuvning
+// yoshi va trek raqami kerak.
+type DeliveryAlert struct {
+	ExpressNum string // qaysi posilka
+	Days       int    // yetkazmaga kelganiga necha kun bo'ldi
+	Text       string // xodimga ko'rinadigan matn
 }
 
 // BranchMismatch - posilka mijoz viloyatidagi filialda emas.
@@ -363,6 +376,7 @@ type DeliveryBrief struct {
 // o'zi topishi shart emas, xodimga yuboriladi.
 type BranchMismatch struct {
 	ExpressNum   string
+	Days         int    // yetkazmaga kelganiga necha kun bo'ldi
 	Region       string // mijoz viloyati
 	Branch       string // posilka turgan filial
 	BranchRegion string // o'sha filial qaysi viloyatda
@@ -563,9 +577,14 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		region := RegionOf(o.City)
 		branchRegion := RegionOf(o.BranchName)
 		mismatch := region != "" && branchRegion != "" && region != branchRegion
+		// Yozuvning yoshi: posilka yetkazmaga qachon kelgani. Hamma
+		// ogohlantirishga shu qo'yiladi — qaysi biri eskirganini
+		// keyin DropStaleAlerts hal qiladi.
+		age := daysSinceText(o.CreatedAt)
 		if mismatch {
 			bad = append(bad, BranchMismatch{
 				ExpressNum:   o.ExpressNum,
+				Days:         age,
 				Region:       region,
 				Branch:       firstNonEmpty(o.BranchName, o.LocationNumber),
 				BranchRegion: branchRegion,
@@ -634,8 +653,12 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				// Kuryer viloyati, lekin posilka punktda muddatdan
 				// ortiq turibdi — "kutmoqda" deb o'tib bo'lmaydi.
 				row.Izoh = fmt.Sprintf(courierOverdueNote, row.ArrivedDays, DeliveryDays)
-				out.Alerts = append(out.Alerts, fmt.Sprintf(courierOverdueAlert,
-					o.ExpressNum, branch, row.ArrivedDays, DeliveryDays))
+				out.Alerts = append(out.Alerts, DeliveryAlert{
+					ExpressNum: o.ExpressNum,
+					Days:       age,
+					Text: fmt.Sprintf(courierOverdueAlert,
+						o.ExpressNum, branch, row.ArrivedDays, DeliveryDays),
+				})
 			default:
 				// Toshkent shahri/viloyati + haqiqiy punkt: posilka joyida,
 				// lekin bu viloyatda yetkazishni kuryer bajaradi.
@@ -676,8 +699,12 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			// qo'yiladi (viloyat izohi bo'lsa o'sha ustun turadi).
 			row.Izoh = mismatchIzoh(mismatch, region, true)
 			out.NeedCheck = append(out.NeedCheck, row)
-			out.Alerts = append(out.Alerts, fmt.Sprintf(courierLateAlert,
-				o.ExpressNum, row.Days, DeliveryDays))
+			out.Alerts = append(out.Alerts, DeliveryAlert{
+				ExpressNum: o.ExpressNum,
+				Days:       age,
+				Text: fmt.Sprintf(courierLateAlert,
+					o.ExpressNum, row.Days, DeliveryDays),
+			})
 		}
 	}
 
