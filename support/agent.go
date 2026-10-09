@@ -220,6 +220,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	var (
 		usage    Usage
 		dataCtx  []string      // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
+		replyCtx []string      // faqat javob YOZADIGAN bosqichlar uchun ko'rsatma
 		alerts   []string      // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
 		issues   []*OrderIssue // shu zanjirda yangi ochilgan muammoli buyurtmalar
 		langCtx  string        // birinchi promtdan chiqqan til ("uzb"/"rus"), bir marta uzatiladi
@@ -231,14 +232,24 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// salom bilan boshlashi kerak (greeting.go). Oxirgi qaror yuborish
 	// paytida qabul qilinadi (deliverChat) — bu faqat ton uchun ko'rsatma.
 	if needGreeting(clientID, conversationID, msgs) {
-		dataCtx = append(dataCtx, greetingGuidance)
+		replyCtx = append(replyCtx, greetingGuidance)
+	}
+
+	// Mijoz almashtirish uchun tovar tanlab berdi: tanlovni ko'rib sotib
+	// olish xodimning ishi, shuning uchun murojaat tanlangan havola bilan
+	// guruhga chiqadi va model qadamlarni qayta yozmaydi (reorder.go).
+	if picked := PickedReplacement(msgs); len(picked) > 0 {
+		replyCtx = append(replyCtx, pickedGuidance)
+		alerts = append(alerts, pickedAlert(picked))
+		log.Printf("agent: suhbat %d — mijoz almashtirish uchun tovar tanladi: %v",
+			conversationID, picked)
 	}
 
 	// Bekor qilish / pul qaytarish so'rovi: modelga qat'iy taqiq
 	// beriladi va murojaat xodimlar guruhiga chiqadi (cancel.go).
 	cancelAsk := WantsCancel(msgs)
 	if cancelAsk {
-		dataCtx = append(dataCtx, cancelGuidance)
+		replyCtx = append(replyCtx, cancelGuidance)
 		alerts = append(alerts, cancelAlert)
 		log.Printf("agent: suhbat %d — mijoz bekor qilish/pul qaytarish so'radi, xodimga topshirildi",
 			conversationID)
@@ -329,7 +340,16 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			break
 		}
 
-		userMsg := buildUserMessage(transcript, dataCtx)
+		// Birinchi bosqich — yo'naltiruvchi: u javob matni yozmaydi, shuning
+		// uchun "salom bilan boshla", "uzr so'ra" kabi ko'rsatmalar unga
+		// berilmaydi (ular modelni javob yozishga undab, yo'nalishni va
+		// tilni buzadi). Ular keyingi bosqichlardan boshlab qo'shiladi.
+		stepCtx := dataCtx
+		if step > 1 && len(replyCtx) > 0 {
+			stepCtx = append(append(make([]string, 0, len(dataCtx)+len(replyCtx)),
+				dataCtx...), replyCtx...)
+		}
+		userMsg := buildUserMessage(transcript, stepCtx)
 		raw, u, err := llm.Generate(ctx, p.Promt, userMsg)
 		usage = usage.Add(u)
 

@@ -34,8 +34,11 @@ const (
 
 // greetingGuidance - modelga beriladigan ko'rsatma (dataCtx orqali).
 // Bo'sh "salom: true" emas: model uchun bu buyruq bo'lishi kerak.
-const greetingGuidance = "Bu mijozga BUGUN birinchi javobimiz — javobni mijoz " +
-	"tilidagi salom bilan boshla (o'zbekcha lotinda \"Assalomu alaykum\"). " +
+const greetingGuidance = "Bu mijozga BUGUN birinchi javobimiz — javobni mijozning " +
+	"O'Z tili va alifbosidagi salom bilan boshla: o'zbekcha lotin — " +
+	"\"Assalomu alaykum\", o'zbekcha kirill — \"Ассалому алайкум\", rus — " +
+	"\"Здравствуйте\". Bu ko'rsatma faqat salom haqida, javob tilini " +
+	"O'ZGARTIRMAYDI: til mijozning xabaridan aniqlanadi. " +
 	"Faqat salom: ism, \"xush kelibsiz\" yoki uzun kirish qo'shma, keyin darhol " +
 	"javobning o'ziga o't."
 
