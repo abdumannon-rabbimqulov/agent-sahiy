@@ -469,7 +469,8 @@ const pickedUpNote = "Yetkazma ma'lumotida bu posilka FILIALDAN OLIB KETILGAN de
 	"olib ketilgani aytiladi. Bu jo'natma KURYERGA BERILMAGAN — \"kuryer\", " +
 	"\"kuryer qaytargan\", \"telefoningiz o'chiq bo'lgan\" deb yozma. " +
 	"Mijoz \"olmadim\" desa: buyurtmani O'ZI yoki yaqinlaridan biri olib ketgan " +
-	"bo'lishi mumkinligini xushmuomala so'ra; baribir olmagan bo'lsa xodimlar " +
+	"bo'lishi mumkinligini xushmuomala so'ra; baribir olmagan bo'lsa " +
+	"tekshirish uchun BUYURTMA RAQAMINI (DG bilan boshlanadi) so'ra va xodimlar " +
 	"tekshirishini ayt — muddat va'da qilma."
 
 // pickedUpRegionNote - xuddi shu holat, lekin mijoz Toshkentdan
@@ -489,7 +490,8 @@ const noCourierRegionNote = "Mijoz viloyatida KURYER yetkazish YO'Q (uyga yetkaz
 	"Toshkent shahri va Toshkent viloyatida) — posilka filialdan beriladi, mijoz o'zi borib oladi. " +
 	"Javobingda \"kuryer\", \"uyga olib boramiz\", \"kuryer qaytargan\", \"telefoningiz o'chiq edi\" " +
 	"kabi gaplarni ISHLATMA. Mijozdan so'ra: buyurtmani O'ZINGIZ yoki yaqiningiz filialdan " +
-	"olib ketgan bo'lishi mumkinmi? Olmagan bo'lsa xodimlar tekshiradi — muddat va'da qilma."
+	"olib ketgan bo'lishi mumkinmi? Olmagan bo'lsa tekshirish uchun BUYURTMA RAQAMINI " +
+	"(DG bilan boshlanadi) so'ra va xodimlar tekshirishini ayt — muddat va'da qilma."
 
 // askedOnlyNote - mijoz aniq buyurtma raqami yozgan, lekin AYNAN
 // o'sha buyurtmaning posilkasi yetkazma ro'yxatida chiqmagan holat.

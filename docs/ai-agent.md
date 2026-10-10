@@ -170,30 +170,18 @@ HOLAT, model uni o'zi bilib olmaydi:
 - `alertGuidance`, `foreignOrderNote`, `imageNoNumberHint` va
   `support/context.go` dagi qator izohlari.
 
-### Qayta buyurtma — faqat 3 va 10 holatlarida
+### Qayta buyurtma — tovar tanlash
 
-Taqiqlangan tovar o'rniga boshqasini tanlash tartibi (`support/reorder.go`)
-pul o'sha buyurtmada turganini talab qiladi. Shuning uchun u faqat ikki
-holatda to'g'ri:
+Taqiqlangan tovar o'rniga boshqasini tanlash tartibi `support/reorder.go`
+da. `MentionsReorder` xodim javobida (yoki AI matnida) "boshqa tovar
+tanlang" ma'nosini topadi; buyurtma holati bo'yicha TEKSHIRUV YO'Q —
+javob holatidan qat'i nazar mijozga ketaveradi, qarorni xodim o'zi
+qiladi.
 
-| Status | Nomi |
-|---|---|
-| `3` | sotib olingan, to'langan |
-| `10` | taqiqlangan tovar |
-
-`MentionsReorder` xodim javobida (yoki AI matnida) "boshqa tovar tanlang"
-ma'nosini topsa, `ReorderBlocked` buyurtma holatini **adminkadan jonli**
-oladi (muammo yozuvidagi status eskirgan bo'lishi mumkin). Holat mos
-kelmasa:
-
-- xodim javobi yo'lida — javob mijozga yuborilmaydi, qoralama panelda
-  qoladi va xodim guruhda sababni ko'radi ("⚠️ Qayta buyurtma holatga mos
-  emas: DG… — Xitoyda tranzaksiya yopilgan (holat 6)…");
-- AI zanjirida — javob avto-yuborilmaydi (`holdForAdmin`), holat esa
-  xodimlar guruhiga ogohlantirish bo'lib chiqadi.
-
-Adminka javob bermasa yoki buyurtma topilmasa javob TO'SILMAYDI (aloqa
-uzilgani uchun xodimning ishini ushlab qolmaymiz) — faqat logga yoziladi.
+Biz "boshqa tovar tanlang" deganimizdan keyin mijoz havola yoki rasm
+tashlasa, `PickedReplacement` o'sha tanlovni topadi: murojaat xodimlar
+guruhiga chiqadi, mijozga esa faqat "qabul qilindi, ko'rib chiqilmoqda"
+deyiladi.
 
 ### Salomlashish — kunda bir marta
 
@@ -568,6 +556,13 @@ Hal bo'lgach shu xabarga REPLY qilib yozing — javobingiz mijozga moslab yubori
 |---|---|---|
 | ⚠️ Muammoli buyurtma(lar) | yangi muammo topilganda | muammo(lar) yopiladi + mijozga javob |
 | 🆘 Yordam kerak | model `help` qaytarganda | mijozga javob (yopiladigan buyurtma yo'q) |
+
+**Bo'sh xabarlar guruhga chiqmaydi** (`support/help_filter.go`). Xulosa
+faqat "mijoz buyurtma raqamini yozmadi, raqam so'raldi" degan ma'noni
+bildirsa va matnda hech qanday buyurtma (DG…) yoki trek raqami bo'lmasa,
+xabar YUBORILMAYDI: xodimning qo'lidan hech narsa kelmaydi — buyurtma
+noma'lum, javob esa allaqachon mijozga ketgan. Matnda aniq raqam bo'lsa
+yoki kod o'zi holat topgan bo'lsa (`in.Alerts`), xabar odatdagidek chiqadi.
 
 **Hal qilish — Telegram guruhdagi reply orqali.** Bot yozgan xabarga xodim
 reply qilsa, o'sha matn yechim bo'lib saqlanadi (`resolved_via: telegram`,

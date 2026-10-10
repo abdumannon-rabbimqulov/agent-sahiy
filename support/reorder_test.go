@@ -2,25 +2,6 @@ package support
 
 import "testing"
 
-func TestReorderAllowed(t *testing.T) {
-	cases := []struct {
-		status int
-		want   bool
-	}{
-		{StatusPaid, true},   // 3 — sotib olingan, to'langan
-		{StatusBanned, true}, // 10 — taqiqlangan tovar
-		{StatusWaiting, false},
-		{StatusFinished, false},
-		{0, false},
-		{7, false},
-	}
-	for _, c := range cases {
-		if got := ReorderAllowed(c.status); got != c.want {
-			t.Errorf("ReorderAllowed(%d) = %v, kerak %v", c.status, got, c.want)
-		}
-	}
-}
-
 func TestMentionsReorder(t *testing.T) {
 	yes := []string{
 		"boshqa tovar tanlasin",

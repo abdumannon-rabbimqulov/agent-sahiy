@@ -390,7 +390,10 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		if langCtx == "" && a.HasLanguage() {
 			lang, _ := json.Marshal(map[string]bool{"uzb": a.Uzb, "rus": a.Rus})
 			langCtx = string(lang)
-			dataCtx = append(dataCtx, "Til: "+langCtx)
+			// replyCtx ga (dataCtx ga emas): u promtning OXIRIDA turadi,
+			// ya'ni salom ko'rsatmasidan keyin — oxirgi so'z til buyrug'ida
+			// qoladi.
+			replyCtx = append(replyCtx, langDirective(a.Uzb, a.Rus))
 		}
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
@@ -447,18 +450,6 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// Taqiqqa qaramay model javobida bekor qilish haqida yozgan bo'lsa,
 	// javob mijozga AVTOMATIK ketmaydi: avval admin o'qib chiqsin.
 	holdForAdmin := false
-
-	// Model "boshqa tovar tanlang" tartibini yozgan bo'lsa, buyurtma
-	// holati shunga mos kelishi kerak (reorder.go): pul o'sha buyurtmada
-	// turgan bo'lsagina mijoz boshqa tovar tanlay oladi. Mos kelmasa
-	// javob mijozga avtomatik ketmaydi.
-	if in.ChatReply != "" && MentionsReorder(in.ChatReply) {
-		if note := ReorderBlocked(chatSN); note != "" {
-			holdForAdmin = true
-			alerts = append(alerts, note)
-			log.Printf("agent: suhbat %d — %s", conversationID, note)
-		}
-	}
 
 	if cancelAsk && MentionsCancel(in.ChatReply) {
 		holdForAdmin = true
@@ -695,6 +686,14 @@ func DeliverStaffNotice(in *Interaction, issues []*OrderIssue) error {
 
 	// Muammo yo'q — faqat AI xulosasi.
 	if help == "" {
+		return nil
+	}
+	// Xulosa faqat "mijozdan buyurtma raqami so'raldi" bo'lsa guruhga
+	// chiqmaydi: xodimning qo'lidan hech narsa kelmaydi (help_filter.go).
+	// Kod topgan holat bo'lsa — baribir chiqadi.
+	if len(in.Alerts) == 0 && helpOnlyAsksNumber(help) {
+		log.Printf("agent: suhbat %d — xulosa faqat buyurtma raqami so'rovi, guruhga chiqmadi",
+			in.ConversationID)
 		return nil
 	}
 	msgID, err := SendTelegramIssue(helpText(in))

@@ -119,20 +119,6 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 		return in, nil
 	}
 
-	// Qayta buyurtma ("boshqa tovar tanlang") faqat ma'lum holatlarda
-	// to'g'ri: pul o'sha buyurtmada turgan bo'lishi kerak (reorder.go).
-	// Holat mos kelmasa javob mijozga YUBORILMAYDI — qoralama panelda
-	// qoladi, xodim guruhda sababni ko'radi.
-	blocked := ""
-	if MentionsReorder(reply) {
-		// Faqat DG raqamlari: trek raqami bo'yicha buyurtma topilmaydi
-		// va tekshiruv jim o'lib qolardi.
-		blocked = ReorderBlocked(numSN)
-		if blocked != "" {
-			log.Printf("xodim javobi: suhbat %d — %s", conversationID, blocked)
-		}
-	}
-
 	// LLM bilan mijoz tiliga moslab yozamiz.
 	usage, err := rewriteStaffReply(ctx, in, numSN, numEx, reply, msgs)
 	if err != nil {
@@ -148,14 +134,8 @@ func answerFromStaff(ctx context.Context, conversationID, clientID int64,
 	} else {
 		in.applyUsage(usage)
 		in.StepsCount = len(in.Steps)
-		if blocked != "" {
-			// Holat mos emas: avto-javob yoqiq bo'lsa ham yuborilmaydi.
-			in.Status = StatusPending
-			in.Error = blocked
-		} else {
-			// Avto-javob yoqiq bo'lsa darhol mijozga.
-			sendIfAuto(in, who)
-		}
+		// Avto-javob yoqiq bo'lsa darhol mijozga.
+		sendIfAuto(in, who)
 	}
 
 	if err := SaveInteraction(DB, in); err != nil {
