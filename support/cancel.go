@@ -68,22 +68,6 @@ func MentionsCancel(text string) bool {
 	return false
 }
 
-// cancelGuidance - shunday murojaatda modelga beriladigan qat'iy
-// ko'rsatma. Boshqa hamma ko'rsatmadan ustun turadi.
-const cancelGuidance = "MIJOZ BUYURTMANI BEKOR QILISH yoki PULNI QAYTARISH haqida yozdi. " +
-	"Bu qarorni FAQAT xodim qabul qiladi, sen emas.\n" +
-	"QAT'IY TAQIQ: bekor qilish yoki pul qaytarish haqida HECH QANDAY va'da berma, " +
-	"rozilik bildirma va ijobiy javob yozma. \"So'rovingizni qabul qildik\", " +
-	"\"bekor qilinadi\", \"bekor qilindi\", \"pulingiz qaytariladi\" kabi gaplar TAQIQLANADI. " +
-	"Muddat ham aytma, shart va tartibini ham tushuntirma.\n" +
-	"Javobingda \"bekor qilish\", \"otmena\", \"vozvrat\", \"pulni qaytarish\" so'zlarini " +
-	"UMUMAN ishlatma — bu mavzuni o'zing boshlama.\n" +
-	"Mijozga faqat shuni ayt: murojaati qabul qilindi va TEKSHIRILMOQDA, mutaxassislar " +
-	"ko'rib chiqib tez orada javob beradi. Kechikkani uchun uzr so'ra, xushmuomala bo'l.\n" +
-	"Javobingni SAVOL bilan tugatma va mijozdan hech narsa so'rama (masalan \"posilkani " +
-	"filialdan olgan bo'lishingiz mumkinmi?\") — murojaat xodimga topshirildi, tekshiruvni " +
-	"xodim o'tkazadi. Faqat uzr + \"tekshirilmoqda\" — boshqa gap qo'shma."
-
 // cancelAlert - xodimlar guruhiga ketadigan holat. Sozlamadan qat'i
 // nazar yuboriladi (Alerts bo'lsa help doim guruhga chiqadi).
 const cancelAlert = "Mijoz BUYURTMANI BEKOR QILISH / PUL QAYTARISH so'radi — " +

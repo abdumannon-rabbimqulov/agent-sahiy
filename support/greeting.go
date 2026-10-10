@@ -32,38 +32,6 @@ const (
 	GreetRU    = "Здравствуйте!"
 )
 
-// greetingGuidance - modelga beriladigan ko'rsatma (dataCtx orqali).
-// Bo'sh "salom: true" emas: model uchun bu buyruq bo'lishi kerak.
-const greetingGuidance = "Bu mijozga BUGUN birinchi javobimiz — javobni salom bilan boshla. " +
-	"Salom JAVOB YOZILAYOTGAN tilda bo'ladi: rus tilida javob yozsang — " +
-	"\"Здравствуйте\", o'zbekcha lotinda — \"Assalomu alaykum\", o'zbekcha " +
-	"kirillda — \"Ассалому алайкум\". Bu ko'rsatma FAQAT salom haqida va javob " +
-	"tilini O'ZGARTIRMAYDI: javob tili mijozning xabaridan aniqlanadi. " +
-	"Faqat salom: ism, \"xush kelibsiz\" yoki uzun kirish qo'shma, keyin darhol " +
-	"javobning o'ziga o't."
-
-// langDirective - modelga javob tilini aytadigan qator.
-//
-// Ilgari bu yerga quruq JSON ketardi ("Til: {\"uzb\":false,\"rus\":true}") va
-// model uni ma'lumot deb o'qib, baribir o'zbekcha javob yozardi — ayniqsa
-// salom ko'rsatmasi oxirida turgani uchun. Endi bu BUYRUQ.
-func langDirective(uzb, rus bool) string {
-	switch {
-	case rus && !uzb:
-		return "Til: mijoz RUS tilida yozmoqda — BUTUN javobni (salom ham, savol ham) " +
-			"RUS tilida yoz. O'zbekchaga o'tma, aralashtirma."
-	case uzb && !rus:
-		return "Til: mijoz O'ZBEK tilida yozmoqda — BUTUN javobni o'zbek tilida, " +
-			"mijozning alifbosida (lotin yoki kirill) yoz. Rus tiliga o'tma, aralashtirma."
-	default:
-		return "Til: mijoz xabarlarida ikkala til ham bor — javobni mijozning OXIRGI " +
-			"xabari qaysi tilda bo'lsa, o'sha tilda yoz va oxirigacha bitta tilda qol."
-	}
-}
-
-// staffGreetingNote - xodim javobini qayta yozish yo'li uchun shu ko'rsatma.
-const staffGreetingNote = "\n\n" + greetingGuidance
-
 // greetText - til bo'yicha salom matni.
 func greetText(lang closingLang) string {
 	switch lang {

@@ -152,23 +152,50 @@ Tizimdagi ma'lumot (faqat shunga tayan, o'zingdan to'qima):
 { "adminka": [ … ], "dashboard": [ … ] }
 ```
 
-### Kod faqat HOLATGA bog'liq ko'rsatma qo'shadi
+### Kod KO'RSATMA emas, MA'LUMOT yuboradi
 
-`buildUserMessage` modelga suhbat tarixi va "Tizimdagi ma'lumot"ni
-yuboradi. Til, ohang, javob uzunligi kabi doimiy qoidalarni kod EMAS, har
-bir promtning o'zi (DB, `promts` jadvali) belgilaydi — ilgari kod salom
-uchun shunday doimiy ko'rsatma qo'shardi va promtlarning o'z qoidalari
-bilan chalkashardi.
+Chegara qat'iy (`support/prompt_flags.go`):
 
-"Tizimdagi ma'lumot" blokiga qo'shiladigan yagona narsa — kod aniqlagan
-HOLAT, model uni o'zi bilib olmaydi:
+| Kim | Nima beradi |
+|---|---|
+| **Kod** | faqat ma'lumot: JSON, bayroqlar, raqamlar |
+| **Promt** (DB, `promts` jadvali) | qanday yozish: ohang, til, taqiqlar, qadamlar |
 
-- `cancelGuidance` — mijoz bekor qilish/pul qaytarish so'ragani
-  (`support/cancel.go`);
-- `greetingGuidance` — bu mijozga bugungi birinchi javobimiz, salom bilan
-  boshlanishi kerak (`support/greeting.go`, pastda);
-- `alertGuidance`, `foreignOrderNote`, `imageNoNumberHint` va
-  `support/context.go` dagi qator izohlari.
+Ilgari kod promt oxiriga tayyor jumlalar yopishtirardi ("Javob matnida AYNAN
+shu buyurtma raqamini yoz…", "Bu mijozga BUGUN birinchi javobimiz…", "bekor
+qilish haqida va'da berma…"). Model bir vaqtda ikki manbadan ko'rsatma olardi
+va ular to'qnashganda javob buzilardi: til almashib ketardi, ichki atamalar
+mijozga chiqardi, qadamlar o'rinsiz takrorlanardi.
+
+Endi kod topgan holatlar bitta JSON bo'lib boradi — faqat javob YOZADIGAN
+bosqichlarga (2-bosqichdan boshlab; 1-promt yo'naltiruvchi, unga ketmaydi):
+
+```
+Murojaat belgilari:
+{"bekor_qilish_sorovi":true,"salom":true,"tanlangan_tovar":["https://…"]}
+```
+
+| Bayroq | Manba |
+|---|---|
+| `salom` | `needGreeting` (`support/greeting.go`) |
+| `bekor_qilish_sorovi` | `WantsCancel` (`support/cancel.go`) |
+| `tanlangan_tovar` | `PickedReplacement` (`support/reorder.go`) |
+
+"Tizimdagi ma'lumot" blokida esa (1-bosqichga ham ketadi): `Til: {…}`,
+`{"rasmdan_oqilgan_raqamlar": […]}` yoki `{"rasmdan_raqam_chiqmadi": true}`,
+adminka/dashboard ma'lumoti.
+
+Kalitlar JSON ichida **tartiblangan** holda yoziladi (`mapJSON`): bir xil
+murojaat har safar bir xil matn bersin — aks holda LLM keshi behuda buziladi.
+
+Bayroqlarning MA'NOSI bazadagi promtlarda yozilgan — matni
+[promt-umumiy-belgilar.md](promt-umumiy-belgilar.md) da. Yangi bayroq
+qo'shilsa, promtlarga ham qo'shish shart, aks holda model uni e'tiborsiz
+qoldiradi.
+
+Istisno — ma'lumot JSON ining ICHIDAGI izohlar: `korsatma` (`alertGuidance`,
+`foreignOrderNote`) va `mijozga_nima_deyiladi` (`support/context.go`). Ular
+holatga qarab o'zgaradi va hozircha koddaligicha qoladi.
 
 ### Qayta buyurtma — tovar tanlash
 
@@ -191,9 +218,10 @@ birinchi ketgan javob** "Assalomu alaykum" (mijoz tilida) bilan boshlanadi.
 
 Ikki qatlam ishlaydi (`support/greeting.go`):
 
-1. **Model uchun belgi.** Zanjirda `greetingGuidance` dataCtx'ga qo'shiladi,
-   xodim javobi yo'lida esa `"salom": true` maydoni beriladi — model javobni
-   o'zi jonli jumla bilan boshlaydi.
+1. **Model uchun belgi.** Zanjirda "Murojaat belgilari" JSON iga
+   `"salom": true` qo'yiladi, xodim javobi yo'lida esa o'sha maydon
+   "Xodim javobi" JSON ida beriladi — model javobni o'zi jonli jumla bilan
+   boshlaydi.
 2. **Yuborish oldidan kod hakamlik qiladi** (`deliverChat`). Salom
    yetishmasa `WithGreeting` qo'shadi, ortiqcha bo'lsa `WithoutGreeting`
    olib tashlaydi. Nega aynan shu yerda: `auto_reply` default o'chiq, javob
@@ -419,15 +447,31 @@ Xabar **sanasi yuborilmaydi**: tartib yetarli, sana esa token sarflaydi va
 model javobida chalkashlik keltiradi. Haqiqiy sanalar (buyurtma yaratilgan,
 jo'natilgan) "Tizimdagi ma'lumot" blokida keladi.
 
-Til haqidagi ko'rsatma modelga **kod tomonidan qo'shilmaydi** — uni
-promtning o'zi aytadi (har bir promtning eng boshida "TIL QOIDASI" bloki
-turadi). Blok ikki maydonni ajratib aytadi: **`chat` — mijozning tilida**,
-**`help` — har doim o'zbekcha** (u xodimlar guruhiga ketadi). Ilgari bu
-ajratilmagandi va "ikki tilni aralashtirma" qoidasi `help` ning o'zbekchasi
-bilan qo'shilib, ruscha mijozga o'zbekcha javob yozilib qolardi — ayniqsa
-2-promtda, chunki u yerda `help` HAR DOIM to'ldiriladi. Ilgari kod alifboni o'zi aniqlab qo'shardi, lekin mijozning
-oxirgi xabari rasm bo'lganda (`[rasm yuborildi]`) noto'g'ri til
-tanlanardi.
+#### Til — mijozga biriktiriladi
+
+Til haqidagi **ko'rsatma** modelga kod tomonidan qo'shilmaydi — uni promtning
+o'zi aytadi (har bir promtning eng boshida "TIL QOIDASI" bloki turadi). Blok
+ikki maydonni ajratib aytadi: **`chat` — mijozning tilida**, **`help` — har
+doim o'zbekcha** (u xodimlar guruhiga ketadi). Ilgari bu ajratilmagandi va
+"ikki tilni aralashtirma" qoidasi `help` ning o'zbekchasi bilan qo'shilib,
+ruscha mijozga o'zbekcha javob yozilib qolardi.
+
+Kod faqat **ma'lumot** beradi: mijozning tili JSON bo'lib uzatiladi
+(`support/client_lang.go`).
+
+- AI zanjirida — alohida qator: `Til: {"rus":true,"uzb":false}` (o'zbekcha
+  bo'lsa `"alifbo": "lotin"` yoki `"kirill"` ham qo'shiladi).
+- Xodim javobi yo'lida (5-promt) — o'sha JSON `til` maydoni bo'lib
+  "Xodim javobi" ma'lumotining ichida keladi.
+
+Til **bazada saqlanadi** (`client_langs` jadvali, kalit — `client_id`):
+1-promt uni aniqlaganda (`uzb`/`rus`) qiymat mijozga biriktiriladi va
+keyingi murojaatlarda shu ishlatiladi. Baza bo'sh bo'lsa til mijozning
+oxirgi MATNLI xabaridan aniqlanadi (rasm havolalari o'tkazib yuboriladi).
+
+Nega kerak: xodim javobi yo'lida tilni hech kim aniqlamasdi va model suhbat
+tarixiga qarab taxmin qilardi — tarixning oxirida bizning o'zbekcha
+xabarimiz tursa, rus tilida yozib yurgan mijoz o'zbekcha javob olardi.
 
 "Tizimdagi ma'lumot" bloki faqat oldingi bosqichda `dashboard`/`adminka`
 so'ralgan bo'lsa qo'shiladi. Ya'ni odatiy ikki bosqich:

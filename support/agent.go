@@ -219,27 +219,35 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 
 	var (
 		usage    Usage
-		dataCtx  []string      // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
-		replyCtx []string      // faqat javob YOZADIGAN bosqichlar uchun ko'rsatma
-		alerts   []string      // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
-		issues   []*OrderIssue // shu zanjirda yangi ochilgan muammoli buyurtmalar
-		langCtx  string        // birinchi promtdan chiqqan til ("uzb"/"rus"), bir marta uzatiladi
+		dataCtx  []string           // oldingi bosqichlarda yig'ilgan tizim ma'lumoti
+		flags    = map[string]any{} // kod topgan bayroqlar — javob YOZADIGAN bosqichlarga
+		alerts   []string           // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
+		issues   []*OrderIssue      // shu zanjirda yangi ochilgan muammoli buyurtmalar
+		langCtx  string             // mijozning tili ("uzb"/"rus") — bir marta uzatiladi
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
 	)
 
 	// Salom: shu mijozga bugun birinchi javobimiz bo'lsa, model javobni
 	// salom bilan boshlashi kerak (greeting.go). Oxirgi qaror yuborish
-	// paytida qabul qilinadi (deliverChat) — bu faqat ton uchun ko'rsatma.
+	// paytida qabul qilinadi (deliverChat) — bu faqat ton uchun belgi.
 	if needGreeting(clientID, conversationID, msgs) {
-		replyCtx = append(replyCtx, greetingGuidance)
+		flags[FlagSalom] = true
+	}
+
+	// Mijozning tili: bazada saqlangani (yoki oxirgi xabaridan
+	// aniqlangani) zanjirning BIRINCHI bosqichidanoq beriladi —
+	// client_lang.go. Model uni 1-promtda o'zi ham aniqlaydi; o'shanda
+	// qiymat yangilanadi, qator esa takrorlanmaydi.
+	if langCtx = ClientLangJSON(clientID, msgs); langCtx != "" {
+		dataCtx = append(dataCtx, "Til: "+langCtx)
 	}
 
 	// Mijoz almashtirish uchun tovar tanlab berdi: tanlovni ko'rib sotib
 	// olish xodimning ishi, shuning uchun murojaat tanlangan havola bilan
 	// guruhga chiqadi va model qadamlarni qayta yozmaydi (reorder.go).
 	if picked := PickedReplacement(msgs); len(picked) > 0 {
-		replyCtx = append(replyCtx, pickedGuidance)
+		flags[FlagPicked] = picked
 		alerts = append(alerts, pickedAlert(picked))
 		log.Printf("agent: suhbat %d — mijoz almashtirish uchun tovar tanladi: %v",
 			conversationID, picked)
@@ -249,7 +257,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// beriladi va murojaat xodimlar guruhiga chiqadi (cancel.go).
 	cancelAsk := WantsCancel(msgs)
 	if cancelAsk {
-		replyCtx = append(replyCtx, cancelGuidance)
+		flags[FlagCancelAsk] = true
 		alerts = append(alerts, cancelAlert)
 		log.Printf("agent: suhbat %d — mijoz bekor qilish/pul qaytarish so'radi, xodimga topshirildi",
 			conversationID)
@@ -304,15 +312,13 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			chatSN = mergeNumbers(chatSN, img.OrderSN, 10)
 			chatEx = mergeNumbers(chatEx, img.Express, 10)
 			in.NumbersFromImage = true
-			dataCtx = append(dataCtx, "Mijoz yuborgan rasmdan o'qilgan raqamlar: "+
-				strings.Join(img.All(), ", ")+
-				". Mijoz shu buyurtma haqida yozmoqda — raqamni qaytadan so'rama.")
+			dataCtx = append(dataCtx, mapJSON(map[string]any{FlagImageNums: img.All()}))
 			natija = "TOPILDI: " + strings.Join(img.All(), ", ")
 			log.Printf("agent: suhbat %d — rasmdan raqam topildi: %v", conversationID, img.All())
 		} else {
 			// Raqam chiqmadi (rasmda yo'q yoki o'qilmadi) — model buni
 			// bilsin va raqamni mijozdan so'rasin. Zanjir to'xtamaydi.
-			dataCtx = append(dataCtx, imageNoNumberHint)
+			dataCtx = append(dataCtx, mapJSON(map[string]any{FlagImageNoNum: true}))
 			natija = "RASMDAN BUYURTMA RAQAMI CHIQMADI — raqam mijozdan so'raladi"
 			in.ImageNoNumber = true
 			log.Printf("agent: suhbat %d — rasmdan buyurtma raqami chiqmadi", conversationID)
@@ -345,9 +351,8 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// berilmaydi (ular modelni javob yozishga undab, yo'nalishni va
 		// tilni buzadi). Ular keyingi bosqichlardan boshlab qo'shiladi.
 		stepCtx := dataCtx
-		if step > 1 && len(replyCtx) > 0 {
-			stepCtx = append(append(make([]string, 0, len(dataCtx)+len(replyCtx)),
-				dataCtx...), replyCtx...)
+		if block := flagsBlock(flags); step > 1 && block != "" {
+			stepCtx = append(append(make([]string, 0, len(dataCtx)+1), dataCtx...), block)
 		}
 		userMsg := buildUserMessage(transcript, stepCtx)
 		raw, u, err := llm.Generate(ctx, p.Promt, userMsg)
@@ -385,15 +390,17 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			in.HelpText = a.Help
 		}
 
-		// Til birinchi promtdan chiqadi ("uzb"/"rus") — bir marta olinib,
-		// keyingi HAMMA bosqichga dataCtx orqali uzatiladi.
-		if langCtx == "" && a.HasLanguage() {
-			lang, _ := json.Marshal(map[string]bool{"uzb": a.Uzb, "rus": a.Rus})
-			langCtx = string(lang)
-			// replyCtx ga (dataCtx ga emas): u promtning OXIRIDA turadi,
-			// ya'ni salom ko'rsatmasidan keyin — oxirgi so'z til buyrug'ida
-			// qoladi.
-			replyCtx = append(replyCtx, langDirective(a.Uzb, a.Rus))
+		// Til birinchi promtdan chiqadi ("uzb"/"rus"). U mijozga
+		// biriktirilib bazada qoladi (client_lang.go): keyingi
+		// murojaatlarda ham, xodim javobi yo'lida ham o'sha til
+		// ishlatiladi. Qator zanjirning boshida qo'yilgan bo'lsa
+		// qaytarilmaydi.
+		if a.HasLanguage() {
+			SaveClientLang(clientID, a.Uzb, a.Rus, in.ClientMessage)
+			if langCtx == "" {
+				langCtx = langJSON(a.Uzb, a.Rus, detectLang(msgs).Script)
+				dataCtx = append(dataCtx, "Til: "+langCtx)
+			}
 		}
 
 		// Kod tizimdan ma'lumot oladi va keyingi bosqichga beradi.
@@ -755,14 +762,6 @@ func fetchHistory(conversationID int64) ([]Message, error) {
 		return FetchMessages(baseURL, token, conversationID, HistoryLimit())
 	})
 }
-
-// imageNoNumberHint - mijoz rasm yubordi, lekin undan buyurtma yoki trek
-// raqami chiqmadi. Model buni bilmasa "rasmingizni ko'rdim" deb noto'g'ri
-// javob yozib yuborishi mumkin.
-const imageNoNumberHint = "Mijoz rasm yubordi, lekin RASMDAN BUYURTMA RAQAMI CHIQMADI " +
-	"(rasm OCR bilan o'qildi). Rasm mazmuniga tayanma — uni ko'ra olmaysan. " +
-	"Buyurtma boshqa yo'l bilan aniqlanmasa, mijozdan buyurtma (DG…) yoki " +
-	"trek raqamini yozishini xushmuomala so'ra."
 
 // TranscriptMessage - modelga ketadigan bitta xabar. `type` — xabarni kim
 // yozgani: "client" (mijoz) yoki "agent" (biz tomon: agent yoki xodim).

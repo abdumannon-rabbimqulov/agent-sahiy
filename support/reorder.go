@@ -152,18 +152,6 @@ func PickedReplacement(msgs []Message) []string {
 	return out
 }
 
-// pickedGuidance - shunday holatda modelga beriladigan ko'rsatma.
-const pickedGuidance = "MIJOZ almashtirish uchun TOVAR TANLAB BERDI (havola yoki rasm tashladi). " +
-	"Tanlangan tovarni ko'rib, sotib olishni FAQAT xodim qiladi — sen emas.\n" +
-	"QAT'IY TAQIQ: tovar sotib olinadi, mos keladi yoki mos kelmaydi, narxi yetadi " +
-	"yoki yetmaydi deb HECH QANDAY va'da berma. Muddat aytma.\n" +
-	"\"Boshqa tovar tanlang\", \"To'lov qilish tugmasini bosing\" kabi qadamlarni QAYTA yozma: " +
-	"mijoz tovarni allaqachon tanlagan, bu qadamlar ortda qoldi.\n" +
-	"Mijozga faqat shuni ayt: tanlagan tovari qabul qilindi, mutaxassislar ko'rib chiqib " +
-	"tez orada javob beradi. Xushmuomala bo'l.\n" +
-	"Javobingni SAVOL bilan tugatma va mijozdan boshqa hech narsa so'rama — " +
-	"murojaat xodimga topshirildi."
-
 // pickedAlert - xodimlar guruhiga ketadigan holat. Tanlangan havola shu
 // yerda ko'rinadi: xodim suhbatni ochmasdan ham ishga kirisha oladi.
 func pickedAlert(picked []string) string {

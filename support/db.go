@@ -72,7 +72,7 @@ func InitDB() (*gorm.DB, error) {
 	if err := db.AutoMigrate(
 		&User{}, &Promt{},
 		&Interaction{}, &AgentStep{}, &ConversationState{}, &Setting{},
-		&OrderIssue{}, &TelegramPost{}, &TelegramCounter{},
+		&OrderIssue{}, &TelegramPost{}, &TelegramCounter{}, &ClientLang{},
 	); err != nil {
 		return nil, err
 	}

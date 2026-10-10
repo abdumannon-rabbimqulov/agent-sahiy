@@ -168,17 +168,33 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns, express []stri
 		return Usage{}, fmt.Errorf("promt %d topilmadi", StaffPromtID())
 	}
 
-	// Modelga faqat kerakli narsa: qaysi buyurtma va xodim nima degani.
+	// Modelga faqat MA'LUMOT beriladi, ko'rsatma emas: qaysi buyurtma,
+	// qaysi til, xodim nima degani. Qanday yozish — bazadagi promtda
+	// (prompt_flags.go dagi izohga qarang).
+	//
 	// Ichki holat matni ("status_label") ataylab yuborilmaydi — model uni
 	// javobga ko'chirib, mijozga ichki atamalarni chiqarib yuborardi.
 	info := map[string]any{
-		"order_sn":     strings.Join(sns, ", "),
 		"xodim_javobi": strings.TrimSpace(reply),
+	}
+	// Bo'sh maydon YUBORILMAYDI: "order_sn" bo'sh satr bo'lib ketsa,
+	// model uni bajarishga urinib raqamni to'qib chiqarardi
+	// ("buyurtmangiz (DG…)"). Maydon yo'qligi — "raqam noma'lum" degani,
+	// bu qoida promtda yozilgan.
+	if len(sns) > 0 {
+		info["order_sn"] = sns
 	}
 	// Trek raqami ALOHIDA kalitda: `order_sn` ichiga qo'shilsa model uni
 	// "buyurtma raqamingiz" deb yozib yuboradi.
 	if len(express) > 0 {
-		info["trek_raqami"] = strings.Join(express, ", ")
+		info["trek_raqami"] = express
+	}
+	// Mijozning tili — bazadan (client_lang.go). Bu yo'lda tilni hech
+	// kim aniqlamaydi: model suhbat tarixiga qarab taxmin qilardi va
+	// tarix oxirida bizning o'zbekcha xabarimiz tursa, rus tilida yozib
+	// yurgan mijozga o'zbekcha javob ketardi.
+	if lang := ClientLangJSON(in.ClientID, msgs); lang != "" {
+		info["til"] = json.RawMessage(lang)
 	}
 	// Kunning birinchi javobi bo'lsa model javobni salom bilan boshlaydi
 	// (greeting.go). Oxirgi qaror baribir yuborish paytida qabul
@@ -195,31 +211,6 @@ func rewriteStaffReply(ctx context.Context, in *Interaction, sns, express []stri
 	b.WriteString(formatTranscript(msgs))
 	b.WriteString("\n\nXodim javobi:\n")
 	b.Write(raw)
-	// Mijoz bir nechta buyurtma haqida yozgan bo'lishi mumkin — javob
-	// qaysi buyurtma haqida ekani matnning o'zida ko'rinishi kerak.
-	//
-	// Lekin "albatta yoz" FAQAT raqam bor bo'lganda aytiladi. Ilgari bu
-	// buyruq har doim qo'shilardi va `order_sn` bo'sh bo'lganda model
-	// uni bajarishga urinib raqamni TO'QIB chiqarardi — mijozga
-	// "buyurtmangiz (DG…)" deb ketardi.
-	switch {
-	case len(sns) > 0:
-		b.WriteString("\n\nJavob matnida AYNAN shu buyurtma raqam(lar)ini yoz: ")
-		b.WriteString(strings.Join(sns, ", "))
-		b.WriteString(" — mijoz javob qaysi buyurtmasi haqida ekanini bilsin. ")
-		b.WriteString("Suhbat tarixidagi boshqa raqamlarni javobga qo'shma.")
-	case len(express) > 0:
-		b.WriteString("\n\nBuyurtma raqami noma'lum, lekin trek raqami bor: ")
-		b.WriteString(strings.Join(express, ", "))
-		b.WriteString(" — javobda AYNAN shu trek raqamini yoz, boshqa raqam qo'shma.")
-	default:
-		b.WriteString("\n\nBuyurtma raqami NOMA'LUM (order_sn bo'sh). Javobda raqam YOZMA ")
-		b.WriteString("va \"DG…\", \"(DG...)\" kabi o'rnini bosuvchi belgi ham qo'yma — ")
-		b.WriteString("raqamsiz, umumiy qilib yoz.")
-	}
-	if salom {
-		b.WriteString(staffGreetingNote)
-	}
 	userMsg := b.String()
 
 	out, usage, err := llm.Generate(ctx, p.Promt, userMsg)
