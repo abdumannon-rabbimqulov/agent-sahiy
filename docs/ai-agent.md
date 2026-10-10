@@ -304,6 +304,20 @@ keltiriladi — apostrof, katta-kichik harf va filial nomlaridagi
 farqlar hisobga olinadi (`SAHIY GULISTION` → Sirdaryo, `SHOTA` →
 Toshkent shahri, `Nukus` → Qoraqalpog'iston).
 
+**Viloyat FILIAL nomidan ham olinadi.** Yetkazma yozuvidagi `city`
+(mijozning shahri) ko'pincha bo'sh keladi, `branch_name` esa har doim
+bor. Shuning uchun yetkazish turi `firstNonEmpty(mijoz viloyati, filial
+viloyati)` bo'yicha aniqlanadi (`support/context.go`, `delivRegion`).
+Ilgari faqat `city` ga qaralardi va u bo'sh bo'lsa kod Toshkent deb
+hisoblardi — natijada Farg'onadagi filialda turgan posilka haqida
+xodimlar guruhiga "kuryer hali olib bormagan (norma 3 kun)" degan
+noto'g'ri ogohlantirish ketardi. Toshkentdan tashqarida kuryerning
+o'zi yo'q: bunday qatorga `pickupNote` qo'yiladi ("mijoz o'zi borib
+oladi, filial nomi va manzilini ayt") va **ogohlantirish yuborilmaydi**.
+Kuryerga berilgan, lekin muddati o'tgan jo'natma uchun ham matn
+viloyatga qarab tanlanadi: `courierLateAlert` (Toshkent) yoki
+`pickupLateAlert` ("mijoz hali olib ketmagan").
+
 ### Filial viloyati mos kelmasa — xodimga
 
 Mijozning viloyati (`city`) bilan posilka turgan filial

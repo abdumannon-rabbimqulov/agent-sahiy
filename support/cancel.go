@@ -22,6 +22,14 @@ var cancelPhrases = []string{
 	"pulni qaytar", "pulimni qaytar", "pulni qaytr", "puli qaytar",
 	"pulimni qaytr", "qaytarib ber", "qaytarib bering", "qaytarib berin",
 	"vozvrat", "otmena", "otkaz",
+	// Mijozlar "otkaz" ni shunday ham yozadi (jonli yozishmalardan):
+	// "atkaz qivorila", "narsani atkas qlaman".
+	"atkaz", "atkas", "otkas",
+	// "buyurtma kerak emas" — faqat buyurtma so'zi bilan birga olinadi:
+	// yolg'iz "kerakmas" mijozning boshqa savolimizga javobi bo'lishi
+	// mumkin ("rasm yuboraymi?" — "kerakmas").
+	"zakaz keremas", "keremas zakaz", "zakaz kerakmas", "zakaz kermas",
+	"buyurtma kerakmas", "buyurtma kerak emas", "zakaz kerak emas",
 	// O'zbekcha kirill.
 	"бекор қил", "бекор кил", "пулни қайтар", "пулимни қайтар",
 	"қайтариб бер",
@@ -38,14 +46,17 @@ var cancelPhrases = []string{
 // uchrasa (masalan xodim tushuntirgan bo'lsa), qoida qayta ishga
 // tushmasin.
 //
-// Tarixning hammasi (oxirgi HISTORY_LIMIT ta xabar) ko'riladi, faqat
-// oxirgi xabar emas: mijoz bekor qilishni so'rab, keyin boshqa gap
-// yozsa ham mavzu ochiqligicha qoladi.
+// Oxirgi xabargina emas, JAVOBIMIZDAN KEYINGI hamma mijoz xabari
+// ko'riladi: mijoz bekor qilishni so'rab, ketma-ket yana ikki gap yozsa
+// ham so'rov e'tibordan qolmasin. Lekin biz javob bergandan keyin eski
+// so'rov qayta ko'tarilmaydi — aks holda xodimlar guruhiga bitta so'rov
+// uchun o'nlab ogohlantirish ketardi.
 func WantsCancel(msgs []Message) bool {
-	for _, m := range msgs {
-		if !m.FromClient() {
-			continue
-		}
+	// Faqat JAVOB BERILMAGAN xabarlar: butun tarix ko'rilganda bir marta
+	// aytilgan "pulimni qaytaring" abadiy qaytaverardi — mijoz keyin
+	// "rahmat" yoki "?" deb yozganda ham xodimlar guruhiga o'sha
+	// ogohlantirish yana ketardi (read.go: UnansweredClient).
+	for _, m := range UnansweredClient(msgs) {
 		if MentionsCancel(m.Message) {
 			return true
 		}

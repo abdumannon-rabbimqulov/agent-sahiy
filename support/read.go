@@ -59,10 +59,15 @@ func MarkReadCached(ids []int64) error {
 	})
 }
 
-// UnansweredClientIDs - oxirgi xodim javobidan keyin kelgan mijoz
-// xabarlarining ID'lari. Ya'ni aynan shu murojaatda javob berilayotganlar.
-// Xodim javobi umuman bo'lmasa — barcha mijoz xabarlari.
-func UnansweredClientIDs(msgs []Message) []int64 {
+// UnansweredClient - oxirgi javobimizdan KEYIN kelgan mijoz xabarlari,
+// ya'ni aynan shu murojaat. Javobimiz umuman bo'lmasa — hammasi.
+//
+// Nega kerak: kod topadigan holatlar (bekor qilish so'rovi va h.k.) butun
+// tarixga qarab izlanganda abadiy qaytaverardi. Mijoz bir marta "pulimni
+// qaytaring" desa, biz javob bersak ham, keyin u shunchaki "rahmat" yoki
+// "?" deb yozganda ham xodimlar guruhiga yana o'sha ogohlantirish
+// ketaverardi. Endi faqat JAVOB BERILMAGAN xabarlar ko'riladi.
+func UnansweredClient(msgs []Message) []Message {
 	start := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if !msgs[i].FromClient() {
@@ -70,9 +75,20 @@ func UnansweredClientIDs(msgs []Message) []int64 {
 			break
 		}
 	}
-	var ids []int64
+	out := make([]Message, 0, len(msgs)-start)
 	for _, m := range msgs[start:] {
-		if m.FromClient() && m.ID > 0 {
+		if m.FromClient() {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// UnansweredClientIDs - o'sha xabarlarning ID'lari.
+func UnansweredClientIDs(msgs []Message) []int64 {
+	var ids []int64
+	for _, m := range UnansweredClient(msgs) {
+		if m.ID > 0 {
 			ids = append(ids, m.ID)
 		}
 	}

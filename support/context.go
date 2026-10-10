@@ -285,6 +285,13 @@ const courierOverdueAlert = "%s — posilka %s punktida %d kundan beri turibdi, 
 const courierLateAlert = "%s — kuryerga berilganiga %d kun bo'ldi (norma %d kun), holati noaniq. " +
 	"Kuryer bilan bog'lanib tekshirish kerak"
 
+// pickupLateAlert - Toshkentdan TASHQARIDAGI filial uchun: u yerda
+// kuryer yetkazish yo'q, posilkani mijozning o'zi olib ketadi. Shuning
+// uchun "kuryer olib bormagan" emas, "mijoz hali olmagan" deyiladi.
+const pickupLateAlert = "%s — posilka %s filialida %d kundan beri turibdi (norma %d kun), " +
+	"mijoz hali olib ketmagan. Bu viloyatda kuryer yetkazish yo'q — mijoz bilan bog'lanib, " +
+	"olib ketishini eslatish kerak"
+
 // courierPendingNote - posilka mijoz viloyatidagi haqiqiy punktda, lekin
 // bu viloyatda (Toshkent shahri/viloyati) yetkazishni kuryer bajaradi:
 // mijoz o'zi borishi shart emas.
@@ -579,6 +586,20 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		region := RegionOf(o.City)
 		branchRegion := RegionOf(o.BranchName)
 		mismatch := region != "" && branchRegion != "" && region != branchRegion
+		// Yetkazish TURI (kuryer yoki o'zi olib ketish) posilka turgan
+		// filialga qarab ham aniqlanadi: mijozning `city` maydoni
+		// ko'pincha bo'sh keladi, filial nomi esa har doim bor
+		// ("SAHIY FARGONA"). Toshkentdan tashqaridagi filialda kuryer
+		// yetkazish UMUMAN yo'q — mijoz o'zi borib oladi.
+		//
+		// Ilgari faqat `city` ga qaralardi va u bo'sh bo'lsa kod
+		// Toshkent deb hisoblab, "posilka punktda 10 kundan beri
+		// turibdi, kuryer hali olib bormagan" degan noto'g'ri
+		// ogohlantirishni xodimlar guruhiga yuborardi.
+		//
+		// Viloyatlar mos kelmasa (mismatch) birinchi o'rinda mijozniki
+		// turadi — u holatning o'zi alohida izoh bilan ko'rsatiladi.
+		delivRegion := firstNonEmpty(region, branchRegion)
 		// Yozuvning yoshi: posilka yetkazmaga qachon kelgani. Hamma
 		// ogohlantirishga shu qo'yiladi — qaysi biri eskirganini
 		// keyin DropStaleAlerts hal qiladi.
@@ -593,7 +614,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			})
 		}
 		if out.Kind == "" {
-			out.Kind = DeliveryKindText(region)
+			out.Kind = DeliveryKindText(delivRegion)
 		}
 
 		// O'zi-olib-ketish turi + status=7 + delivered=true — mijoz
@@ -601,14 +622,14 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		// (ayniqsa "tekshirish_kerak"ga) tushmasin — yakunlangan holat.
 		if o.Delivered && o.Status == 7 && expressLineKind(o.ExpressLine) == "pickup" {
 			izoh := pickedUpNote
-			if region != "" && !HomeDeliveryRegion(region) {
+			if delivRegion != "" && !HomeDeliveryRegion(delivRegion) {
 				izoh = pickedUpRegionNote
 			}
 			out.PickedUp = append(out.PickedUp, PickupDone{
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 				PickedAt:   sanaMatnISO(o.DeliveredAt),
-				Region:     region,
+				Region:     delivRegion,
 				Izoh:       izoh,
 			})
 			continue
@@ -628,7 +649,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				Address:     trimText(plainVal(o.BranchAddress), 80),
 				ArrivedAt:   sanaMatnISO(o.CreatedAt),
 				ArrivedDays: daysSinceText(o.CreatedAt),
-				Region:      region,
+				Region:      delivRegion,
 			}
 			// Izoh tanlash tartibi: avval xato holat, keyin "hali yo'lda",
 			// oxirida oddiy "kelib bo'ldi, olib keting". Izoh HECH QACHON
@@ -644,12 +665,15 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				// Viloyat mos emas — bu hamma izohdan muhimroq.
 				row.Izoh = mismatchNote
 			case central || notOpenYet:
-				if HomeDeliveryRegion(region) || region == "" {
+				if HomeDeliveryRegion(delivRegion) || delivRegion == "" {
 					row.Izoh = centralWarehouseNote
 				} else {
 					row.Izoh = centralWarehouseRegionNote
 				}
-			case region != "" && !HomeDeliveryRegion(region):
+			case delivRegion != "" && !HomeDeliveryRegion(delivRegion):
+				// Toshkentdan tashqari: kuryer yo'q, mijoz o'zi oladi.
+				// Muddat o'tgan-o'tmagani bu yerda ahamiyatsiz —
+				// posilkani olib boradigan kuryerning o'zi yo'q.
 				row.Izoh = pickupNote
 			case row.ArrivedDays > DeliveryDays:
 				// Kuryer viloyati, lekin posilka punktda muddatdan
@@ -677,8 +701,8 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			out.NeedCheck = append(out.NeedCheck, SentDelivery{
 				ExpressNum: o.ExpressNum,
 				Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
-				Region:     region,
-				Izoh:       mismatchIzoh(mismatch, region, true),
+				Region:     delivRegion,
+				Izoh:       mismatchIzoh(mismatch, delivRegion, true),
 			})
 			continue
 		}
@@ -688,8 +712,8 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			Branch:     firstNonEmpty(o.BranchName, o.LocationNumber),
 			SentAt:     sanaMatnISO(o.DeliveredAt),
 			Days:       int(now.Sub(t).Hours() / 24),
-			Region:     region,
-			Izoh:       mismatchIzoh(mismatch, region, false),
+			Region:     delivRegion,
+			Izoh:       mismatchIzoh(mismatch, delivRegion, false),
 		}
 		if row.Days < 0 {
 			row.Days = 0 // sana kelajakda — 0 kun deb hisoblaymiz
@@ -699,13 +723,20 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		} else {
 			// Muddati o'tgan: holati noaniq — izoh shu qatorga ham
 			// qo'yiladi (viloyat izohi bo'lsa o'sha ustun turadi).
-			row.Izoh = mismatchIzoh(mismatch, region, true)
+			row.Izoh = mismatchIzoh(mismatch, delivRegion, true)
 			out.NeedCheck = append(out.NeedCheck, row)
+			// Kuryeri yo'q viloyatda "kuryer olib bormagan" deyish
+			// noto'g'ri: u yerda posilkani mijozning o'zi filialdan
+			// oladi, tekshiriladigan narsa ham boshqa.
+			alert := fmt.Sprintf(courierLateAlert, o.ExpressNum, row.Days, DeliveryDays)
+			if delivRegion != "" && !HomeDeliveryRegion(delivRegion) {
+				alert = fmt.Sprintf(pickupLateAlert,
+					o.ExpressNum, row.Branch, row.Days, DeliveryDays)
+			}
 			out.Alerts = append(out.Alerts, DeliveryAlert{
 				ExpressNum: o.ExpressNum,
 				Days:       age,
-				Text: fmt.Sprintf(courierLateAlert,
-					o.ExpressNum, row.Days, DeliveryDays),
+				Text:       alert,
 			})
 		}
 	}
