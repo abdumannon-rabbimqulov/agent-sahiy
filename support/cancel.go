@@ -11,7 +11,10 @@
 // baribir taqiqni buzsa, javob mijozga avtomatik ketmaydi.
 package support
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // cancelPhrases - bekor qilish / pul qaytarish so'rovini bildiradigan
 // iboralar. Qisqa o'zak olingan: "bekor qil" — qilaman, qilishni,
@@ -21,15 +24,7 @@ var cancelPhrases = []string{
 	"bekor qil", "bekor kil", "bekorga chiqar", "bekor qilin",
 	"pulni qaytar", "pulimni qaytar", "pulni qaytr", "puli qaytar",
 	"pulimni qaytr", "qaytarib ber", "qaytarib bering", "qaytarib berin",
-	"vozvrat", "otmena", "otkaz",
-	// Mijozlar "otkaz" ni shunday ham yozadi (jonli yozishmalardan):
-	// "atkaz qivorila", "narsani atkas qlaman".
-	"atkaz", "atkas", "otkas",
-	// "buyurtma kerak emas" — faqat buyurtma so'zi bilan birga olinadi:
-	// yolg'iz "kerakmas" mijozning boshqa savolimizga javobi bo'lishi
-	// mumkin ("rasm yuboraymi?" — "kerakmas").
-	"zakaz keremas", "keremas zakaz", "zakaz kerakmas", "zakaz kermas",
-	"buyurtma kerakmas", "buyurtma kerak emas", "zakaz kerak emas",
+	"vozvrat", "otmena",
 	// O'zbekcha kirill.
 	"бекор қил", "бекор кил", "пулни қайтар", "пулимни қайтар",
 	"қайтариб бер",
@@ -37,6 +32,33 @@ var cancelPhrases = []string{
 	"отмен", "верните деньги", "вернуть деньги", "возврат", "отказ",
 	// Ingliz tili (kamdan-kam, lekin uchraydi).
 	"cancel", "refund",
+}
+
+// cancelWordPrefixes - "otkaz" turkumi. Mijozlar uni turlicha yozadi
+// ("atkaz qivorila", "narsani atkas qlaman", "otkazdim"), lekin bu
+// bo'laklar qisqa — boshqa so'zning O'RTASIDA tasodifan uchrab qolishi
+// mumkin. MentionsCancel esa modelning O'Z javobiga ham qo'llanadi
+// (agent.go), ya'ni tasodifiy moslik ham murojaatni xodimga chiqarib,
+// ham avto-javobni to'xtatib qo'yardi.
+//
+// Shuning uchun ular butun matndan emas, SO'Z BOSHIDAN izlanadi:
+// "atkaz", "otkazdim" — ha; o'rtasida shu bo'lagi bor begona so'z — yo'q.
+var cancelWordPrefixes = []string{"otkaz", "otkas", "atkaz", "atkas"}
+
+// cancelOrderWords / cancelNotNeeded - "buyurtma kerak emas" turkumi.
+// Ikki bo'lak matnda YONMA-YON turishi shart emas: "zakazim kerakmas",
+// "zakazni kerak emas", "buyurtmani kerakmas" — hammasi shu ma'noda.
+// Ilgari bu yerda "zakaz kerakmas" kabi ko'p so'zli aniq iboralar
+// turardi va qo'shimchali shakllar umuman ushlanmasdi.
+//
+// Yolg'iz "kerakmas" yetarli emas: u bizning boshqa savolimizga javob
+// bo'lishi mumkin ("rasm yuboraymi?" — "kerakmas"). Shuning uchun
+// buyurtma so'zi ham bo'lishi shart.
+var cancelOrderWords = []string{"zakaz", "buyurtma", "order", "заказ"}
+
+var cancelNotNeeded = []string{
+	"kerakmas", "kerak emas", "keremas", "kermas", "kerakmi emas",
+	"не нужен", "не нужна", "не надо",
 }
 
 // WantsCancel - suhbat tarixidagi MIJOZ xabarlarida bekor qilish yoki
@@ -72,6 +94,37 @@ func MentionsCancel(text string) bool {
 		return false
 	}
 	for _, p := range cancelPhrases {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	// "otkaz" turkumi — faqat so'z boshida.
+	for _, w := range splitWords(t) {
+		for _, p := range cancelWordPrefixes {
+			if strings.HasPrefix(w, p) {
+				return true
+			}
+		}
+	}
+	// "buyurtma ... kerak emas" — ikki bo'lak yonma-yon bo'lishi shart emas.
+	if containsAny(t, cancelOrderWords) && containsAny(t, cancelNotNeeded) {
+		return true
+	}
+	return false
+}
+
+// splitWords - matnni so'zlarga ajratadi: harf va raqamdan boshqa
+// hamma narsa ajratuvchi hisoblanadi ("atkaz, qivorila!" → "atkaz",
+// "qivorila").
+func splitWords(t string) []string {
+	return strings.FieldsFunc(t, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+// containsAny - ro'yxatdagi bo'laklardan birortasi matnda bormi.
+func containsAny(t string, parts []string) bool {
+	for _, p := range parts {
 		if strings.Contains(t, p) {
 			return true
 		}

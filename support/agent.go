@@ -458,7 +458,17 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// javob mijozga AVTOMATIK ketmaydi: avval admin o'qib chiqsin.
 	holdForAdmin := false
 
-	if cancelAsk && MentionsCancel(in.ChatReply) {
+	// DIQQAT: bu tekshiruv `cancelAsk` ga BOG'LANMAYDI. `cancelAsk` faqat
+	// javob berilmagan oynani ko'radi (cancel.go), ya'ni mijoz "pulimni
+	// qaytaring" degandan keyin biz bir marta javob bersak, uning
+	// keyingi "qachon bo'ladi?" xabarida `cancelAsk` allaqachon false
+	// bo'ladi. Tutqich o'sha oynaga bog'langanda model shu bosqichda
+	// "buyurtmangiz bekor qilindi" deb yozsa, javob adminsiz mijozga
+	// ketardi — aynan shu holatning oldini olish uchun bu tutqich bor.
+	// Zanjir promtlari bu mavzuda umuman yozmasligi kerak, shuning
+	// uchun javobda bunday gap chiqishining o'zi admin ko'rigini talab
+	// qiladi.
+	if MentionsCancel(in.ChatReply) {
 		holdForAdmin = true
 		alerts = append(alerts, cancelReplyAlert)
 		log.Printf("agent: suhbat %d — javobda bekor qilish haqida gap bor, avto-javob to'xtatildi",

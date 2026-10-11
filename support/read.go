@@ -67,10 +67,15 @@ func MarkReadCached(ids []int64) error {
 // qaytaring" desa, biz javob bersak ham, keyin u shunchaki "rahmat" yoki
 // "?" deb yozganda ham xodimlar guruhiga yana o'sha ogohlantirish
 // ketaverardi. Endi faqat JAVOB BERILMAGAN xabarlar ko'riladi.
+// Oynani faqat BIZNING javobimiz ("agent") yopadi. Ilgari bu yerda
+// `!FromClient()` turardi va "seller" (sotuvchi) yozuvi ham javob deb
+// hisoblanardi: mijozning "pulimni qaytaring" so'rovidan keyin darhol
+// shunday yozuv tushsa, so'rov birinchi rundayoq oynadan tushib qolib,
+// xodimlar guruhiga UMUMAN chiqmasdi.
 func UnansweredClient(msgs []Message) []Message {
 	start := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if !msgs[i].FromClient() {
+		if msgs[i].FromAgent() {
 			start = i + 1
 			break
 		}

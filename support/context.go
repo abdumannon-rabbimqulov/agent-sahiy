@@ -613,8 +613,22 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				BranchRegion: branchRegion,
 			})
 		}
+		// Yetkazish turi FAQAT mijozning viloyatidan olinadi. Filialga
+		// qarab (delivRegion) aniqlash mumkin emas: `out.Kind` butun
+		// javobga bitta, "mijoz viloyatida yetkazish qanday ishlaydi"
+		// degan umumiy matn. `city` bo'sh bo'lganda posilka turgan
+		// filialning viloyati olinsa, toshkentlik mijozga "Farg'ona
+		// viloyatida uyga yetkazish yo'q, filialdan o'zingiz olib
+		// keting" deb aytib yuborardi — va 760-qatordagi himoya ham
+		// ishlamaydi, chunki `mismatch` bo'sh bo'lmagan `region` ni
+		// talab qiladi.
+		//
+		// Viloyat noma'lum bo'lsa, matn bo'sh qoladi. Bu yo'qotish
+		// emas: har bir posilkaning O'Z `izoh` maydoni (pickupNote,
+		// courierPendingNote va h.k.) delivRegion bo'yicha baribir
+		// qo'yiladi va u aniqroq — bitta yozuvga tegishli.
 		if out.Kind == "" {
-			out.Kind = DeliveryKindText(delivRegion)
+			out.Kind = DeliveryKindText(region)
 		}
 
 		// O'zi-olib-ketish turi + status=7 + delivered=true — mijoz
@@ -672,9 +686,22 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 				}
 			case delivRegion != "" && !HomeDeliveryRegion(delivRegion):
 				// Toshkentdan tashqari: kuryer yo'q, mijoz o'zi oladi.
-				// Muddat o'tgan-o'tmagani bu yerda ahamiyatsiz —
+				// MIJOZGA aytiladigan izoh muddatga bog'liq emas —
 				// posilkani olib boradigan kuryerning o'zi yo'q.
 				row.Izoh = pickupNote
+				// XODIMGA esa bog'liq: bu shox `row.ArrivedDays`
+				// tekshiruvidan OLDIN turadi, shuning uchun uzoq
+				// turgan posilka uchun ogohlantirish shu yerda
+				// qo'yiladi. Busiz viloyat filialida 60 kun yotgan
+				// posilka xodimlar guruhiga umuman chiqmaydi.
+				if row.ArrivedDays > DeliveryDays {
+					out.Alerts = append(out.Alerts, DeliveryAlert{
+						ExpressNum: o.ExpressNum,
+						Days:       age,
+						Text: fmt.Sprintf(pickupLateAlert,
+							o.ExpressNum, branch, row.ArrivedDays, DeliveryDays),
+					})
+				}
 			case row.ArrivedDays > DeliveryDays:
 				// Kuryer viloyati, lekin posilka punktda muddatdan
 				// ortiq turibdi — "kutmoqda" deb o'tib bo'lmaydi.

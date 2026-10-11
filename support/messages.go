@@ -28,6 +28,12 @@ type Message struct {
 // FromClient - xabarni mijoz yozganmi (agent/xodim emas).
 func (m Message) FromClient() bool { return m.SenderType == "client" }
 
+// FromAgent - xabarni BIZ yozganmi. `sender_type` da uchta rol bor:
+// "agent" (biz), "client" (mijoz) va "seller" (sotuvchi). Faqat "agent"
+// bizning javobimiz: "seller" yozuvi mijozga javob emas, shuning uchun
+// u javobsiz oynani YOPMAYDI (read.go: UnansweredClient).
+func (m Message) FromAgent() bool { return m.SenderType == "agent" }
+
 // FetchMessages suhbatning oxirgi `limit` ta xabarini eskisidan yangisiga
 // saralab qaytaradi. Server yangisini birinchi qilib beradi, shuning uchun
 // id bo'yicha qayta saralanadi.
