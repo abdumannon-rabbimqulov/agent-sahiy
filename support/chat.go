@@ -11,8 +11,6 @@ import (
 	"strings"
 )
 
-// ChatsPath — suhbatlar ro'yxati. Server buni GET bilan bermaydi (405),
-// faqat POST qabul qiladi — filtr body'da ketadi, ma'lumot esa o'zgarmaydi.
 const ChatsPath = "/api/v1/support.chat.conversation/filter"
 
 // ErrUnauthorized token rad etilganda qaytadi — chaqiruvchi Refresh qiladi.
@@ -99,64 +97,56 @@ func FetchChats(baseURL, token string, f ChatFilter) ([]Chat, error) {
 // sahifa bilan cheklanmaydi — bir nechta sahifa olinadi va keyin
 // o'zimiz saralaymiz.
 func FetchAllChats(baseURL, token string, pages, limit int) ([]Chat, error) {
-	all, _, err := FetchChatsFrom(baseURL, token, 1, pages, limit)
-	return all, err
-}
-
-// FetchChatsFrom `startPage`dan boshlab `pages` ta sahifani yig'ib qaytaradi.
-// Ro'yxat butunlay tugagan bo'lsa (oxirgi sahifadan kam natija kelsa yoki
-// sahifa bo'sh bo'lsa) ikkinchi qiymat `true` bo'ladi — chaqiruvchi
-// keyingi safar 1-sahifadan qayta boshlashi kerakligini shundan biladi.
-//
-// Nega startPage kerak: server javobsiz suhbatlarni ustunlik bilan
-// bermaydi, shunchaki sahifalab beradi. Doim 1-sahifadan boshlasak, tez-tez
-// yangilanadigan (yangi mijozlar yozgan) suhbatlar doim birinchi sahifalarda
-// turib, uzoqdagi eski javobsiz suhbatlarga hech qachon navbat yetmaydi.
-// Sahifa oynasini har chaqiruvda surib borish shu muammoni hal qiladi:
-// vaqt o'tishi bilan butun ro'yxat aylanib chiqiladi.
-func FetchChatsFrom(baseURL, token string, startPage, pages, limit int) ([]Chat, bool, error) {
-	if startPage < 1 {
-		startPage = 1
-	}
 	if pages < 1 {
 		pages = 1
 	}
 	if limit < 1 {
 		limit = 100
 	}
-
 	seen := map[int64]bool{}
 	var all []Chat
-	reachedEnd := false
-	for i := 0; i < pages; i++ {
-		p := startPage + i
-		part, err := FetchChats(baseURL, token, ChatFilter{Page: p, Limit: limit})
+	_, err := eachPage(baseURL, token, pages, limit, func(part []Chat) bool {
+		all = appendUnique(all, seen, part...)
+		return true
+	})
+	if err != nil && len(all) == 0 {
+		return nil, err
+	}
+	return all, nil // xato bo'lsa ham olingan qism bilan davom etamiz
+}
+
+// eachPage 1-sahifadan boshlab `maxPages` tagacha sahifa oladi va har
+// biriga fn ni chaqiradi. Ro'yxat tugasa (bo'sh yoki to'liqmas sahifa)
+// yoki fn false qaytarsa to'xtaydi. Oxirgi so'ralgan sahifa raqamini
+// qaytaradi.
+func eachPage(baseURL, token string, maxPages, limit int, fn func([]Chat) bool) (int, error) {
+	page := 0
+	for page < maxPages {
+		page++
+		part, err := FetchChats(baseURL, token, ChatFilter{Page: page, Limit: limit})
 		if err != nil {
-			if len(all) > 0 {
-				break // bir qismi olindi — shuning bilan davom etamiz
-			}
-			return nil, false, err
+			return page, err
 		}
-		if len(part) == 0 {
-			reachedEnd = true
+		if len(part) == 0 || !fn(part) || len(part) < limit {
 			break
 		}
-		for _, c := range part {
-			if !seen[c.ID] {
-				seen[c.ID] = true
-				all = append(all, c)
-			}
-		}
-		if len(part) < limit {
-			reachedEnd = true
-			break // oxirgi sahifa
+	}
+	return page, nil
+}
+
+// appendUnique ID bo'yicha takrorlanmaganlarini qo'shadi.
+func appendUnique(all []Chat, seen map[int64]bool, chats ...Chat) []Chat {
+	for _, c := range chats {
+		if !seen[c.ID] {
+			seen[c.ID] = true
+			all = append(all, c)
 		}
 	}
-	return all, reachedEnd, nil
+	return all
 }
 
 // ChatsJSON suhbatlarni tayyor JSON matn qilib qaytaradi:
-// {"count": N, "chats": [{"id":..,"client_id":..,"created_at":..,"ms_created_at":..}]}
+// {"count": N, "chats": [...]}
 func ChatsJSON(baseURL, token string, f ChatFilter) ([]byte, error) {
 	chats, err := FetchChats(baseURL, token, f)
 	if err != nil {
@@ -206,42 +196,23 @@ func FetchUnansweredChats(baseURL, token string, maxPages, limit int) ([]Chat, e
 	// Bitta qo'shimcha sahifaning narxi ~1.2s, o'tkazib yuborilgan
 	// mijozning narxi esa ancha qimmat.
 	zeroStreak := 0
-	lastPage := 0
-	for page := 1; page <= maxPages; page++ {
-		lastPage = page
-		part, err := FetchChats(baseURL, token, ChatFilter{Page: page, Limit: limit})
-		if err != nil {
-			if len(all) > 0 {
-				break // bir qismi olindi — shuning bilan davom etamiz
-			}
-			return nil, err
-		}
-		if len(part) == 0 {
-			break // ro'yxat tugadi
-		}
-
+	lastPage, err := eachPage(baseURL, token, maxPages, limit, func(part []Chat) bool {
 		n := 0
 		for _, c := range part {
-			if !c.Unanswered() {
-				continue
-			}
-			n++
-			if !seen[c.ID] {
-				seen[c.ID] = true
-				all = append(all, c)
+			if c.Unanswered() {
+				n++
+				all = appendUnique(all, seen, c)
 			}
 		}
-		if n == 0 {
-			zeroStreak++
-			if zeroStreak >= unansweredZeroPages {
-				break // javobsiz zona ishonchli tugadi
-			}
-		} else {
+		if n > 0 {
 			zeroStreak = 0
+			return true
 		}
-		if len(part) < limit {
-			break // oxirgi sahifa
-		}
+		zeroStreak++
+		return zeroStreak < unansweredZeroPages // javobsiz zona ishonchli tugadi
+	})
+	if err != nil && len(all) == 0 {
+		return nil, err
 	}
 	// Chegaraga urilsak — server saralashi o'zgargan bo'lishi mumkin:
 	// javobsizlar ro'yxat bo'ylab tarqalgan. Buni jimgina o'tkazib
