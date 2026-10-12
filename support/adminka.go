@@ -256,21 +256,6 @@ func str(v any) string {
 	}
 }
 
-// numFloat kasrli raqamni oladi (matn bo'lsa ham).
-func numFloat(v any) float64 {
-	switch x := v.(type) {
-	case float64:
-		return x
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
-		if err != nil {
-			return 0
-		}
-		return f
-	}
-	return 0
-}
-
 // num64 raqamni oladi; matn bo'lsa ham parse qilib ko'radi.
 func num64(v any) int64 {
 	switch x := v.(type) {

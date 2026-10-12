@@ -18,9 +18,9 @@ import (
 
 // Poller sozlamalari (.env).
 const (
-	DefaultPollInterval = 60  // sekund
-	DefaultChatsLimit   = 100 // bir sahifada nechta suhbat
-	DefaultChatsPages   = 6   // nechta sahifa ko'riladi (faqat ScanOnce uchun)
+	DefaultPollInterval = 60 // sekund
+	DefaultChatsLimit   = 10 // bir sahifada nechta suhbat
+	DefaultChatsPages   = 1  // nechta sahifa ko'riladi (faqat ScanOnce uchun)
 
 	// DefaultIssueReviewSec - ochiq muammolarni qayta ko'rib chiqish
 	// oralig'i. Bu ish poller siklidan ALOHIDA yuradi (qarang:
