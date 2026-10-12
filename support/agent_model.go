@@ -130,6 +130,13 @@ type Interaction struct {
 	// turgan (mijoz qayta yozmagan, admin ham tasdiqlamagan). Bazada
 	// saqlanmaydi — ro'yxat chiqarilganda hisoblanadi.
 	Overdue bool `gorm:"-" json:"overdue,omitempty"`
+
+	// Lang, Script - mijoz bilan yozishish tili (client_langs jadvali).
+	// Bazada Interaction bilan bog'lanmaydi — ro'yxat chiqarilganda
+	// qo'shiladi: admin navbat kartasida tilni ko'rib, shu yerning
+	// o'zida to'g'rilay olsin.
+	Lang   string `gorm:"-" json:"lang,omitempty"`
+	Script string `gorm:"-" json:"script,omitempty"`
 }
 
 // AgentStep - zanjirning bitta bosqichi (panelda "AI qanday o'yladi").
@@ -343,7 +350,37 @@ func ListInteractions(db *gorm.DB, status, search string, page, limit int) ([]In
 			list[i].Overdue = list[i].CreatedAt.Before(cutoff)
 		}
 	}
+	fillClientLangs(db, list)
 	return list, total, err
+}
+
+// fillClientLangs - ro'yxatdagi mijozlarning tilini BITTA so'rov bilan
+// olib qatorlarga yozadi (panel kartasidagi til tanlagichi uchun).
+// Xato bo'lsa jim o'tiladi: til ko'rinmasa ham ro'yxat ishlashi kerak.
+func fillClientLangs(db *gorm.DB, list []Interaction) {
+	ids := make([]int64, 0, len(list))
+	for _, in := range list {
+		if in.ClientID != 0 {
+			ids = append(ids, in.ClientID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	var rows []ClientLang
+	if err := db.Find(&rows, "client_id IN ?", ids).Error; err != nil {
+		log.Printf("mijoz tillari o'qilmadi: %v", err)
+		return
+	}
+	byClient := make(map[int64]ClientLang, len(rows))
+	for _, r := range rows {
+		byClient[r.ClientID] = r
+	}
+	for i := range list {
+		if r, ok := byClient[list[i].ClientID]; ok {
+			list[i].Lang, list[i].Script = r.Lang, r.Script
+		}
+	}
 }
 
 // searchID - qidiruv matnidan id ajratadi. Panelda raqam turli

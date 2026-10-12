@@ -483,6 +483,13 @@ Til **bazada saqlanadi** (`client_langs` jadvali, kalit — `client_id`):
 keyingi murojaatlarda shu ishlatiladi. Baza bo'sh bo'lsa til mijozning
 oxirgi MATNLI xabaridan aniqlanadi (rasm havolalari o'tkazib yuboriladi).
 
+Model har doim to'g'ri aniqlamaydi, shuning uchun tilni **paneldan
+qo'lda** ham almashtirsa bo'ladi (`PUT /api/clients/{id}/lang` →
+`SetClientLang`): Dashboarddagi mijozlar jadvalida ham, Tasdiqlash
+navbatidagi har bir kartada ham. Yangi til darhol hamma yo'lga tushadi,
+lekin navbatda turgan tayyor matnni o'zgartirmaydi — uni admin o'zi
+tahrirlaydi.
+
 Nega kerak: xodim javobi yo'lida tilni hech kim aniqlamasdi va model suhbat
 tarixiga qarab taxmin qilardi — tarixning oxirida bizning o'zbekcha
 xabarimiz tursa, rus tilida yozib yurgan mijoz o'zbekcha javob olardi.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, fmt, STATUS } from '../api'
+import LangCell from '../components/LangCell'
 
 // Bitta murojaat kartasi: matnni tahrirlab, tasdiqlash yoki rad etish.
 function Item({ item, onDone }) {
@@ -8,6 +9,9 @@ function Item({ item, onDone }) {
   const [help, setHelp] = useState(item.help_text || '')
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  // Mijozning tili: kartada to'g'rilasa butun ro'yxat qayta so'ralmaydi,
+  // faqat shu karta yangilanadi.
+  const [lang, setLang] = useState({ lang: item.lang, script: item.script })
   const edited = chat !== (item.chat_reply || '') || help !== (item.help_text || '')
 
   const act = async (what) => {
@@ -62,6 +66,19 @@ function Item({ item, onDone }) {
           <Link to={`/interactions/${item.id}`}>Tafsilot</Link>
         </div>
       </div>
+
+      {item.client_id > 0 && (
+        <>
+          <label>
+            Mijoz bilan yozishish tili
+            <span className="muted"> — keyingi javoblarga ta'sir qiladi, quyidagi matn o'zgarmaydi</span>
+          </label>
+          <LangCell
+            client={{ client_id: item.client_id, ...lang }}
+            onSaved={(row) => setLang({ lang: row.lang, script: row.script })}
+          />
+        </>
+      )}
 
       {item.client_message && (
         <>
