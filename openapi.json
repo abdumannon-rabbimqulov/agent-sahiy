@@ -2064,6 +2064,147 @@
           }
         }
       }
+    },
+    "/api/clients/{id}/lang": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Mijozning tili",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mijoz tili",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLang"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "stats"
+        ],
+        "summary": "Mijozning tilini qo'lda belgilash",
+        "description": "Paneldan to'g'rilangan til hamma yo'lga tushadi: AI zanjiri ham, xodim javobi ham shu qiymatni o'qiydi.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lang"
+                ],
+                "properties": {
+                  "lang": {
+                    "type": "string",
+                    "enum": [
+                      "uzb",
+                      "rus"
+                    ]
+                  },
+                  "script": {
+                    "type": "string",
+                    "enum": [
+                      "lotin",
+                      "kirill"
+                    ],
+                    "description": "faqat uzb uchun; bo'sh bo'lsa lotin"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mijoz tili",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLang"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2879,6 +3020,22 @@
           "last_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "lang": {
+            "type": "string",
+            "enum": [
+              "uzb",
+              "rus"
+            ],
+            "description": "Mijoz bilan yozishish tili (aniqlanmagan bo'lsa yo'q)"
+          },
+          "script": {
+            "type": "string",
+            "enum": [
+              "lotin",
+              "kirill"
+            ],
+            "description": "O'zbekcha uchun alifbo"
           }
         }
       },
@@ -3077,6 +3234,33 @@
           },
           "resolved": {
             "type": "integer"
+          }
+        }
+      },
+      "ClientLang": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lang": {
+            "type": "string",
+            "enum": [
+              "uzb",
+              "rus"
+            ]
+          },
+          "script": {
+            "type": "string",
+            "enum": [
+              "lotin",
+              "kirill"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

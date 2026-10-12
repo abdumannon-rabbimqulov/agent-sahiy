@@ -47,6 +47,12 @@ export const api = {
   report: (days = 30) => request(`/api/stats/report?days=${days}`),
   clients: (days = 30, limit = 20) => request(`/api/stats/clients?days=${days}&limit=${limit}`),
 
+  // Mijozning tili — paneldan to'g'rilash uchun (AI ham, xodim javobi
+  // ham shu qiymatni o'qiydi).
+  clientLang: (id) => request(`/api/clients/${id}/lang`),
+  setClientLang: (id, lang, script) =>
+    request(`/api/clients/${id}/lang`, { method: 'PUT', body: { lang, script } }),
+
   // q — id bo'yicha qidiruv: murojaat, suhbat yoki mijoz id'si.
   interactions: (status = '', page = 1, limit = 20, q = '') =>
     request(`/api/interactions?status=${status}&page=${page}&limit=${limit}&q=${encodeURIComponent(q)}`),

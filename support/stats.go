@@ -275,6 +275,11 @@ type ClientStat struct {
 	Tokens     int64     `json:"tokens"`
 	Cost       float64   `json:"cost"`
 	LastAt     time.Time `json:"last_at"`
+
+	// Lang, Script - mijoz bilan qaysi tilda yozishamiz (client_langs
+	// jadvalidan). Hali aniqlanmagan bo'lsa bo'sh.
+	Lang   string `json:"lang,omitempty"`
+	Script string `json:"script,omitempty"`
 }
 
 // ClientStats mijozlar kesimi (eng ko'p murojaat qilgani birinchi).
@@ -288,15 +293,20 @@ func ClientStats(db *gorm.DB, days, limit int) ([]ClientStat, error) {
 	var out []ClientStat
 	err := db.Model(&Interaction{}).
 		Select(`
-			client_id,
+			interactions.client_id,
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE status IN ('sent','approved') AND (help_text = '' OR help_text IS NULL)) AS ai_resolved,
 			COUNT(*) FILTER (WHERE help_text <> '') AS needed_help,
 			COUNT(*) FILTER (WHERE status = 'pending') AS pending,
 			COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens,
 			COALESCE(SUM(cost_usd),0) AS cost,
-			MAX(created_at) AS last_at`).
-		Where("created_at >= now() - make_interval(days => ?)", days).
-		Group("client_id").Order("total desc").Limit(limit).Scan(&out).Error
+			MAX(created_at) AS last_at,
+			MAX(l.lang) AS lang,
+			MAX(l.script) AS script`).
+		// Til alohida jadvalda (mijozga biriktirilgan) — chapdan
+		// qo'shiladi: tili aniqlanmagan mijoz ham ro'yxatda qolsin.
+		Joins("LEFT JOIN client_langs l ON l.client_id = interactions.client_id").
+		Where("interactions.created_at >= now() - make_interval(days => ?)", days).
+		Group("interactions.client_id").Order("total desc").Limit(limit).Scan(&out).Error
 	return out, err
 }

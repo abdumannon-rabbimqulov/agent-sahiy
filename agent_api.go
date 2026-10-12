@@ -119,6 +119,42 @@ func clientStatsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// clientLangGetHandler: GET /api/clients/{id}/lang — mijozga
+// biriktirilgan til (aniqlanmagan bo'lsa bo'sh "lang").
+func clientLangGetHandler(w http.ResponseWriter, r *http.Request) {
+	id, ok := requireID(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, support.LoadClientLang(int64(id)))
+}
+
+// clientLangPutHandler: PUT /api/clients/{id}/lang
+// Body: {"lang":"uzb","script":"kirill"} — tilni qo'lda to'g'rilash.
+//
+// Yangi qiymat darhol hamma yo'lga tushadi: AI zanjiri ham, xodim
+// javobi ham shu yozuvni o'qiydi.
+func clientLangPutHandler(w http.ResponseWriter, r *http.Request) {
+	id, ok := requireID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Lang   string `json:"lang"`
+		Script string `json:"script"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "body JSON emas")
+		return
+	}
+	row, err := support.SetClientLang(int64(id), body.Lang, body.Script)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}
+
 // interactionsHandler: GET /api/interactions?status=pending&q=62139&page=1&limit=20
 //
 // `q` — id bo'yicha qidiruv: murojaat, suhbat yoki mijoz id'si (uchalasi

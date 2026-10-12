@@ -19,6 +19,7 @@ package support
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 	"time"
@@ -140,4 +141,46 @@ func langJSON(uzb, rus bool, script string) string {
 		return ""
 	}
 	return string(b)
+}
+
+// SetClientLang - tilni QO'LDA (paneldan) belgilaydi.
+//
+// Nega kerak: model tilni har doim to'g'ri aniqlamaydi (mijoz ruscha
+// yozib, bir xabarni o'zbekcha yozsa — til almashib ketishi mumkin).
+// Admin paneldan to'g'rilaganda shu funksiya ishlaydi: SaveClientLang
+// bilan bir xil yozuvga yozadi, demak AI zanjiri ham, xodim javobi ham
+// darhol yangi tilni ko'radi.
+//
+// `lang` — "uzb" yoki "rus". `script` faqat uzb uchun ("lotin"/"kirill",
+// bo'sh bo'lsa lotin). Rus uchun alifbo tozalanadi.
+func SetClientLang(clientID int64, lang, script string) (ClientLang, error) {
+	if DB == nil {
+		return ClientLang{}, errors.New("baza ulanmagan")
+	}
+	if clientID <= 0 {
+		return ClientLang{}, errors.New("client_id noto'g'ri")
+	}
+	row := ClientLang{ClientID: clientID, Lang: strings.ToLower(strings.TrimSpace(lang))}
+	switch row.Lang {
+	case LangRus:
+		row.Script = ""
+	case LangUzb:
+		switch strings.ToLower(strings.TrimSpace(script)) {
+		case ScriptCyr:
+			row.Script = ScriptCyr
+		case ScriptLat, "":
+			row.Script = ScriptLat
+		default:
+			return ClientLang{}, errors.New("alifbo faqat lotin yoki kirill bo'ladi")
+		}
+	default:
+		return ClientLang{}, errors.New("til faqat uzb yoki rus bo'ladi")
+	}
+	if err := DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "client_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"lang", "script", "updated_at"}),
+	}).Create(&row).Error; err != nil {
+		return ClientLang{}, err
+	}
+	return row, nil
 }

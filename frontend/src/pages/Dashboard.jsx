@@ -14,6 +14,60 @@ function Card({ k, v, s }) {
 // Kunlik hisobotda ko'rsatiladigan oraliqlar.
 const REPORT_RANGES = [7, 14, 30, 90, 180, 365]
 
+// Mijoz bilan yozishish tili: bazadagi lang+script juftligi bitta
+// tanlovga aylantiriladi.
+const LANGS = [
+  { v: 'uzb:lotin', label: "O'zbekcha (lotin)" },
+  { v: 'uzb:kirill', label: "O'zbekcha (kirill)" },
+  { v: 'rus:', label: 'Ruscha' },
+]
+
+// langValue - jadval qatoridagi tilning tanlov qiymati ("uzb:lotin").
+// Til hali aniqlanmagan bo'lsa bo'sh satr.
+function langValue(c) {
+  if (!c.lang) return ''
+  return c.lang === 'uzb' ? `uzb:${c.script || 'lotin'}` : 'rus:'
+}
+
+// LangCell - tilni ko'rsatadi va shu yerda o'zgartirishga ruxsat beradi.
+// Saqlangach qator yangilanadi (onSaved), xato bo'lsa eski qiymat qoladi.
+function LangCell({ client, onSaved }) {
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const value = langValue(client)
+
+  async function change(next) {
+    if (!next || next === value) return
+    const [lang, script] = next.split(':')
+    setSaving(true)
+    setErr('')
+    try {
+      const row = await api.setClientLang(client.client_id, lang, script)
+      onSaved(row)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <select
+        value={value}
+        disabled={saving}
+        onChange={(e) => change(e.target.value)}
+      >
+        {!value && <option value="">aniqlanmagan</option>}
+        {LANGS.map((l) => (
+          <option key={l.v} value={l.v}>{l.label}</option>
+        ))}
+      </select>
+      {err && <div className="err" style={{ marginTop: 4 }}>{err}</div>}
+    </>
+  )
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [daily, setDaily] = useState([])
@@ -40,6 +94,15 @@ export default function Dashboard() {
 
   if (err) return <div className="err">{err}</div>
   if (!stats) return <p className="muted">Yuklanmoqda…</p>
+
+  // saveLang - til o'zgargach jadvalni qayta so'ramaymiz: faqat shu
+  // mijozning qatoridagi tilni yangilaymiz.
+  const saveLang = (clientID, row) =>
+    setClients((list) =>
+      list.map((c) =>
+        c.client_id === clientID ? { ...c, lang: row.lang, script: row.script } : c,
+      ),
+    )
 
   const max = Math.max(1, ...daily.map((d) => d.total))
   const resolvedPct = stats.total ? Math.round((stats.ai_resolved / stats.total) * 100) : 0
@@ -180,7 +243,7 @@ export default function Dashboard() {
       <table>
         <thead>
           <tr>
-            <th>Mijoz</th><th>Murojaat</th><th>AI hal qilgan</th><th>Xodim kerak</th>
+            <th>Mijoz</th><th>Til</th><th>Murojaat</th><th>AI hal qilgan</th><th>Xodim kerak</th>
             <th>Token</th><th>Xarajat</th><th>Oxirgi</th>
           </tr>
         </thead>
@@ -188,6 +251,7 @@ export default function Dashboard() {
           {clients.map((c) => (
             <tr key={c.client_id}>
               <td>{c.client_id}</td>
+              <td><LangCell client={c} onSaved={(row) => saveLang(c.client_id, row)} /></td>
               <td>{c.total}</td>
               <td>{c.ai_resolved}</td>
               <td>{c.needed_help}</td>
@@ -196,7 +260,7 @@ export default function Dashboard() {
               <td className="muted">{fmt.date(c.last_at)}</td>
             </tr>
           ))}
-          {clients.length === 0 && <tr><td colSpan="7" className="muted">Ma'lumot yo'q</td></tr>}
+          {clients.length === 0 && <tr><td colSpan="8" className="muted">Ma'lumot yo'q</td></tr>}
         </tbody>
       </table>
     </>

@@ -365,6 +365,8 @@ func main() {
 	mux.HandleFunc("GET /api/stats/daily", support.RequireAuth(dailyStatsHandler))
 	mux.HandleFunc("GET /api/stats/report", support.RequireAuth(dailyReportHandler))
 	mux.HandleFunc("GET /api/stats/clients", support.RequireAuth(clientStatsHandler))
+	mux.HandleFunc("GET /api/clients/{id}/lang", support.RequireAuth(clientLangGetHandler))
+	mux.HandleFunc("PUT /api/clients/{id}/lang", support.RequireAuth(clientLangPutHandler))
 
 	// AI javoblari va tasdiqlash navbati
 	mux.HandleFunc("GET /api/interactions", support.RequireAuth(interactionsHandler))
