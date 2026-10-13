@@ -339,6 +339,17 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		})
 	}
 
+	// Mijoz raqamni allaqachon yozgan (yoki rasmidan o'qildi) — javob
+	// yozadigan bosqichlar buni BILIB turishi kerak. Busiz model
+	// tizimdagi bo'sh ro'yxatga qarab raqamni qaytadan so'rab yuborardi,
+	// mijoz esa uni bir necha marta yozgan bo'lardi.
+	//
+	// Rasm bosqichidan KEYIN turadi: chatSN/chatEx OCR natijasi bilan
+	// to'ldirilgan bo'lishi mumkin.
+	if nums := mergeNumbers(chatSN, chatEx, 10); len(nums) > 0 {
+		flags[FlagAskedNums] = nums
+	}
+
 	for step := 1; step <= maxSteps; step++ {
 		p, err := GetPromt(DB, promtID)
 		if err != nil {
@@ -423,7 +434,14 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
 			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
-			data, _, found, fresh := fetchSystemData(a, clientID, conversationID)
+			data, pending, found, fresh := fetchSystemData(a, clientID, conversationID)
+			// Mijozda qo'liga tegmagan buyurtma bormi — javob yozadigan
+			// bosqich uchun belgi: bor bo'lsa gap o'sha buyurtma haqida
+			// ketadi, yo'q bo'lsa model bo'sh joydan muammo o'ylab
+			// topmasligi kerak.
+			if pending {
+				flags[FlagPending] = true
+			}
 			dataCtx = append(dataCtx, data)
 			alerts = append(alerts, found...)
 			issues = append(issues, fresh...)
@@ -971,6 +989,15 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	var views []OrderView
 	var deliveryRows []DeliveryOrder
 	haveDelivery := false
+	// checks - buyurtmalarning ketma-ket tekshiruvi (order_check.go).
+	// Bir marta hisoblanadi: natija ham modelga, ham xodimga, ham
+	// muammo yozuviga ketadi.
+	var checks []OrderCheck
+	// foreignTracks - yetkazmada BOSHQA akkauntda chiqqan treklar.
+	// Ro'yxatdan olib tashlangan qator keyin "yetkazmada yo'q" bo'lib
+	// ko'rinadi, ya'ni ketma-ketlik uni soxta "yo'l muddati o'tdi"
+	// muammosiga aylantirib qo'yardi.
+	foreignTracks := map[string]bool{}
 	// pending - mijozning hali kelmagan (yakunlanmagan) buyurtmasi
 	// topildimi. Model muammoni tushunmaganda shu bo'yicha qaror
 	// qilinadi: bor bo'lsa — modelga qaytadan beriladi, yo'q bo'lsa —
@@ -1105,6 +1132,9 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 			if bad := onlyOwnDelivery(&rows, clientID); len(bad) > 0 {
 				log.Printf("agent: suhbat %d — begona yetkazma(lar) chiqarib tashlandi: %v (mijoz %d)",
 					conversationID, bad, clientID)
+				for _, t := range bad {
+					foreignTracks[trackKey(t)] = true
+				}
 				if _, ok := out["begona_buyurtma"]; !ok {
 					out["begona_buyurtma"] = map[string]any{
 						"raqamlar": bad,
@@ -1125,6 +1155,23 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 				log.Printf("agent: suhbat %d — %d ta muammo guruhga chiqarilmadi: posilka yetkazmada bor",
 					conversationID, n)
 			}
+			// Ketma-ket tekshiruv: yetkazma javobi endi bor, ya'ni
+			// qaror aniqlashadi (order_check.go). ADMINKA STATUSIGA
+			// QARALMAYDI — yo'l muddati o'tgan posilka status 6/7 da
+			// ham muammo, DetectIssues esa bu statuslarni ko'rmaydi.
+			//
+			// So'rovlar xato bergan bo'lsa (`errs` bo'sh emas) hech
+			// qanday yangi muammo ochilmaydi: "yetkazmada yo'q" bilan
+			// "tekshira olmadik" aralashmasligi kerak.
+			checks = CheckOrders(views, rows, true, len(errs) == 0, foreignTracks)
+			opened := OpenLateShipmentIssues(checks, views, clientID, conversationID)
+			issues = append(issues, opened...)
+			// Bu qatorlar DropStaleAlerts dan O'TMAYDI (eskilik
+			// yetkazmadagi `created_at` bo'yicha o'lchanadi,
+			// yetkazmaga umuman tushmagan posilkada u maydon yo'q) —
+			// lekin o'z filtri bor: faqat hozir ochilgan yoki mijoz
+			// o'zi so'ragan buyurtma chiqadi.
+			alerts = append(alerts, CheckAlerts(checks, AskedTracks(numbers, views), opened)...)
 			// Mijoz aniq buyurtma/trek raqami yozgan bo'lsa, yetkazma
 			// ro'yxati O'SHA buyurtmaning posilkasi bilan cheklanadi.
 			// Aks holda ro'yxatda mijozning boshqa posilkalari ham
@@ -1195,14 +1242,41 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 	// kelgan-kelmagani yoziladi.
 	if a.Adminka {
 		briefs := BriefOrders(views, clientID)
-		if haveDelivery {
-			MarkArrival(briefs, deliveryRows)
+		if !haveDelivery {
+			// Yetkazma ma'lumoti olinmagan — ketma-ketlik 2-qadamda
+			// to'xtaydi va javob faqat adminka tomoni bo'yicha
+			// beriladi.
+			checks = CheckOrders(views, nil, false, false, nil)
 		}
+		ApplyChecks(briefs, checks)
 		// Posilka boshqa viloyatga tushgan bo'lsa, shu buyurtmaning
 		// "qayerdan olib ketish" ko'rsatmasi o'chiriladi — aks holda model
 		// mijozga uning O'Z viloyatidagi filialni aytib yuboradi.
 		MarkMismatch(briefs, mismatches)
 		out["adminka"] = briefs
+	}
+
+	// Mijoz aniq buyurtma/trek raqami yozgan bo'lsa, qidiruv natijasi
+	// OSHKORA yoziladi: nima qidirildi va topildimi.
+	//
+	// Nega kerak: ilgari topilmaganda `out` da shunchaki bo'sh ro'yxat
+	// turardi ("adminka": []), model esa undan yagona xulosa chiqarardi —
+	// "raqam yo'q, mijozdan so'ra". Mijoz raqamni ALLAQACHON yozgan
+	// bo'lardi va suhbat "raqamingizni yuboring" degan savolda aylanib
+	// qolardi. Shuning uchun bo'sh natijaning MA'NOSI endi yozib
+	// qo'yiladi: qidirildi, chiqmadi, raqam qayta so'ralmaydi.
+	if len(numbers) > 0 && (a.Adminka || a.Dashboard) {
+		_, admErr := out["adminka_error"]
+		_, dshErr := out["dashboard_error"]
+		_, foreign := out["begona_buyurtma"]
+		q, alert := searchNote(numbers,
+			len(views) > 0 || len(deliveryRows) > 0, // topildimi
+			admErr || dshErr,                        // qidiruvning o'zi ishladimi
+			foreign)                                 // raqam begona buyurtmaniki
+		out[searchKey] = q
+		if alert != "" {
+			alerts = append(alerts, alert)
+		}
 	}
 
 	// Kod topgan holatlar modelga ham ko'rsatiladi. Ilgari ular faqat
@@ -1421,6 +1495,68 @@ const foreignOrderNote = "Bu buyurtma BOSHQA mijozga tegishli — uning ma'lumot
 	"mijozning akkauntiga tegishli emas, o'z buyurtma raqamini tekshirib yuborsin " +
 	"(yoki buyurtma egasi o'zi murojaat qilsin). Raqamni \"tuzatib\" o'zingdan " +
 	"boshqasini taklif qilma."
+
+// notFoundNote - mijoz yozgan raqam bo'yicha hech narsa topilmagan holat
+// uchun modelga beriladigan ko'rsatma.
+//
+// Eng muhim bandi — raqamni qayta so'ramaslik: raqam suhbatda bor, qidiruv
+// ham aynan shu raqam bo'yicha ketdi. Ilgari model bo'sh ro'yxatni ko'rib
+// "buyurtma raqamingizni yuboring" deb yozardi va mijoz bir xil raqamni
+// qayta-qayta yuborardi.
+const notFoundNote = "Bu raqam(lar) bo'yicha adminka va yetkazmaning BUTUN bazasidan " +
+	"qidirildi — hech qanday yozuv topilmadi. Mijozdan buyurtma raqamini QAYTA " +
+	"SO'RAMA: u allaqachon yozgan va raqam yuqorida turadi. Faqat shuni ayt: shu " +
+	"raqam bo'yicha ma'lumot topilmadi, raqamni tekshirib ko'rsin, murojaat " +
+	"xodimga topshirildi. Raqamni o'zingdan \"tuzatib\" boshqasini taklif qilma."
+
+// lookupErrNote - qidiruvning o'zi ishlamagan holat (adminka yoki yetkazma
+// so'rovi xato qaytargan). Mijoz uchun natija bir xil — ma'lumot yo'q,
+// lekin "topilmadi" deb aytish yolg'on bo'ladi: buyurtma bor, biz ko'ra
+// olmadik.
+const lookupErrNote = "Bu raqam(lar) bo'yicha tizimdan ma'lumot OLINMADI (texnik xatolik) — " +
+	"buyurtma yo'q degani EMAS. Mijozdan raqamni QAYTA SO'RAMA va holati, " +
+	"qayerdaligi yoki muddati haqida hech narsa aytma. Faqat shuni ayt: " +
+	"tekshirilmoqda, murojaat xodimga topshirildi, hal bo'lishi bilan xabar beramiz."
+
+// searchKey - qidiruv natijasi JSON'da shu kalit ostida ketadi.
+const searchKey = "qidirildi"
+
+// searchNote - qidiruv natijasi bloki (`qidirildi`) va, kerak bo'lsa,
+// xodimga ketadigan qator.
+//
+// `found` - raqam bo'yicha biror yozuv topildimi (adminka yoki yetkazma).
+// `lookupErr` - so'rovning O'ZI xato qaytardimi.
+// `foreign` - raqam boshqa mijozning buyurtmasi bo'lib chiqdimi: unda
+// ko'rsatma allaqachon `begona_buyurtma` ichida berilgan va ikkinchisini
+// qo'shsak ular bir-biriga zid bo'lib qoladi.
+func searchNote(numbers []string, found, lookupErr, foreign bool) (map[string]any, string) {
+	q := map[string]any{"raqamlar": numbers}
+	switch {
+	case found:
+		q["natija"] = "topildi"
+	case lookupErr:
+		// Qidiruvning O'ZI ishlamadi (API yotdi, token eskirdi va h.k.).
+		// "Topilmadi" deyish yolg'on bo'ladi, lekin raqamni qayta so'rash
+		// ham yechim emas — murojaat xodimga ketadi.
+		q["natija"] = "aniqlanmadi"
+		q["korsatma"] = lookupErrNote
+		return q, lookupAlert(numbers, "tizimdan ma'lumot olinmadi")
+	case foreign:
+		q["natija"] = "topilmadi"
+	default:
+		q["natija"] = "topilmadi"
+		q["korsatma"] = notFoundNote
+		return q, lookupAlert(numbers, "bazadan topilmadi")
+	}
+	return q, ""
+}
+
+// lookupAlert - mijoz raqam yozgan, lekin tizimdan javob chiqmagan holat
+// uchun xodimga ketadigan qator.
+func lookupAlert(numbers []string, reason string) string {
+	return fmt.Sprintf("Mijoz raqam yozdi (%s), lekin %s — xodim qo'lda tekshirsin. "+
+		"Mijozga faqat \"tekshirilmoqda\" deyildi.", strings.Join(numbers, ", "), reason)
+}
 
 // onlyOwnOrders - faqat SHU mijozning buyurtmalarini qoldiradi.
 //

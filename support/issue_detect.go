@@ -61,57 +61,7 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 
 		switch {
 		case v.Problem && open == nil:
-			last := LastIssue(DB, o.OrderSN)
-
-			// Yopilgan muammoni takror ko'tarmaymiz: buyurtma o'sha
-			// holatda qolgan bo'lsa xodimlar allaqachon ko'rgan.
-			if last != nil && last.State == IssueResolved && last.Status == o.Status {
-				views = append(views, v)
-				continue
-			}
-
-			// Shu buyurtma bo'yicha xodim ALLAQACHON javob berganmi.
-			//
-			// Adminkadagi holat o'zgarishi (3 → 4: "to'langan" →
-			// "kiritish uchun kutilmoqda") Xitoy tomonidagi oddiy
-			// bosqich — mijoz uchun YANGI muammo emas. Yuqoridagi
-			// tekshiruv faqat holat AYNAN bir xil qolganda ushlab
-			// qoladi, shuning uchun bitta buyurtma guruhga ikkinchi
-			// marta tushadi va xodim o'zi aytgan gapni qaytadan o'qiydi.
-			//
-			// Xabar yashirilmaydi — xodim muammo qaytganini ko'rsin —
-			// lekin ustiga darhol "TEPADA JAVOB BERILGAN" degan reply
-			// tushadi va yozuv yopiladi (noteAlreadyAnswered).
-			answered := last
-			if !AnsweredByStaff(answered) {
-				answered = nil
-			}
-
-			// Yangi muammo.
-			is := &OrderIssue{
-				OrderSN:        o.OrderSN,
-				ClientID:       clientID,
-				OwnerUserID:    o.UserID,
-				ExpressNum:     strings.TrimSpace(o.ExpressNum),
-				ConversationID: conversationID,
-				Status:         o.Status,
-				StatusLabel:    v.StatusLabel,
-				DaysSincePaid:  v.DaysSincePaid,
-				PackageName:    o.PackageName,
-				PaidAt:         paidAtOr(o),
-				State:          IssueOpen,
-			}
-			if err := DB.Create(is).Error; err != nil {
-				log.Printf("muammo: %s yozilmadi: %v", o.OrderSN, err)
-			} else {
-				// Takror bo'lsa xabar guruhga BARIBIR chiqadi (xodim
-				// muammo qaytganini ko'rsin), lekin darhol o'sha
-				// xabarga "tepada javob berilgan" degan reply tushadi
-				// va yozuv yopiladi — eslatma aylanishiga tushmaydi.
-				if answered != nil {
-					is.Repeat = repeatResolution(answered)
-					is.ResolvedBy = answered.ResolvedBy
-				}
+			if is := openIssue(DB, o, v, clientID, conversationID, ReasonStuckStatus); is != nil {
 				fresh = append(fresh, is)
 				v.InReview = true
 			}
@@ -154,6 +104,90 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 	}
 
 	return views, fresh
+}
+
+// openIssue - yangi muammo yozuvini ochadi: takror ko'tarishdan
+// himoya, xodim allaqachon javob berganini tekshirish va bazaga
+// yozish. Ochilmasa nil.
+//
+// DetectIssues ichidan AJRATILDI: xuddi shu yozuv yetkazma ma'lumoti
+// kelgandan keyin ham ochilishi kerak (OpenLateShipmentIssues,
+// order_check.go) va u yerda himoyalar qaytadan yozilsa, bitta
+// buyurtma guruhga ikki marta tushardi.
+//
+// `reason` - muammo qaysi qadamda topilgani (ReasonStuckStatus,
+// ReasonLateShipment …).
+func openIssue(db *gorm.DB, o AdminkaOrder, v OrderView,
+	clientID, conversationID int64, reason string) *OrderIssue {
+	if db == nil || o.OrderSN == "" {
+		return nil
+	}
+	if FindOpenIssue(db, o.OrderSN) != nil {
+		// Ochiq yozuv bor — ikkinchisini ochish guruhga takror xabar
+		// bo'lib tushadi.
+		return nil
+	}
+
+	last := LastIssue(db, o.OrderSN)
+
+	// Yopilgan muammoni takror ko'tarmaymiz: buyurtma o'sha holatda va
+	// o'sha sabab bilan qolgan bo'lsa xodimlar allaqachon ko'rgan.
+	//
+	// SABAB ham solishtiriladi: status o'zgarmasligi mumkin, lekin
+	// holat yomonlashishi mumkin — masalan status 6 da bir marta
+	// "yo'l muddati o'tdi" deb yopilgan buyurtma 30 kundan oshganda
+	// endi mijozdan so'rashni talab qiladi. Faqat statusga qaragan
+	// himoya bunday eskalatsiyani butunlay to'sib qo'yardi.
+	if last != nil && last.State == IssueResolved &&
+		last.Status == o.Status && last.Reason == reason {
+		return nil
+	}
+
+	// Shu buyurtma bo'yicha xodim ALLAQACHON javob berganmi.
+	//
+	// Adminkadagi holat o'zgarishi (3 → 4: "to'langan" → "kiritish
+	// uchun kutilmoqda") Xitoy tomonidagi oddiy bosqich — mijoz uchun
+	// YANGI muammo emas. Yuqoridagi tekshiruv faqat holat AYNAN bir
+	// xil qolganda ushlab qoladi, shuning uchun bitta buyurtma guruhga
+	// ikkinchi marta tushadi va xodim o'zi aytgan gapni qaytadan
+	// o'qiydi.
+	//
+	// Xabar yashirilmaydi — xodim muammo qaytganini ko'rsin — lekin
+	// ustiga darhol "TEPADA JAVOB BERILGAN" degan reply tushadi va
+	// yozuv yopiladi (noteAlreadyAnswered).
+	answered := last
+	if !AnsweredByStaff(answered) {
+		answered = nil
+	}
+
+	is := &OrderIssue{
+		OrderSN:        o.OrderSN,
+		ClientID:       clientID,
+		OwnerUserID:    o.UserID,
+		ExpressNum:     strings.TrimSpace(o.ExpressNum),
+		ConversationID: conversationID,
+		Status:         o.Status,
+		StatusLabel:    v.StatusLabel,
+		DaysSincePaid:  v.DaysSincePaid,
+		PackageName:    o.PackageName,
+		PaidAt:         paidAtOr(o),
+		ShippedAt:      strings.TrimSpace(o.ShippedAt),
+		Reason:         reason,
+		State:          IssueOpen,
+	}
+	if err := db.Create(is).Error; err != nil {
+		log.Printf("muammo: %s yozilmadi: %v", o.OrderSN, err)
+		return nil
+	}
+	// Takror bo'lsa xabar guruhga BARIBIR chiqadi (xodim muammo
+	// qaytganini ko'rsin), lekin darhol o'sha xabarga "tepada javob
+	// berilgan" degan reply tushadi va yozuv yopiladi — eslatma
+	// aylanishiga tushmaydi.
+	if answered != nil {
+		is.Repeat = repeatResolution(answered)
+		is.ResolvedBy = answered.ResolvedBy
+	}
+	return is
 }
 
 // currentOrder - buyurtmaning adminkadagi HOZIRGI yozuvi.
@@ -261,6 +295,14 @@ func DropResolvedIssues(list []*OrderIssue) []*OrderIssue {
 			continue
 		}
 		switch {
+		case shipmentReason(is.Reason):
+			// Yo'l bo'yicha ochilgan muammo adminka statusidan KELIB
+			// CHIQMAYDI (status 6/7 kuzatiladigan ro'yxatda yo'q) —
+			// IsProblem uni ko'rmaydi va "holat o'zgardi" degan
+			// avtomatik yopish uni ochilgan zahoti yopib yuborardi.
+			// Bunday muammoni faqat posilkaning yetkazmada chiqishi
+			// yopadi (ReviewOpenIssues, 3-qadam).
+			out = append(out, is)
 		case StatusAdvanced(is.Status, cur.Status):
 			if !resolveAdvanced(DB, is, cur.Status) {
 				out = append(out, is)
@@ -365,6 +407,15 @@ func issuesText(list []*OrderIssue, help string) string {
 		fmt.Fprintf(&b, "Holat: %s\n", is.StatusLabel)
 		fmt.Fprintf(&b, "To'langan: %s — %d kundan beri kutmoqda\n",
 			sanaMatn(is.PaidAt), is.DaysSincePaid)
+		// Yo'lga chiqqan sana: yo'l muddati bo'yicha ochilgan
+		// muammoda xodimga to'lov sanasidan ko'ra aynan shu kerak.
+		if is.ShippedAt != "" {
+			fmt.Fprintf(&b, "Yo'lga chiqqan: %s — %d kundan beri yo'lda\n",
+				sanaMatn(is.ShippedAt), daysSinceText(is.ShippedAt))
+		}
+		if is.Reason != "" {
+			fmt.Fprintf(&b, "Sabab: %s\n", reasonText(is.Reason))
+		}
 		if is.PackageName != "" {
 			fmt.Fprintf(&b, "Posilka: %s\n", trimText(is.PackageName, 80))
 		}
@@ -586,7 +637,11 @@ func ReviewOpenIssues(db *gorm.DB) error {
 			db.Model(is).Update("express_num", t)
 			is.ExpressNum = t
 		}
-		if !IsProblem(*cur) {
+		// Yo'l bo'yicha ochilgan muammo (posilka yo'lda yo'qolgan,
+		// jo'natish sanasi yo'q) adminka statusiga bog'liq emas:
+		// IsProblem bunday holatni ko'rmaydi. Uni quyidagi 3-qadam —
+		// posilka yetkazmada chiqqani — yoki xodim yopadi.
+		if !shipmentReason(is.Reason) && !IsProblem(*cur) {
 			res := fmt.Sprintf("Adminkada holat o'zgardi: %q → %q",
 				is.StatusLabel, StatusLabel(cur.Status))
 			if err := ResolveIssue(db, is, res, "tizim", ResolvedViaAuto); err == nil {

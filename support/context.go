@@ -93,6 +93,22 @@ type OrderBrief struct {
 	// tafsilotini mijozga aytib yubormasin.
 	OwnerUserID int64 `json:"boshqa_mijozning_buyurtmasi,omitempty"`
 
+	// OnTheWay - posilka yo'lga chiqqan, chiqqaniga FreshShipmentDays
+	// dan oshmagan va yetkazmada hali yo'q. Bu MUAMMO EMAS: javob
+	// tayyor holda beriladi — yo'lga chiqqan sana va qolgan kun
+	// oralig'i. Model o'zidan muddat to'qimasin (order_check.go).
+	OnTheWay string `json:"yolda_tez_keladi,omitempty"`
+
+	// ETA - yetib kelishiga qolgan kun oralig'i ("uzog'i 3-8 kun
+	// ichida yetib keladi"). Alohida maydon: izoh matni uzun, oraliq
+	// esa mijozga AYNAN yetib borishi kerak — ko'rinib tursin.
+	ETA string `json:"qolgan_kun,omitempty"`
+
+	// Late - yo'l muddati o'tgan yoki jo'natish sanasi yo'q, posilka
+	// esa yetkazmada chiqmagan. Mijozga faqat "tekshirilmoqda"
+	// deyiladi, murojaat xodimga ketadi.
+	Late string `json:"DIQQAT_muddat_otdi,omitempty"`
+
 	// AskReceived - posilka jo'natilganiga LongShipmentDays dan oshgan,
 	// lekin yetkazmada hali chiqmagan. Bunda "yo'lda" deb javob berish
 	// kam: mijoz posilkani allaqachon olgan, tizimda belgilanmay qolgan
@@ -144,38 +160,6 @@ const (
 		"O'zbekistonga kelmagan"
 )
 
-// MarkArrival - har bir buyurtmaga uning posilkasi yetkazmada (dashboardda)
-// chiqqan-chiqmagani yoziladi.
-//
-// Adminkadagi status buni AYTMAYDI: u "yakunlangan" bo'lsa ham posilka
-// hali yo'lda bo'lishi mumkin. Ikki manba trek raqami (`express_num`)
-// orqali bog'lanadi.
-func MarkArrival(briefs []OrderBrief, delivery []DeliveryOrder) {
-	seen := make(map[string]bool, len(delivery))
-	for _, d := range delivery {
-		if t := strings.TrimSpace(d.ExpressNum); t != "" {
-			seen[t] = true
-		}
-	}
-	for i := range briefs {
-		track := strings.TrimSpace(briefs[i].ExpressNum)
-		if track == "" {
-			// Trek hali berilmagan — posilka Xitoyda, yo'lga chiqmagan.
-			continue
-		}
-		if seen[track] {
-			briefs[i].Arrived = arrivedInDelivery
-		} else {
-			briefs[i].Arrived = notInDelivery
-			// Jo'natilganiga juda ko'p bo'lgan bo'lsa, "yo'lda" deyish
-			// yetarli emas — avval mijozdan olgan-olmagani so'raladi.
-			if briefs[i].ShippedDays > LongShipmentDays() {
-				briefs[i].AskReceived = askReceivedNote
-			}
-		}
-	}
-}
-
 // DefaultLongShipmentDays - posilka jo'natilganidan keyin shu kundan
 // ko'p yetkazmada chiqmasa, holat oddiy "yo'lda" emas: yo tizimda
 // yozuv tushmay qolgan, yo mijoz allaqachon olgan.
@@ -184,13 +168,16 @@ const DefaultLongShipmentDays = 30
 // LongShipmentDays - .env dagi LONG_SHIPMENT_DAYS (default 30).
 func LongShipmentDays() int { return envInt("LONG_SHIPMENT_DAYS", DefaultLongShipmentDays) }
 
-// askReceivedNote - jo'natilganiga 30 kundan oshgan, lekin yetkazmada
-// chiqmagan buyurtma uchun modelga tayyor ko'rsatma.
+// askReceivedNote - jo'natilganiga LongShipmentDays dan oshgan, lekin
+// yetkazmada chiqmagan buyurtma uchun modelga tayyor ko'rsatma.
 //
 // Bu holatda model ilgari shunchaki "Xitoydan yo'lda" deb yozardi va
 // suhbat shu yerda tugardi — mijoz posilkani allaqachon olgan bo'lsa
 // ham (tizimda belgilanmay qolgan) hech kim buni bilmasdi.
-const askReceivedNote = "Buyurtma jo'natilganiga 30 kundan oshgan, lekin yetkazmada hali " +
+//
+// Kun soni %d bo'lib turadi: matnga "30" deb yozib qo'yilsa,
+// LONG_SHIPMENT_DAYS o'zgargan kuni ko'rsatma yolg'on bo'lib qoladi.
+const askReceivedNote = "Buyurtma jo'natilganiga %d kundan oshgan, lekin yetkazmada hali " +
 	"chiqmagan. Javobni SAVOL bilan tugat: mijozdan shu buyurtmani allaqachon olgan-olmaganini " +
 	"so'ra (tizimda belgilanmay qolgan bo'lishi mumkin). \"Yo'lda\" deb qat'iy aytma va muddat " +
 	"va'da qilma; mijoz olmaganini aytsa — xodimlar tekshirishini ayt."

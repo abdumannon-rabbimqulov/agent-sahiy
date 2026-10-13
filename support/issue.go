@@ -20,6 +20,7 @@ const (
 	StatusFinished = 6  // yakunlangan
 	StatusShipped  = 7  // yo'lga chiqqan
 	StatusBanned   = 10 // taqiqlangan tovar — sotuvchi jo'natmaydi
+	StatusAbnormal = 12 // abnormality — g'ayritabiiy holat
 )
 
 // DefaultProblemDays - shu kundan ko'p turgan buyurtma muammoli hisoblanadi.
@@ -63,11 +64,23 @@ type OrderIssue struct {
 	// shundan chiqadi (issue_dashboard.go).
 	ExpressNum string `gorm:"size:64;index" json:"express_num,omitempty"`
 
+	// Reason - muammo QAYSI qadamda ochilgani (ReasonStuckStatus,
+	// ReasonLateShipment, ReasonVeryLate …). Saqlanadi, chunki takror
+	// ochishdan himoya shunga ham qaraydi: ilgari faqat STATUSGA
+	// qaralardi va status 6 da bir marta yopilgan buyurtma keyin yo'l
+	// muddati o'tganda ham qayta ochilmay qolardi.
+	Reason string `gorm:"size:32;index" json:"reason,omitempty"`
+
 	Status        int    `json:"status"`
 	StatusLabel   string `gorm:"size:64" json:"status_label"`
 	DaysSincePaid int    `json:"days_since_paid"`
 	PackageName   string `gorm:"size:255" json:"package_name,omitempty"`
 	PaidAt        string `gorm:"size:32" json:"paid_at,omitempty"`
+	// ShippedAt - posilka yo'lga chiqqan sana. Guruh xabarida
+	// ko'rsatiladi: yo'l muddati bo'yicha ochilgan muammoda
+	// "to'langan: … N kundan beri kutmoqda" qatori mavzuga tegishli
+	// emas — xodimga posilka QACHON chiqqani kerak.
+	ShippedAt string `gorm:"size:32" json:"shipped_at,omitempty"`
 
 	State string `gorm:"size:16;index;not null;default:open" json:"state"`
 
@@ -115,6 +128,8 @@ func StatusLabel(status int) string {
 		return "Xitoyda tranzaksiya yopilgan — yo'lga chiqqan"
 	case StatusBanned:
 		return "taqiqlangan tovar"
+	case StatusAbnormal:
+		return "abnormal holat (abnormality)"
 	}
 	return fmt.Sprintf("holat %d", status)
 }
@@ -143,6 +158,14 @@ func StatusMeaning(status int) string {
 	case StatusBanned:
 		return "tovar TAQIQLANGAN — sotuvchi uni jo'natmaydi. Mijoz shu to'lov " +
 			"hisobidan boshqa tovar tanlashi kerak (qayta buyurtma tartibi)"
+	case StatusAbnormal:
+		// Adminkada bu holat "abnormality" deb ataladi: buyurtmada
+		// g'ayritabiiy narsa topilgan va u o'z-o'zidan hal bo'lmaydi.
+		// Ma'nosi mijozga aytilmaydi — nomi ham ichki atama, ham
+		// mijozni cho'chitadi.
+		return "buyurtmada G'AYRITABIIY holat (abnormality) aniqlangan — xodim " +
+			"tekshirishi kerak. Mijozga holat NOMINI aytma va sabab o'ylab topma, " +
+			"faqat \"tekshirilmoqda, xodimga topshirildi\" deb ayt"
 	case StatusFinished:
 		return "Xitoy tomonida tranzaksiya yopilgan — posilka yo'lga chiqqan. " +
 			"BU MIJOZGA YETGANI EMAS: yetib kelgani faqat yetkazma (dashboard) " +
@@ -154,11 +177,45 @@ func StatusMeaning(status int) string {
 // ProblemDays - .env dagi PROBLEM_DAYS (default 3).
 func ProblemDays() int { return envInt("PROBLEM_DAYS", DefaultProblemDays) }
 
+// DefaultFreshShipmentDays - posilka Xitoydan yo'lga chiqqandan keyin
+// shu kun ichida buyurtma MUAMMO hisoblanmaydi: yo'l shuncha vaqt
+// oladi, kutish normal holat.
+const DefaultFreshShipmentDays = 20
+
+// FreshShipmentDays - .env dagi FRESH_SHIPMENT_DAYS (default 20).
+//
+// Yuqori chegara LongShipmentDays() (30 kun): undan oshsa holat teskari
+// tomonga o'tadi — mijozdan posilkani olgan-olmagani so'raladi
+// (askReceivedNote).
+func FreshShipmentDays() int { return envInt("FRESH_SHIPMENT_DAYS", DefaultFreshShipmentDays) }
+
+// ShippedDaysOf - posilka yo'lga chiqqanidan beri necha kun o'tgani.
+// Sana bo'sh yoki o'qilmasa -1 (0 EMAS: nol "bugun chiqdi" degani va
+// uni "sana yo'q" bilan aralashtirib bo'lmaydi).
+func ShippedDaysOf(o AdminkaOrder) int {
+	t, ok := parseAdminkaTime(o.ShippedAt)
+	if !ok {
+		return -1
+	}
+	d := int(time.Since(t).Hours() / 24)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// FreshlyShipped - posilka yo'lga chiqqan va chiqqaniga
+// FreshShipmentDays dan oshmagan.
+func FreshlyShipped(o AdminkaOrder) bool {
+	d := ShippedDaysOf(o)
+	return d >= 0 && d <= FreshShipmentDays()
+}
+
 // ProblemStatuses - kuzatiladigan statuslar (.env: PROBLEM_STATUSES="3,4").
 func ProblemStatuses() []int {
 	v := envStr("PROBLEM_STATUSES", "")
 	if v == "" {
-		return []int{StatusPaid, StatusWaiting}
+		return defaultProblemStatuses()
 	}
 	var out []int
 	for _, p := range strings.Split(v, ",") {
@@ -167,9 +224,16 @@ func ProblemStatuses() []int {
 		}
 	}
 	if len(out) == 0 {
-		return []int{StatusPaid, StatusWaiting}
+		return defaultProblemStatuses()
 	}
 	return out
+}
+
+// defaultProblemStatuses - kuzatiladigan statuslar standarti:
+// 3 (to'langan), 4 (kiritish uchun kutilmoqda) va 12 (abnormality).
+// Har birining o'z kun chegarasi bor (DefaultStatusDays).
+func defaultProblemStatuses() []int {
+	return []int{StatusPaid, StatusWaiting, StatusAbnormal}
 }
 
 // parseAdminkaTime adminka sanasini o'qiydi ("2026-08-01 15:35:00").
@@ -255,27 +319,20 @@ func DaysSincePaid(o AdminkaOrder) int {
 	return int(time.Since(t).Hours() / 24)
 }
 
-// IsProblem - buyurtma muammolimi: TO'LANGAN, kuzatiladigan statusda va
-// to'lovdan beri PROBLEM_DAYS dan ko'p vaqt o'tgan.
+// IsProblem - buyurtma muammolimi.
 //
-// To'lanmagan buyurtma (pay_status = 0) kutib turishi normal — u xodimlar
-// aralashuvini talab qilmaydi.
+// Qaror CheckOrder da (order_check.go) chiqariladi — qoida bitta
+// joyda tursin. Bu yerda YETKAZMA MA'LUMOTI YO'Q, shuning uchun
+// ketma-ketlik 2-qadamda ("yetkazma noma'lum") to'xtaydi va faqat
+// adminka tomoniga qaraydi: to'langanmi, statusi kuzatiladimi, shu
+// status uchun belgilangan kundan oshdimi va posilka yaqinda yo'lga
+// chiqmaganmi.
+//
+// Yetkazma ma'lumoti kelgandan keyin qaror aniqlashadi:
+// DropArrivedIssues kelganlarini yopadi, OpenLateShipmentIssues esa
+// yo'lda yo'qolganlarini ochadi.
 func IsProblem(o AdminkaOrder) bool {
-	if !IsPaid(o) {
-		return false
-	}
-	watched := false
-	for _, s := range ProblemStatuses() {
-		if o.Status == s {
-			watched = true
-			break
-		}
-	}
-	if !watched {
-		return false
-	}
-	d := DaysSincePaid(o)
-	return d > ProblemDays()
+	return CheckOrder(OrderCheckInput{Order: o}).Problem
 }
 
 // OrderView - modelga ketadigan boyitilgan buyurtma: xom status raqami

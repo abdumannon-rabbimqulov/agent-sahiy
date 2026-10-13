@@ -516,6 +516,7 @@ Adminka status kodlari:
 | 6 | Xitoyda tranzaksiya yopilgan — posilka yo'lga chiqqan |
 | 7 | yo'lga chiqqan |
 | 10 | taqiqlangan tovar — sotuvchi jo'natmaydi |
+| 12 | abnormality — g'ayritabiiy holat, xodim tekshirishi kerak |
 
 ### Status 6 "yetkazildi" DEGANI EMAS
 
@@ -536,13 +537,104 @@ tushunardi. Endi:
 - adminkada status 6 li, treki bor buyurtma topilsa, yetkazma ma'lumoti
   model so'ramagan bo'lsa ham olinadi — usiz kelgan-kelmagani bilinmaydi.
 
-**Qoida:** buyurtma **to'langan** (`pay_status = 1`) bo'lib, status 3 yoki 4
-bo'lib, **to'lov sanasidan (`paid_at`) `PROBLEM_DAYS` (3) kundan ko'p**
-o'tgan bo'lsa — muammoli.
+### Ketma-ket tekshiruv
 
+Qaror **bitta joyda**, qat'iy ketma-ketlikda chiqariladi
+(`CheckOrder`, `support/order_check.go`). Ilgari qoidalar uch joyda
+alohida yozilgan edi (`IsProblem`, `MarkArrival`, `fetchSystemData`) va
+bir-biriga zid javob berardi: modelga "posilka yo'lda, tez orada
+keladi" deyilib turib, xuddi shu buyurtma guruhga "⚠️ Muammoli
+buyurtma" bo'lib tushardi.
+
+| # | Shart | Muammo? | Natija |
+|---|---|---|---|
+| 0 | to'lanmagan (`pay_status = 0`) | yo'q | hech narsa tekshirilmaydi |
+| 1 | treki yo'q | 8-qadam bo'yicha | yetkazmada qidirishga narsa yo'q |
+| 2 | yetkazma olinmadi yoki so'rov **xato berdi** | 8-qadam bo'yicha | "topilmadi" deb xulosa chiqarilmaydi |
+| 3 | yetkazmada bor, lekin **egasi boshqa** | **ha** | adminka `user_id` ≠ yetkazma `user_id` |
+| 4 | yetkazmada bor, lekin **viloyat mos emas** | **ha** | adminka `province` ≠ yetkazma `city`/`branch_name` |
+| 5 | yetkazmada bor, hammasi joyida | yo'q | ketma-ketlik to'xtaydi |
+| 6 | yetkazmada yo'q, yo'lga chiqqaniga `≤ FRESH_SHIPMENT_DAYS` (20) | yo'q | sana + **qolgan kun oralig'i** |
+| 7a | yetkazmada yo'q, `20 < kun ≤ 30` | **ha** | mijozga faqat "tekshirilmoqda" |
+| 7b | yetkazmada yo'q, `kun > LONG_SHIPMENT_DAYS` (30) | **ha** | + mijozdan olgan-olmagani so'raladi |
+| 7c | yetkazmada yo'q, **jo'natish sanasi ham yo'q** | 8-qadam bo'yicha | ikki tomonning hech birida ko'rinmaydi |
+| 8 | kuzatiladigan status + kun chegarasidan oshdi | **ha** | adminkada qotib qolgan |
+
+**Qoida (8-qadam):** buyurtma **to'langan** (`pay_status = 1`) bo'lib,
+statusi kuzatiladigan ro'yxatda (`PROBLEM_STATUSES` — 3, 4, 12) bo'lib,
+to'lov sanasidan (`paid_at`) **shu status uchun belgilangan kundan**
+ko'p o'tgan bo'lsa — muammoli:
+
+| status | chegara |
+|---|---|
+| 3 (sotib olingan, to'langan) | 3 kun |
+| 4 (kiritish uchun kutilmoqda) | **7 kun** — bu holat normalda ham bir haftaga cho'ziladi |
+| 12 (abnormality) | 3 kun |
+
+Chegaralar `PROBLEM_STATUS_DAYS="3:3,4:7,12:3"` bilan o'zgartiriladi;
+ro'yxatda yo'q status uchun eski `PROBLEM_DAYS` (3) ishlatiladi.
 `paid_at` bo'sh bo'lsa (eski yozuvlar) `created_at` ga qaytiladi.
 **To'lanmagan buyurtma hech qachon muammoli hisoblanmaydi** — u kutib
 turishi normal, xodim aralashuvi kerak emas.
+
+**Yetkazma so'rovi xato bersa muammo OCHILMAYDI** (2-qadam). "Yetkazmada
+yo'q" bilan "tekshira olmadik" ni aralashtirsa, API bir marta yotganda
+mijozning butun ro'yxati guruhga muammo bo'lib yog'iladi.
+
+### Posilka yo'lda: qolgan kun oralig'i
+
+Posilka yo'lga chiqqan (`shipped_at` bor), yetkazmada hali yo'q va
+chiqqaniga `FRESH_SHIPMENT_DAYS` (20) kundan oshmagan bo'lsa — bu
+**muammo emas** va guruhga chiqmaydi. Mijozga ikki narsa aytiladi:
+**yo'lga chiqqan sana** va **qolgan kun oralig'i** (`yolda_tez_keladi`
+va `qolgan_kun`, `OrderETA`):
+
+| yo'lga chiqqaniga | qolgan | mijozga |
+|---|---|---|
+| 1 kun | 19 | "uzog'i 14-19 kun ichida yetib keladi" |
+| 12 kun | 8 | "uzog'i 3-8 kun ichida yetib keladi" |
+| 18 kun | 2 | "uzog'i 1-2 kun ichida yetib keladi" |
+
+Oraliq `[qolgan−5 … qolgan]`, pastki chegara **1 kundan tushmaydi**:
+"0 kun ichida keladi" mijozga "bugun" deb o'qiladi va bajarilmaydigan
+va'da bo'ladi. Oraliqni **kod** hisoblaydi — model sana ayirmasini
+o'zi qila olmaydi. Aniq sana yoki hafta kuni va'da qilish promtda
+taqiqlangan.
+
+Muddat o'tsa pog'ona:
+
+- **20-30 kun** — muammo, xodimga chiqadi (`DIQQAT_muddat_otdi`),
+  mijozga faqat "tekshirilmoqda";
+- **30 kundan** (`LONG_SHIPMENT_DAYS`) — muammo + mijozdan posilkani
+  allaqachon olgan-olmagani so'raladi (`DIQQAT_mijozdan_sora`): tizimda
+  belgilanmay qolgan bo'lishi mumkin.
+
+Ikkalasi ham **adminka statusiga qaramaydi**: posilka yo'lda
+yo'qolganda status 6 yoki 7 da turadi, ular esa `PROBLEM_STATUSES` da
+yo'q. Shuning uchun bunday muammo zanjirning boshida emas, **yetkazma
+javobi kelgandan keyin** ochiladi (`OpenLateShipmentIssues`) va uni
+faqat posilkaning yetkazmada chiqishi yoki xodim yopadi — "adminkada
+holat o'zgardi" degan avtomatik yopish unga tegmaydi.
+
+### Manzil va egasi
+
+Posilka yetkazmada chiqqan bo'lsa yana ikki narsa tekshiriladi:
+
+1. **Egasi** — adminkadagi `user_id` yetkazmadagi `user_id` bilan bir
+   xilmi (`compareDashboard`). Mos kelmasa posilka boshqa odamning
+   akkauntiga biriktirilgan: muammo ochiq qoladi va endi xodimga
+   **qator** ham chiqadi (ilgari faqat ochiq yozuv qolardi, guruhda
+   hech narsa ko'rinmasdi).
+2. **Viloyat** — adminkadagi `province` posilka tushgan joy
+   (`city`, bo'sh bo'lsa `branch_name`) bilan bir viloyatdami
+   (`checkRegion`). Ikki manba ilgari **hech solishtirilmagan**:
+   yetkazma tomonining o'zida ziddiyat bo'lmasa (`city` va filial bir
+   viloyat) xatoni hech kim ko'rmasdi. Mos kelmasa mijozga qaysi
+   filialdan olishi **aytilmaydi** — faqat "tekshirilmoqda".
+
+Ikki tomondan biri bo'sh yoki tanilmagan bo'lsa **xato deb
+hisoblanmaydi**: `user_id`, `province` va `city` maydonlari ba'zan
+bo'sh keladi.
 
 Bu qarorni **kod** chiqaradi, model emas: modelga sana ayirmasini ishonib
 bo'lmaydi. Modelga tayyor maydonlar beriladi:
@@ -1010,8 +1102,11 @@ Bir vaqtda faqat bitta skaner yuradi (ikkinchi so'rov `409` oladi).
 | `HTTP_RETRIES` | 2 | Vaqtinchalik xatolarda (429, 5xx, Cloudflare 522) qo'shimcha urinishlar |
 | `HTTP_RETRY_DELAY_MS` | 2000 | Urinishlar orasidagi birinchi tanaffus (har safar ikkilanadi) |
 | `HTTP_RETRY_MAX_MS` | 20000 | Kutishning yuqori chegarasi (`Retry-After` uzun bo'lsa ham) |
-| `PROBLEM_DAYS` | 3 | To'lovdan necha kun o'tsa muammoli |
-| `PROBLEM_STATUSES` | `3,4` | Kuzatiladigan statuslar |
+| `PROBLEM_DAYS` | 3 | To'lovdan necha kun o'tsa muammoli (ZAXIRA: statusga alohida chegara berilmaganda) |
+| `PROBLEM_STATUSES` | `3,4,12` | Kuzatiladigan statuslar (12 — abnormality) |
+| `PROBLEM_STATUS_DAYS` | `3:3,4:7,12:3` | Har bir status uchun alohida kun chegarasi |
+| `FRESH_SHIPMENT_DAYS` | 20 | Yo'lga chiqqaniga (`shipped_at`) shuncha kundan oshmagan buyurtma muammo hisoblanmaydi; mijozga sana va qolgan kun oralig'i aytiladi |
+| `LONG_SHIPMENT_DAYS` | 30 | Yo'lga chiqqaniga shuncha kundan oshib yetkazmada chiqmagan posilka bo'yicha mijozdan olgan-olmagani so'raladi |
 | `STALE_DELIVERY_DAYS` | 10 | Yetkazmaga kelganiga shuncha kundan oshgan posilka ogohlantirishi xodimga chiqmaydi (mijoz o'zi so'ramasa); 0 — o'chirilgan |
 | `TELEGRAM_MIN_GAP_MS` | 3000 | Guruhga ketma-ket ikki xabar orasidagi eng kam tanaffus (Telegram limiti ~20 xabar/daqiqa) |
 | `TELEGRAM_MAX_RETRY` | 3 | 429 (`Too Many Requests`) dan keyin qayta urinishlar soni |

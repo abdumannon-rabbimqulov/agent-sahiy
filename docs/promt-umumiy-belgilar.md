@@ -81,6 +81,51 @@ ular **1-promtga ham** tushadi va 1-promtda ham tushuntirilishi kerak:
   xushmuomala so'ra.
 ```
 
+## Buyurtma holati — "Tizimdagi ma'lumot" blokidagi yangi maydonlar
+
+Bular ham belgilar bloki emas, **ma'lumot** blokida, `adminka` ro'yxatining
+ichida keladi (`support/order_check.go` — ketma-ket tekshiruv). Javob yozadigan
+promtlarda (2, 3, 4, 6) tushuntirilishi kerak — aks holda model ularni
+e'tiborsiz qoldiradi:
+
+```
+{"yolda_tez_keladi": "…", "qolgan_kun": "uzog'i 3-8 kun ichida yetib keladi"}
+→ Posilka yo'lga chiqqan, O'zbekistonga hali kelmagan va yo'l muddati ICHIDA.
+  Bu MUAMMO EMAS. Mijozga ikki narsani ayt: buyurtma qaysi kuni yo'lga
+  chiqqani va "qolgan_kun" dagi oraliqni AYNAN shundayligicha.
+  Oraliqni aniq sanaga yoki hafta kuniga AYLANTIRMA ("ertaga", "dushanbaga",
+  "3-kuni" dema), kengaytirma va qisqartirma. Kechikish, muammo yoki tekshiruv
+  haqida gapirma; mijozdan hech narsa so'rama va raqamini qayta so'rama.
+
+{"DIQQAT_muddat_otdi": "…"}
+→ Posilka yo'l muddatidan oshdi yoki jo'natilgan sanasi yo'q, yetkazmada ham
+  chiqmagan. Murojaat xodimga topshirildi. Mijozga FAQAT "buyurtma
+  tekshirilmoqda, hal bo'lishi bilan xabar beramiz" deb ayt. Sabab, muddat,
+  filial va yangi oraliq AYTMA. "Tez orada keladi" ham dema.
+
+{"DIQQAT_xatolik": "…"}
+→ Buyurtmada ma'lumot XATOSI topildi: posilka boshqa akkauntga biriktirilgan
+  yoki mijozning viloyatiga emas, boshqa viloyatga tushgan. Mijozga posilka
+  qayerdaligini, qaysi filialdan olishini yoki qachon yetishini AYTMA.
+  Faqat shuni ayt: xatolik aniqlandi, uzr so'raymiz, xodimlar tekshirib
+  tuzatmoqda.
+
+{"DIQQAT_mijozdan_sora": "…"}
+→ Posilka juda uzoq yo'lda (30 kundan oshdi) va yetkazmada chiqmagan: mijoz
+  uni allaqachon olgan, tizimda belgilanmay qolgan bo'lishi mumkin. Javobni
+  SAVOL bilan tugat: posilkani olgan-olmaganini so'ra. "Yo'lda" deb qat'iy
+  aytma va muddat va'da qilma.
+
+{"status_label": "abnormal holat (abnormality)", "status_izoh": "…"}
+→ Buyurtmada g'ayritabiiy holat aniqlangan, xodim tekshiradi. Mijozga holat
+  NOMINI aytma ("abnormal", "abnormality" so'zlarini ishlatma) va sabab o'ylab
+  topma: faqat "tekshirilmoqda, xodimga topshirildi" deb ayt.
+```
+
+Bir buyurtmada bu maydonlardan faqat BITTASI keladi: ketma-ket tekshiruv
+birinchi mos kelgan holatda to'xtaydi. Ikkitasi ko'rinsa — ular har xil
+buyurtmaga tegishli, javobda aralashtirma.
+
 ## Raqamlar — hamma javob yozadigan promtda
 
 ```
@@ -100,11 +145,11 @@ bo'lsang ham o'girma.
 
 ## Qaysi promtga nima kerak
 
-| Promt | MUROJAAT BELGILARI | rasm maydonlari | RAQAMLAR QOIDASI |
-|---|---|---|---|
-| 1 (yo'naltirish) | kerak emas | **kerak** | kerak emas (javob yozmaydi) |
-| 2, 3, 4, 6 | **kerak** | kerak | **kerak** |
-| 5 (xodim javobi) | belgilar `Xodim javobi` JSON ichida (`salom`) | — | **kerak** (promt matnida bor) |
+| Promt | MUROJAAT BELGILARI | rasm maydonlari | buyurtma holati | RAQAMLAR QOIDASI |
+|---|---|---|---|---|
+| 1 (yo'naltirish) | kerak emas | **kerak** | kerak emas | kerak emas (javob yozmaydi) |
+| 2, 3, 4, 6 | **kerak** | kerak | **kerak** | **kerak** |
+| 5 (xodim javobi) | belgilar `Xodim javobi` JSON ichida (`salom`) | — | — | **kerak** (promt matnida bor) |
 
 Zanjirda jami **6 promt** bor: 1, 2, 3, 4, 6 (zanjir) va 5 (xodim javobi
 yo'li). Eski **7-promt olib tashlandi** — qayta buyurtmaning uch qadami

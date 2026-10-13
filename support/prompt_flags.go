@@ -32,6 +32,13 @@ const (
 	FlagPicked     = "tanlangan_tovar"     // mijoz almashtirishga tovar tanladi (reorder.go)
 	FlagImageNums  = "rasmdan_oqilgan_raqamlar"
 	FlagImageNoNum = "rasmdan_raqam_chiqmadi"
+	// FlagAskedNums - mijoz O'ZI yozgan (yoki rasmidan o'qilgan) buyurtma
+	// va trek raqamlari. Javob yozadigan bosqichlar uchun: raqam
+	// qo'lda bo'lsa, uni mijozdan QAYTA so'rash mantiqsiz.
+	FlagAskedNums = "mijoz_yozgan_raqamlar"
+	// FlagPending - mijozda hali qo'liga tegmagan buyurtma bor
+	// (fetchSystemData aniqlaydi).
+	FlagPending = "olinmagan_buyurtma_bor"
 )
 
 // flagsHeader - JSON dan oldin turadigan qator. Ma'lumot blokidan
