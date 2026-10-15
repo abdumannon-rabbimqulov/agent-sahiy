@@ -124,20 +124,45 @@ func lastWordOurs(msgs []Message) bool {
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
 func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
-	return runChain(ctx, conversationID, clientID, false)
+	return runChain(ctx, conversationID, clientID, runOpts{})
 }
 
 // RunChainForce - tekshiruvsiz ishga tushirish (paneldan qo'lda qayta
 // urinish uchun): oxirgi so'z biz tomondan bo'lsa ham zanjir yuradi.
 func RunChainForce(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
-	return runChain(ctx, conversationID, clientID, true)
+	return runChain(ctx, conversationID, clientID, runOpts{Force: true})
 }
 
-func runChain(ctx context.Context, conversationID, clientID int64, force bool) (*Interaction, error) {
+// runOpts - zanjir qanday yuritilishi.
+//
+// Sandbox — paneldagi test chat (sandbox.go): suhbat tarixi tashqaridan
+// beriladi va zanjir HECH QANDAY iz qoldirmaydi — bazaga yozilmaydi,
+// Telegramga chiqmaydi, mijozga yuborilmaydi. Tashqi tizimlardan
+// ma'lumot esa haqiqiy holicha o'qiladi, shuning uchun javob haqiqiy
+// suhbatdagiday chiqadi.
+type runOpts struct {
+	// Force - tekshiruvlarsiz ishga tushirish (oxirgi so'z biz tomondan
+	// bo'lsa ham, "faqat mutaxassis" rejimida ham).
+	Force bool
+	// Sandbox - test rejimi. Tekshiruvlar Force kabi chetlab o'tiladi.
+	Sandbox bool
+	// Msgs - faqat Sandbox'da: fetchHistory o'rniga ishlatiladigan tarix.
+	Msgs []Message
+}
+
+func runChain(ctx context.Context, conversationID, clientID int64, o runOpts) (*Interaction, error) {
+	// Sandbox ham tekshiruvlarni chetlab o'tadi: test chatda har bir
+	// xabar darhol ishlashi kerak.
+	force := o.Force || o.Sandbox
 	// O'chirilgan bo'lsa hech narsa qilinmaydi: model'ga so'rov ham
 	// ketmaydi, bazaga ham yozilmaydi (behuda "failed" yozuvlar
 	// to'planmasin).
-	if !AgentEnabled() {
+	//
+	// Sandbox bundan mustasno: test chat tanlangan model bilan HAR
+	// QANDAY holatda ishlashi kerak. U mijozga hech narsa yubormaydi
+	// va bazaga yozmaydi, shuning uchun o'chirilgan agent unga
+	// to'sqinlik qilmaydi.
+	if !AgentEnabled() && !o.Sandbox {
 		return nil, ErrAgentDisabled
 	}
 	// "Faqat mutaxassis javoblari" rejimi: yangi mijoz xabari modelga
@@ -151,19 +176,20 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		ConversationID: conversationID,
 		ClientID:       clientID,
 		Status:         StatusFailed,
-		Forced:         force,
+		Forced:         o.Force,
 	}
 
-	// 1. Suhbat tarixi.
-	msgs, err := fetchHistory(conversationID)
+	// 1. Suhbat tarixi. Sandbox'da u tashqaridan keladi — tashqi
+	// tizimga so'rov ketmaydi.
+	msgs, err := historyFor(conversationID, o)
 	if err != nil {
 		in.Error = fmt.Sprintf("xabarlarni olish: %v", err)
-		saveOrLog(in)
+		saveOrLog(in, o)
 		return in, err
 	}
 	if len(msgs) == 0 {
 		in.Error = "suhbatda xabar yo'q"
-		saveOrLog(in)
+		saveOrLog(in, o)
 		return in, fmt.Errorf("suhbat %d: xabar yo'q", conversationID)
 	}
 
@@ -199,7 +225,9 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	// olmagan holda yozilgan edi. Admin ularni tasodifan tasdiqlab
 	// yubormasligi uchun bekor qilamiz; hozir tayyorlanayotgan yangi
 	// javob ularning o'rnini bosadi.
-	supersedePending(conversationID)
+	if !o.Sandbox {
+		supersedePending(conversationID)
+	}
 	in.ClientMessage = lastClientMessage(msgs)
 	// Aynan shu murojaatda javob berilayotgan (javobsiz qolgan) mijoz
 	// xabarlari — javob yuborilgandan keyin shular o'qilgan deb belgilanadi.
@@ -213,7 +241,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 	llm := ActiveLLM()
 	if !llm.Ready() {
 		in.Error = ErrNoLLMKey.Error()
-		saveOrLog(in)
+		saveOrLog(in, o)
 		return in, ErrNoLLMKey
 	}
 
@@ -326,7 +354,9 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// OCR tushunmadi (past sifat, burchak, boshqa format va h.k.) —
 			// rasmni xodim o'z ko'zi bilan ko'rsin. Eng oxirgi (ko'pi bilan
 			// 3 ta) rasm guruhga yuboriladi.
-			sendUnreadableImages(conversationID, clientID, img)
+			if !o.Sandbox {
+				sendUnreadableImages(conversationID, clientID, img)
+			}
 		}
 
 		// Bosqich panelga yoziladi: suhbat tafsilotida qaysi rasm
@@ -407,7 +437,11 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// ishlatiladi. Qator zanjirning boshida qo'yilgan bo'lsa
 		// qaytarilmaydi.
 		if a.HasLanguage() {
-			SaveClientLang(clientID, a.Uzb, a.Rus, in.ClientMessage)
+			// Sandbox: til faqat shu zanjirda ishlatiladi, mijozga
+			// biriktirilmaydi — test haqiqiy sozlamani o'zgartirmasin.
+			if !o.Sandbox {
+				SaveClientLang(clientID, a.Uzb, a.Rus, in.ClientMessage)
+			}
 			if langCtx == "" {
 				langCtx = langJSON(a.Uzb, a.Rus, detectLang(msgs).Script)
 				dataCtx = append(dataCtx, "Til: "+langCtx)
@@ -434,7 +468,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
 			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
-			data, pending, found, fresh := fetchSystemData(a, clientID, conversationID)
+			data, pending, found, fresh := fetchSystemData(a, clientID, conversationID, o.Sandbox)
 			// Mijozda qo'liga tegmagan buyurtma bormi — javob yozadigan
 			// bosqich uchun belgi: bor bo'lsa gap o'sha buyurtma haqida
 			// ketadi, yo'q bo'lsa model bo'sh joydan muammo o'ylab
@@ -518,7 +552,8 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// zanjir xatosi — hech narsa yuborilmaydi
 
 	case in.ChatReply != "":
-		if holdForAdmin || !sendIfAuto(in, "avto") {
+		// Sandbox: javob hech qachon mijozga ketmaydi.
+		if o.Sandbox || holdForAdmin || !sendIfAuto(in, "avto") {
 			in.Status = StatusPending
 		}
 
@@ -527,6 +562,14 @@ func runChain(ctx context.Context, conversationID, clientID int64, force bool) (
 		// guruhga ketadi, murojaatning o'zi esa admin panelda ko'rinib
 		// tursin deb "pending" holatida qoladi.
 		in.Status = StatusPending
+	}
+
+	// Sandbox: natija faqat chaqiruvchiga qaytadi — bazada ham,
+	// Telegramda ham iz qolmaydi.
+	if o.Sandbox {
+		log.Printf("agent: TEST suhbat %d — %s, %d bosqich, %s",
+			conversationID, in.Status, in.StepsCount, usage)
+		return in, nil
 	}
 
 	if err := SaveInteraction(DB, in); err != nil {
@@ -785,6 +828,15 @@ func saveFlag(in *Interaction, field string, val any) {
 }
 
 // fetchHistory suhbatning oxirgi xabarlarini oladi (token eskirsa yangilaydi).
+// historyFor - zanjirga ketadigan suhbat tarixi. Sandbox'da u
+// tashqaridan (paneldan) keladi, aks holda tashqi tizimdan olinadi.
+func historyFor(conversationID int64, o runOpts) ([]Message, error) {
+	if o.Sandbox {
+		return o.Msgs, nil
+	}
+	return fetchHistory(conversationID)
+}
+
 func fetchHistory(conversationID int64) ([]Message, error) {
 	return withToken(func(baseURL, token string) ([]Message, error) {
 		return FetchMessages(baseURL, token, conversationID, HistoryLimit())
@@ -974,7 +1026,16 @@ func imageStepResult(img ImageNumbers, natija string) string {
 // To'rtinchi qiymat — shu chaqiruvda YANGI ochilgan muammoli buyurtmalar.
 // Ular guruhga shu yerdan yuborilmaydi: zanjir tugagach, AI xulosasi
 // bilan birga BITTA xabar bo'lib ketadi (DeliverStaffNotice).
-func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool, []string, []*OrderIssue) {
+// `sandbox` — paneldagi test chat: tashqi tizimlardan ma'lumot HAQIQIY
+// holicha o'qiladi (javob haqiqiy suhbatdagiday chiqsin), lekin muammo
+// yozuvlari ochilmaydi/yopilmaydi va guruhga xabar ketmaydi.
+func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) (string, bool, []string, []*OrderIssue) {
+	// Muammo yozuvlari shu baza orqali yoziladi. Sandbox'da u nil —
+	// bu yo'lning hammasi o'zi jim bo'lib qoladi.
+	issueDB := DB
+	if sandbox {
+		issueDB = nil
+	}
 	out := map[string]any{}
 	var alerts []string
 	var issues []*OrderIssue
@@ -1045,7 +1106,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 		// yangi muammolar yuqoriga qaytadi va zanjir oxirida AI xulosasi
 		// bilan bitta xabar bo'lib yuboriladi.
 		var fresh []*OrderIssue
-		views, fresh = DetectIssues(rows, clientID, conversationID)
+		views, fresh = detectIssues(issueDB, rows, clientID, conversationID)
 		issues = append(issues, fresh...)
 		if HasPendingOrders(views) {
 			pending = true
@@ -1164,7 +1225,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64) (string, bool,
 			// qanday yangi muammo ochilmaydi: "yetkazmada yo'q" bilan
 			// "tekshira olmadik" aralashmasligi kerak.
 			checks = CheckOrders(views, rows, true, len(errs) == 0, foreignTracks)
-			opened := OpenLateShipmentIssues(checks, views, clientID, conversationID)
+			opened := openLateShipmentIssues(issueDB, checks, views, clientID, conversationID)
 			issues = append(issues, opened...)
 			// Bu qatorlar DropStaleAlerts dan O'TMAYDI (eskilik
 			// yetkazmadagi `created_at` bo'yicha o'lchanadi,
@@ -1406,8 +1467,10 @@ func appendResult[T any](rows []T, errs []string, r []T, err error) ([]T, []stri
 }
 
 // saveOrLog - erta xatoda ham interaksiyani saqlaymiz (panelda ko'rinsin).
-func saveOrLog(in *Interaction) {
-	if DB == nil {
+// Sandbox'da (test chat) saqlanmaydi: navbatda soxta "failed" yozuvlar
+// to'planib qolmasin.
+func saveOrLog(in *Interaction, o runOpts) {
+	if DB == nil || o.Sandbox {
 		return
 	}
 	if err := SaveInteraction(DB, in); err != nil {

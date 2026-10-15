@@ -77,6 +77,18 @@ func handleFindErr(w http.ResponseWriter, err error, notFound string) bool {
 	return true
 }
 
+// healthHandler: GET /api/health[?force=1] — tashqi tizimlar holati.
+//
+// Nega alohida endpoint: adminka tokeni .env dan qo'lda olinadi va o'zi
+// yangilanmaydi. U tugasa agent ishlashda davom etadi, lekin buyurtma
+// ma'lumotini ko'rmay qoladi — buni panelda darhol ko'rish kerak.
+//
+// Natija 60 sekund keshlanadi; `force=1` keshni chetlab o'tadi.
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	rep := support.Health(r.URL.Query().Get("force") == "1")
+	writeJSON(w, rep.HTTPStatus(), rep)
+}
+
 // statsHandler: GET /api/stats — umumiy hisob.
 func statsHandler(w http.ResponseWriter, r *http.Request) {
 	s, err := support.GetStats(support.DB)
@@ -419,6 +431,59 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 	in, err := run(ctx, body.ConversationID, body.ClientID)
 	if errors.Is(err, support.ErrAlreadyAnswered) || errors.Is(err, support.ErrAlreadyStudied) {
 		writeErr(w, http.StatusConflict, err.Error()+` (qayta ishga tushirish uchun: {"force":true})`)
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": err.Error(), "interaction": in,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, in)
+}
+
+// agentSandboxHandler: POST /api/agent/sandbox
+// {"conversation_id":1,"client_id":456,"messages":[{"type":"client","message":"..."}]}
+//
+// Paneldagi test chat: suhbat tarixi brauzerdan keladi va zanjir hech
+// qanday iz qoldirmaydi — bazaga yozilmaydi, Telegramga chiqmaydi,
+// mijozga yuborilmaydi. Buyurtma/yetkazma ma'lumoti esa `client_id`
+// bo'yicha haqiqiy holicha o'qiladi.
+//
+// `/api/agent/run` dan farqi: u faqat HAQIQIY suhbat id'sini oladi va
+// tarixni o'zi tortadi, ya'ni test uchun matn yozib bo'lmaydi.
+func agentSandboxHandler(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ConversationID int64                    `json:"conversation_id"`
+		ClientID       int64                    `json:"client_id"`
+		Messages       []support.SandboxMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "body JSON emas")
+		return
+	}
+	if len(body.Messages) == 0 {
+		writeErr(w, http.StatusBadRequest, "messages majburiy")
+		return
+	}
+
+	// Test chat sozlamalarga QARAMAYDI: na `agent_enabled`, na "faqat
+	// mutaxassis javoblari" rejimi uni to'xtatmaydi. Sandbox hech
+	// kimga hech narsa yubormaydi va bazaga yozmaydi — u xodim
+	// javobni tanlangan model bilan tekshirib ko'rishi uchun. Agentni
+	// o'chirish aynan shu holatda kerak bo'ladi: oqim to'xtatilgan,
+	// xodim esa sozlashni test chatda sinab ko'radi.
+	//
+	// Ilgari bu yerda `agent_enabled` tekshirilardi va panelda
+	// "AI agent o'chirilgan" degan qizil xato chiqib, test chat
+	// umuman ishlamay qolardi.
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	in, err := support.RunChainSandbox(ctx, body.ConversationID, body.ClientID, body.Messages)
+	if errors.Is(err, support.ErrSandboxNoMessages) {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err != nil {
