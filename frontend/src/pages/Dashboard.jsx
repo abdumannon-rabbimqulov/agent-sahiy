@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, fmt } from '../api'
 import LangCell from '../components/LangCell'
+import SystemHealth from '../components/SystemHealth'
+import TestChat from '../components/TestChat'
 
 function Card({ k, v, s }) {
   return (
@@ -39,8 +41,20 @@ export default function Dashboard() {
     api.report(days).then(setReport).catch((e) => setErr(e.message))
   }, [days])
 
-  if (err) return <div className="err">{err}</div>
-  if (!stats) return <p className="muted">Yuklanmoqda…</p>
+  // Sarlavha va tizimlar holati statistikadan OLDIN chiqadi: statistika
+  // yuklanmasa yoki xato bersa ham, qaysi tizim ishlamayotgani ko'rinib
+  // tursin — aksincha bo'lsa aynan kerak paytda yashirinib qolardi.
+  const head = (
+    <>
+      <h1>Statistika</h1>
+      <p className="hint">AI agent qancha murojaatni hal qildi va qancha token sarfladi</p>
+      <SystemHealth />
+      <TestChat />
+    </>
+  )
+
+  if (err) return <>{head}<div className="err">{err}</div></>
+  if (!stats) return <>{head}<p className="muted">Yuklanmoqda…</p></>
 
   // saveLang - til o'zgargach jadvalni qayta so'ramaymiz: faqat shu
   // mijozning qatoridagi tilni yangilaymiz.
@@ -60,8 +74,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <h1>Statistika</h1>
-      <p className="hint">AI agent qancha murojaatni hal qildi va qancha token sarfladi</p>
+      {head}
 
       <div className="cards">
         <Card k="Jami murojaat" v={fmt.num(stats.total)} s={`${fmt.num(stats.unique_chats)} suhbat`} />

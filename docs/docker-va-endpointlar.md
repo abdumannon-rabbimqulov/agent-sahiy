@@ -21,7 +21,7 @@ bilan ishlaydi:
         ├─ POST /api/chats ──── chatsHandler ─────┐                     │
         ├─ GET  /api/messages ─ messagesHandler ──┤ token.json          │
         │           │                             ▼                     │
-        │           │                    S: api.market.sahiy.uz        │
+        │           │                    S: api-market.sahiy.uz        │
         │           │                       (admin login)              │
         │           │                                                  │
         ├─ GET  /api/orders ─── ordersHandler ────► A: api.sahiy.uz     │
@@ -36,7 +36,7 @@ bilan ishlaydi:
 
 | Belgi | Server | Base URL (env) | Standart | Auth |
 |---|---|---|---|---|
-| **S** | Support (yordam xizmati) | `BASE_URL` | `https://api.market.sahiy.uz` | admin login → `token.json` |
+| **S** | Support (yordam xizmati) | `BASE_URL` | `https://api-market.sahiy.uz` | admin login → `token.json` |
 | **A** | Adminka / daigou (Xitoy tomoni) | `USER_BASE_URL` | `https://api.sahiy.uz` | qo'lda qo'yilgan bearer |
 | **D** | Delivery (O'zbekistondagi yetkazma) | `SERVICE_BASE_URL` | `https://api.sahiy.uz` | service login → `service-token.json` |
 

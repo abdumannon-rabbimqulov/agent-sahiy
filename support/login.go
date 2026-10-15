@@ -20,7 +20,7 @@ import (
 const FallbackTTL = 30 * time.Minute
 
 // DefaultBaseURL — support serveri (BASE_URL bo'sh bo'lsa).
-const DefaultBaseURL = "https://api.market.sahiy.uz"
+const DefaultBaseURL = "https://api-market.sahiy.uz"
 
 // LoginPath — support admin login endpointi.
 const LoginPath = "/api/v1/admins/login"

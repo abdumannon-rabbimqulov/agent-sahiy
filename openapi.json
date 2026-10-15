@@ -14,7 +14,7 @@
   "tags": [
     {
       "name": "support",
-      "description": "api.market.sahiy.uz — admin login (token.json)"
+      "description": "api-market.sahiy.uz — admin login (token.json)"
     },
     {
       "name": "adminka",
@@ -51,6 +51,10 @@
     {
       "name": "issues",
       "description": "Muammoli buyurtmalar: aniqlash, Telegram orqali hal qilish"
+    },
+    {
+      "name": "health",
+      "description": "Tashqi tizimlar holati: ishlayaptimi va tokeni qachon tugaydi"
     }
   ],
   "paths": {
@@ -1090,6 +1094,63 @@
         }
       }
     },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Tizimlar holati",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Adminka, support, yetkazma, Telegram va model ishlayaptimi.\n\nAdminka tokeni .env dagi ADMINKA_TOKEN_BEARER dan QO'LDA olinadi va o'zi yangilanmaydi — u tugasa agent ishlashda davom etadi, lekin buyurtma ma'lumotini ko'rmay qoladi. Shu holat panelda ko'rinib turadi.\n\nNatija 60 sekund keshlanadi; `force=1` keshni chetlab o'tadi. Biror tizim ishlamasa javob kodi 503 bo'ladi (uptime-kuzatuv sezishi uchun), tanasi esa har ikki holatda bir xil.",
+        "parameters": [
+          {
+            "name": "force",
+            "in": "query",
+            "description": "1 — keshni chetlab o'tib qayta tekshirish",
+            "schema": {
+              "type": "string",
+              "example": "1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hamma tizim ishlayapti (yoki ogohlantirish)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Kamida bitta tizim ishlamayapti",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Xato",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/stats": {
       "get": {
         "tags": [
@@ -1711,6 +1772,117 @@
           },
           "409": {
             "description": "AI agent o'chirilgan yoki suhbatga allaqachon javob berilgan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/sandbox": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Test chat — izsiz sinov",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "description": "Admin paneldagi test chat. Suhbat tarixi BROWSERDAN keladi (haqiqiy suhbat id'si shart emas) va zanjir hech qanday iz qoldirmaydi: bazaga yozilmaydi, Telegram guruhga chiqmaydi, mijozga yuborilmaydi. Buyurtma/yetkazma ma'lumoti esa `client_id` bo'yicha haqiqiy tizimdan o'qiladi, shuning uchun javob haqiqiy suhbatdagiday chiqadi. Modelga oxirgi 10 ta xabar beriladi. `/api/agent/run` dan farqi: u faqat haqiqiy suhbat id'sini oladi va tarixni o'zi tortadi.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "messages"
+                ],
+                "properties": {
+                  "conversation_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "default": 0,
+                    "description": "Ixtiyoriy: faqat loglarda va salom hisobida ishlatiladi",
+                    "example": 1
+                  },
+                  "client_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "default": 0,
+                    "description": "Ixtiyoriy: 0 bo'lsa buyurtma qidiruvi mijozga bog'lanmaydi",
+                    "example": 8169002
+                  },
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Suhbat tarixi, eskisidan yangisiga. Oxirgi xabar `client` bo'lishi shart — zanjir aynan unga javob yozadi",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "message"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "client",
+                            "agent"
+                          ],
+                          "description": "client — mijoz yozgan, agent — biz yozgan"
+                        },
+                        "message": {
+                          "type": "string",
+                          "example": "salom, buyurtmam qayerda?"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Natija (bazaga yozilmaydi, shuning uchun `id` = 0)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Interaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "messages bo'sh yoki oxirgi xabar mijozdan emas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "AI agent o'chirilgan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Xato",
             "content": {
               "application/json": {
                 "schema": {
@@ -3261,6 +3433,72 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "SystemCheck": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "adminka"
+          },
+          "name": {
+            "type": "string",
+            "example": "Adminka (Xitoy buyurtmalari)"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "fail"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Nima bo'lgani va nima qilish kerak"
+          },
+          "affects": {
+            "type": "string",
+            "description": "Bu tizim ishlamasa nima ishlamaydi"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Token muddati (faqat qo'lda yangilanadigan tokenlar)"
+          },
+          "days_left": {
+            "type": "number",
+            "description": "Token tugashiga qolgan kun"
+          },
+          "manual": {
+            "type": "boolean",
+            "description": "Token qo'lda yangilanadi"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "fail"
+            ],
+            "description": "Eng yomon tizim holati"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "systems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemCheck"
+            }
           }
         }
       }

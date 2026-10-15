@@ -82,10 +82,34 @@ func TestWithoutGreeting(t *testing.T) {
 			"Ваш заказ отправлен.",
 		},
 		{
-			// Salom gap ichida — javobning bir qismi, tegilmaydi.
-			"gap ichidagi salom",
+			// Salom vergul bilan gapga ulangan — baribir olinadi, qolgan
+			// gap bosh harfdan boshlanadi.
+			"vergul bilan ulangan salom",
 			"Assalomu alaykum, buyurtmangiz ertaga jo'natiladi.\nSavolingiz bo'lsa yozing.",
-			"Assalomu alaykum, buyurtmangiz ertaga jo'natiladi.\nSavolingiz bo'lsa yozing.",
+			"Buyurtmangiz ertaga jo'natiladi.\nSavolingiz bo'lsa yozing.",
+		},
+		{
+			// Salom matn ichida, boshida emas — tegilmaydi.
+			"matn ichidagi salom",
+			"Buyurtmangiz yetib keldi.\nFilialga kirsangiz salom bering.",
+			"Buyurtmangiz yetib keldi.\nFilialga kirsangiz salom bering.",
+		},
+		{
+			// Aynan mijoz ko'rgan holat: salom birinchi gapning ichida.
+			"bir qatorda rus salomi",
+			"Здравствуйте! Сегодня поступили новые грузы.",
+			"Сегодня поступили новые грузы.",
+		},
+		{
+			"buyurtma raqami saqlanadi",
+			"DG60607041 — Assalomu alaykum! Buyurtmangiz yo'lda.",
+			"DG60607041 — Buyurtmangiz yo'lda.",
+		},
+		{
+			// Butun javob salomdan iborat bo'lsa — bo'sh xabar ketmasin.
+			"faqat salom",
+			"Assalomu alaykum!",
+			"Assalomu alaykum!",
 		},
 		{
 			"salom yo'q",
@@ -95,7 +119,7 @@ func TestWithoutGreeting(t *testing.T) {
 		{
 			"bitta qator",
 			"Assalomu alaykum! Buyurtmangiz ertaga jo'natiladi.",
-			"Assalomu alaykum! Buyurtmangiz ertaga jo'natiladi.",
+			"Buyurtmangiz ertaga jo'natiladi.",
 		},
 	}
 	for _, c := range cases {

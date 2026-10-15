@@ -361,6 +361,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/promts/{id}", support.RequireAuth(promtDeleteHandler))
 
 	// Statistika
+	mux.HandleFunc("GET /api/health", support.RequireAuth(healthHandler))
 	mux.HandleFunc("GET /api/stats", support.RequireAuth(statsHandler))
 	mux.HandleFunc("GET /api/stats/daily", support.RequireAuth(dailyStatsHandler))
 	mux.HandleFunc("GET /api/stats/report", support.RequireAuth(dailyReportHandler))
@@ -386,6 +387,8 @@ func main() {
 	mux.HandleFunc("GET /api/settings", support.RequireAuth(settingsHandler))
 	mux.HandleFunc("PUT /api/settings", support.RequireAuth(settingsUpdateHandler))
 	mux.HandleFunc("POST /api/agent/run", support.RequireAuth(agentRunHandler))
+	// Test chat: paneldan mijoz bo'lib yozib ko'rish (izsiz).
+	mux.HandleFunc("POST /api/agent/sandbox", support.RequireAuth(agentSandboxHandler))
 	mux.HandleFunc("POST /api/agent/scan", support.RequireAuth(agentScanHandler))
 
 	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
@@ -407,6 +410,10 @@ func main() {
 	// Telegram guruhidagi javoblar (muammo yechimlari) — agent
 	// o'chirilgan bo'lsa ham o'qiladi.
 	support.StartTelegramPoller(ctx)
+
+	// Tizim yiqilganda (masalan adminka tokeni tugaganda) xodimlar
+	// guruhiga ogohlantirish. Panelni ochib turmasa ham sezilsin.
+	support.StartHealthAlerter(ctx)
 
 	srv := &http.Server{Addr: addr, Handler: withCORS(mux)}
 

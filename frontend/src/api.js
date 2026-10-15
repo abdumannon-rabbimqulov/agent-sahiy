@@ -14,7 +14,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body } = {}) {
+// allow — xato deb hisoblanmaydigan statuslar. /api/health tizim
+// ishlamayotganda 503 qaytaradi (uptime-kuzatuv sezishi uchun), lekin
+// panel uchun bu normal javob: tanasida holat yozilgan.
+async function request(path, { method = 'GET', body, allow = [] } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   const token = tokenStore.get()
   if (token) headers.Authorization = `Bearer ${token}`
@@ -33,13 +36,19 @@ async function request(path, { method = 'GET', body } = {}) {
 
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
-  if (!res.ok) throw new ApiError(data?.error || `Xato (${res.status})`, res.status)
+  if (!res.ok && !allow.includes(res.status))
+    throw new ApiError(data?.error || `Xato (${res.status})`, res.status)
   return data
 }
 
 export const api = {
   login: (login, password) => request('/api/auth/login', { method: 'POST', body: { login, password } }),
   me: () => request('/api/auth/me'),
+
+  // Tashqi tizimlar holati: adminka tokeni tugaganini panelda ko'rish
+  // uchun. force — 60 sekundlik keshni chetlab o'tish.
+  health: (force = false) =>
+    request(`/api/health${force ? '?force=1' : ''}`, { allow: [503] }),
 
   stats: () => request('/api/stats'),
   daily: (days = 14) => request(`/api/stats/daily?days=${days}`),
@@ -78,6 +87,15 @@ export const api = {
 
   run: (conversation_id, client_id) =>
     request('/api/agent/run', { method: 'POST', body: { conversation_id, client_id } }),
+
+  // Test chat: suhbat tarixi faqat brauzerda turadi, shuning uchun har
+  // so'rovda to'liq yuboriladi. Backend hech narsa saqlamaydi va javob
+  // mijozga ketmaydi.
+  sandbox: (conversation_id, client_id, messages) =>
+    request('/api/agent/sandbox', {
+      method: 'POST',
+      body: { conversation_id, client_id, messages },
+    }),
 }
 
 // Ko'p ishlatiladigan formatlar.

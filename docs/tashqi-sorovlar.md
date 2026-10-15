@@ -7,7 +7,7 @@ Uchta boshqa-boshqa server bor va ular **alohida login** talab qiladi:
 
 | Belgi | Server | Base URL | env | Standart |
 |---|---|---|---|---|
-| **S** | Support (yordam xizmati) | `BASE_URL` | `BASE_URL` | `https://api.market.sahiy.uz` |
+| **S** | Support (yordam xizmati) | `BASE_URL` | `BASE_URL` | `https://api-market.sahiy.uz` |
 | **D** | Delivery (O'zbekistondagi yetkazma) | `SERVICE_BASE_URL` | `SERVICE_BASE_URL` | `https://api.sahiy.uz` |
 | **A** | Adminka / daigou (Xitoy tomoni) | `USER_BASE_URL` | `USER_BASE_URL` | `https://api.sahiy.uz` |
 

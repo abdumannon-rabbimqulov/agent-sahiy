@@ -103,16 +103,24 @@ func hasGreeting(text string) bool {
 	return false
 }
 
-// trimLeadingNumbers - matn boshidagi "DG123, DG456 — " prefiksini olib
-// tashlaydi (WithOrderSN qo'shgan bo'lsa).
-func trimLeadingNumbers(text string) string {
+// cutOrderPrefix - matn boshidagi "DG123, DG456 — " prefiksini ajratadi
+// (WithOrderSN qo'shgan bo'lsa). Prefiks qaytariladi, chunki salomni
+// olib tashlaganda u matnda QOLISHI kerak.
+func cutOrderPrefix(text string) (prefix, rest string) {
 	if i := strings.Index(text, " — "); i > 0 && i < 120 {
 		head := text[:i]
 		if strings.IndexFunc(head, func(r rune) bool { return r == '.' || r == '!' || r == '?' }) < 0 {
-			return strings.TrimSpace(text[i+len(" — "):])
+			cut := i + len(" — ")
+			return text[:cut], strings.TrimSpace(text[cut:])
 		}
 	}
-	return text
+	return "", text
+}
+
+// trimLeadingNumbers - o'sha prefiksni olib tashlaydi.
+func trimLeadingNumbers(text string) string {
+	_, rest := cutOrderPrefix(text)
+	return rest
 }
 
 // WithGreeting - javob matnini salom bilan boshlaydi.
@@ -132,18 +140,87 @@ func WithGreeting(text string) string {
 // tashlaydi (masalan qoralama kechqurun tayyorlangan, ertalab tasdiqlangan
 // va shu kunda mijoz allaqachon javob olgan).
 //
-// Faqat birinchi QATOR butunlay salomdan iborat bo'lsa olinadi: gap
-// o'rtasidagi yoki javob mazmuniga kirgan "salom" so'ziga tegilmaydi.
+// Salom alohida qatorda turishi SHART EMAS: model uni ko'pincha birinchi
+// gapning ichiga qo'shib yozadi ("Здравствуйте! Сегодня поступили новые
+// грузы...") — ilgari aynan shunday matndan salom olinmay qolar va mijoz
+// ketma-ket ikki marta salom olardi. Shuning uchun matnning BOSHIDAGI
+// salom bo'lagi (birinchi qator yoki birinchi qisqa gap) olinadi.
+//
+// Matn ichidagi "salom" so'ziga tegilmaydi: faqat bosh bo'lak va faqat
+// butunlay salomdan iborat bo'lsa.
 func WithoutGreeting(text string) string {
 	text = strings.TrimSpace(text)
-	line, rest, ok := strings.Cut(text, "\n")
-	if !ok {
+	if text == "" {
 		return text
 	}
-	if !isGreetingOnly(line) {
+	// Buyurtma raqami prefiksi joyida qoladi, salom esa uning ortidan
+	// qidiriladi ("DG123 — Assalomu alaykum, ...").
+	prefix, body := cutOrderPrefix(text)
+	changed := false
+	// Bir necha salom ketma-ket kelishi mumkin ("Assalomu alaykum!
+	// Hurmatli mijoz, ..."), lekin cheksiz emas: ikki qadam yetarli.
+	for i := 0; i < 2; i++ {
+		rest, ok := dropGreetingHead(body)
+		if !ok {
+			break
+		}
+		body, changed = rest, true
+	}
+	if !changed {
 		return text
 	}
-	return strings.TrimSpace(rest)
+	return strings.TrimSpace(prefix + body)
+}
+
+// greetHeadMax - salom bo'lagi eng ko'pi bilan shuncha runa bo'lishi
+// mumkin. Uzunroq bosh bo'lak — bu allaqachon javobning mazmuni.
+const greetHeadMax = 40
+
+// dropGreetingHead - matn boshidagi salom bo'lagini olib tashlaydi.
+//
+// Bo'lak chegarasi: qator oxiri yoki birinchi tinish belgisi
+// (". ! ? , ; :"). Bo'lak butunlay salomdan iborat bo'lsagina olinadi,
+// va ortidan matn qolishi shart — butun javob salomdan iborat bo'lsa
+// hech narsa o'zgarmaydi (bo'sh xabar yuborib bo'lmaydi).
+func dropGreetingHead(body string) (string, bool) {
+	cut := greetHeadEnd(body)
+	if cut <= 0 {
+		return body, false
+	}
+	head := body[:cut]
+	rest := strings.TrimSpace(body[cut:])
+	if rest == "" || !isGreetingOnly(head) {
+		return body, false
+	}
+	return upperFirst(rest), true
+}
+
+// greetHeadEnd - bosh bo'lak tugaydigan joy (tinish belgisi bilan birga).
+// Topilmasa yoki juda uzoq bo'lsa -1.
+func greetHeadEnd(body string) int {
+	n := 0
+	for i, r := range body {
+		if r == '\n' {
+			return i
+		}
+		if strings.ContainsRune(".!?,;:", r) {
+			return i + len(string(r))
+		}
+		if n++; n > greetHeadMax {
+			return -1
+		}
+	}
+	return -1
+}
+
+// upperFirst - birinchi harfni bosh harfga aylantiradi: salom vergul
+// bilan ulangan bo'lsa ("Assalomu alaykum, buyurtmangiz...") qolgan gap
+// kichik harfdan boshlanib qolmasin.
+func upperFirst(s string) string {
+	for i, r := range s {
+		return string(unicode.ToUpper(r)) + s[i+len(string(r)):]
+	}
+	return s
 }
 
 // isGreetingOnly - qator faqat salomdan iboratmi ("Assalomu alaykum!",
@@ -188,10 +265,11 @@ func startOfToday() time.Time {
 //
 // Ikki manba ham "yo'q" desagina salom beriladi:
 //
-//  1. baza: bugun shu mijozga MATNLI javob yuborilganmi (`chat_reply` bo'sh
-//     bo'lmagan va `sent_at` bugungi). Faqat `help` guruhga ketgan
-//     murojaatga ham `sent_at` yoziladi, lekin mijoz hech narsa olmagan —
-//     shuning uchun `chat_reply <> ”` sharti bor;
+//  1. baza: bugun shu mijozga (yoki shu suhbatga) MATNLI javob
+//     yuborilganmi (`chat_reply` bo'sh bo'lmagan va `sent_at` bugungi).
+//     Faqat `help` guruhga ketgan murojaatga ham `sent_at` yoziladi,
+//     lekin mijoz hech narsa olmagan — shuning uchun `chat_reply <> ”`
+//     sharti bor;
 //  2. suhbat tarixi: bugun bizdan ketgan xabar bormi. Xodim support
 //     panelida mijozga O'ZI javob yozsa, bazada hech qanday yozuv
 //     qolmaydi — buni faqat tarix ko'rsatadi.
@@ -214,10 +292,19 @@ func needGreeting(clientID, conversationID int64, msgs []Message) bool {
 	}
 	start := startOfToday()
 
+	// Suhbat ham hisobga olinadi: javob yozuvida mijoz id'si
+	// aniqlanmay qolgan bo'lishi mumkin (xodim javobi guruhdan kelganda
+	// `client_id` 0 bo'lib qoladi) — bunday yozuv faqat `client_id`
+	// bo'yicha qidirilganda ko'rinmaydi va mijoz ikkinchi salomni oladi.
+	q := DB.Model(&Interaction{}).Where("chat_reply <> '' AND sent_at >= ?", start)
+	if conversationID > 0 {
+		q = q.Where("client_id = ? OR conversation_id = ?", clientID, conversationID)
+	} else {
+		q = q.Where("client_id = ?", clientID)
+	}
+
 	var n int64
-	err := DB.Model(&Interaction{}).
-		Where("client_id = ? AND chat_reply <> '' AND sent_at >= ?", clientID, start).
-		Limit(1).Count(&n).Error
+	err := q.Limit(1).Count(&n).Error
 	if err != nil {
 		log.Printf("agent: mijoz %d — bugungi javoblar tekshirilmadi: %v", clientID, err)
 		return false

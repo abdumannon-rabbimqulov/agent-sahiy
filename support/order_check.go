@@ -21,6 +21,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // DashVerdict - buyurtmaning YETKAZMA (dashboard) tomonidagi javobi.
@@ -526,7 +528,15 @@ func CheckAlerts(checks []OrderCheck, asked map[string]bool, opened []*OrderIssu
 // yerda, yetkazma javobidan keyin yoziladi.
 func OpenLateShipmentIssues(checks []OrderCheck, views []OrderView,
 	clientID, conversationID int64) []*OrderIssue {
-	if DB == nil || len(checks) == 0 {
+	return openLateShipmentIssues(DB, checks, views, clientID, conversationID)
+}
+
+// openLateShipmentIssues - OpenLateShipmentIssues'ning baza bilan
+// parametrlangan ko'rinishi. `db == nil` — paneldagi test chat
+// (sandbox): hech qanday yozuv ochilmaydi.
+func openLateShipmentIssues(db *gorm.DB, checks []OrderCheck, views []OrderView,
+	clientID, conversationID int64) []*OrderIssue {
+	if db == nil || len(checks) == 0 {
 		return nil
 	}
 	idx := make(map[string]int, len(views))
@@ -544,7 +554,7 @@ func OpenLateShipmentIssues(checks []OrderCheck, views []OrderView,
 		if !ok {
 			continue
 		}
-		is := openIssue(DB, views[i].AdminkaOrder, views[i], clientID, conversationID, c.Reason)
+		is := openIssue(db, views[i].AdminkaOrder, views[i], clientID, conversationID, c.Reason)
 		if is == nil {
 			continue
 		}

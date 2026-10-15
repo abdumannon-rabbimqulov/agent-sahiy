@@ -44,7 +44,18 @@ func sanaMatn(s string) string {
 // ko'rinishda — tushardi.
 //
 // Birinchi qaytadigan qiymat — modelga beriladigan boyitilgan ro'yxat.
+// DetectIssues - haqiqiy baza ustida ishlaydigan ko'rinishi.
 func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]OrderView, []*OrderIssue) {
+	return detectIssues(DB, orders, clientID, conversationID)
+}
+
+// detectIssues - DetectIssues'ning baza bilan parametrlangan ko'rinishi.
+//
+// `db == nil` — paneldagi test chat (sandbox): ro'yxat boyitiladi, lekin
+// na yozuv ochiladi, na yopiladi, na Telegramga xabar ketadi. Baza
+// yo'qligida funksiya allaqachon shunday ishlagan, shuning uchun
+// qo'shimcha bayroq kerak emas.
+func detectIssues(db *gorm.DB, orders []AdminkaOrder, clientID, conversationID int64) ([]OrderView, []*OrderIssue) {
 	views := make([]OrderView, 0, len(orders))
 	// Yangi ochilgan muammolar shu yerda to'planadi: bitta mijozning
 	// hamma muammosi guruhga BITTA xabar bo'lib ketadi.
@@ -52,16 +63,16 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 
 	for _, o := range orders {
 		v := NewOrderView(o)
-		if DB == nil || o.OrderSN == "" {
+		if db == nil || o.OrderSN == "" {
 			views = append(views, v)
 			continue
 		}
 
-		open := FindOpenIssue(DB, o.OrderSN)
+		open := FindOpenIssue(db, o.OrderSN)
 
 		switch {
 		case v.Problem && open == nil:
-			if is := openIssue(DB, o, v, clientID, conversationID, ReasonStuckStatus); is != nil {
+			if is := openIssue(db, o, v, clientID, conversationID, ReasonStuckStatus); is != nil {
 				fresh = append(fresh, is)
 				v.InReview = true
 			}
@@ -69,7 +80,7 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 		case v.Problem && open != nil && StatusAdvanced(open.Status, o.Status):
 			// Holat 3 dan 4 ga o'tgan — buyurtma Xitoyda oldinga
 			// siljidi, muammo hal bo'ldi.
-			resolveAdvanced(DB, open, o.Status)
+			resolveAdvanced(db, open, o.Status)
 
 		case v.Problem && open != nil:
 			// Muammo davom etmoqda — kun sonini yangilab qo'yamiz.
@@ -82,19 +93,19 @@ func DetectIssues(orders []AdminkaOrder, clientID, conversationID int64) ([]Orde
 				upd["owner_user_id"] = o.UserID
 				open.OwnerUserID = o.UserID
 			}
-			DB.Model(open).Updates(upd)
+			db.Model(open).Updates(upd)
 			v.InReview = true
 
 		case !v.Problem && open != nil && StatusAdvanced(open.Status, o.Status):
 			// Buyurtma oldinga siljidi (3 → 4, 4 → 7). Yo'lga
 			// chiqqan bo'lsa mijozga ham xabar beriladi.
-			resolveAdvanced(DB, open, o.Status)
+			resolveAdvanced(db, open, o.Status)
 
 		case !v.Problem && open != nil:
 			// Status o'zgardi — muammo o'z-o'zidan hal bo'ldi.
 			res := fmt.Sprintf("Adminkada holat o'zgardi: %q → %q",
 				open.StatusLabel, v.StatusLabel)
-			if err := ResolveIssue(DB, open, res, "tizim", ResolvedViaAuto); err == nil {
+			if err := ResolveIssue(db, open, res, "tizim", ResolvedViaAuto); err == nil {
 				log.Printf("muammo: %s avtomatik yopildi (%s)", o.OrderSN, v.StatusLabel)
 				notifyResolved(open, res)
 			}

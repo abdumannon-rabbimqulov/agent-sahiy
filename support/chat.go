@@ -217,7 +217,10 @@ func FetchUnansweredChats(baseURL, token string, maxPages, limit int) ([]Chat, e
 	// Chegaraga urilsak — server saralashi o'zgargan bo'lishi mumkin:
 	// javobsizlar ro'yxat bo'ylab tarqalgan. Buni jimgina o'tkazib
 	// yubormaymiz, aks holda navbatning bir qismi ko'rinmay qoladi.
-	if lastPage >= maxPages {
+	//
+	// maxPages == 1 bo'lsa bu ogohlantirish emas: navbat ATAYLAB bitta
+	// sahifa bilan cheklangan, shuning uchun jim o'tamiz.
+	if maxPages > 1 && lastPage >= maxPages {
 		log.Printf("suhbatlar: %d sahifa chegarasiga yetildi (%d javobsiz topildi) — "+
 			"javobsizlar ro'yxat boshida to'planmagan bo'lishi mumkin, UNANSWERED_MAX_PAGES ni oshirish kerak",
 			maxPages, len(all))
