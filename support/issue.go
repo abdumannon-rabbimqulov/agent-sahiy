@@ -300,6 +300,36 @@ func onlyPaidOrders(rows []AdminkaOrder) []AdminkaOrder {
 	return out
 }
 
+// DefaultOldOrderDays - mijoz raqam yozmagan bo'lsa, to'lovdan beri
+// shuncha kundan oshgan buyurtma tekshirilmaydi (status 3/4 bundan
+// mustasno).
+const DefaultOldOrderDays = 30
+
+// OldOrderDays - .env dagi OLD_ORDER_DAYS (default 30).
+func OldOrderDays() int { return envInt("OLD_ORDER_DAYS", DefaultOldOrderDays) }
+
+// onlyRecentOrders - mijoz aniq raqam yozmagan holatda eski
+// buyurtmalarni chiqarib tashlaydi: to'lovdan beri OldOrderDays dan
+// oshgan buyurtma tekshirilmaydi va muammo sifatida olinmaydi.
+//
+// Istisno - status 3 ("to'langan") va 4 ("kiritish uchun kutilmoqda"):
+// bir oydan beri Xitoyda qotib turgan buyurtma aynan xodimga kerak
+// bo'lgan muammo. Qolganlari (yo'lda, yakunlangan, 12 …) bir oydan
+// keyin mijoz o'zi so'ramagan bo'lsa shovqin: guruhga eski yozuvlar
+// yog'ilib, hozirgi muammolarni ko'zdan yashiradi.
+//
+// Sana o'qilmagan buyurtma (DaysSincePaid = -1) qoldiriladi.
+func onlyRecentOrders(rows []AdminkaOrder) []AdminkaOrder {
+	limit := OldOrderDays()
+	out := make([]AdminkaOrder, 0, len(rows))
+	for _, o := range rows {
+		if o.Status == StatusPaid || o.Status == StatusWaiting || DaysSincePaid(o) <= limit {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
 // PaidTime - to'lov vaqti. Adminka `paid_at` bermasa buyurtma yaratilgan
 // vaqtga qaytiladi (eski yozuvlarda `paid_at` bo'sh bo'lishi mumkin).
 func PaidTime(o AdminkaOrder) (time.Time, bool) {

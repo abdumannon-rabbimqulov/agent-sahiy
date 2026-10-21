@@ -1085,8 +1085,12 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 		// modelni chalkashtiradi. Mijoz aniq raqam yozgan bo'lsa, o'sha
 		// buyurtma to'lanmagan bo'lsa ham ko'rsatiladi — savol aynan shu
 		// haqida.
+		//
+		// Xuddi shu holatda to'lovdan beri 30 kundan oshgan buyurtmalar
+		// ham tekshirilmaydi — faqat status 3/4 dagilari qoladi
+		// (onlyRecentOrders).
 		if len(numbers) == 0 {
-			rows = onlyPaidOrders(rows)
+			rows = onlyRecentOrders(onlyPaidOrders(rows))
 		}
 		// Begona buyurtma modelga ham, muammo ro'yxatiga ham
 		// tushmaydi (qarang: onlyOwnOrders).
