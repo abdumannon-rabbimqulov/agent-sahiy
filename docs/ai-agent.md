@@ -304,6 +304,16 @@ keltiriladi — apostrof, katta-kichik harf va filial nomlaridagi
 farqlar hisobga olinadi (`SAHIY GULISTION` → Sirdaryo, `SHOTA` →
 Toshkent shahri, `Nukus` → Qoraqalpog'iston).
 
+**Yetib kelmagan buyurtma** (treki yo'q yoki yetkazmada qidirilib
+chiqmagan) modelga faqat holat bilan beriladi (`notArrivedBrief`):
+`order_sn`, `status_label`, `paid`, `days_since_paid`, `problem`,
+`tekshiruvda` va `yetkazma: "belgilangan manzilga yetib kelmagan"`.
+`viloyat`/`yetkazish`, `status_izoh`, trek, tovar nomi va sanalar
+olib tashlanadi — busiz model `yetkazish` matnini o'qib Xitoydagi
+buyurtmani "filialda sizni kutmoqda" deb yozardi. Yo'l muddati
+ichidagi posilkaning tayyor javobi (`yolda_tez_keladi`/`qolgan_kun`)
+qoladi.
+
 **Viloyat FILIAL nomidan ham olinadi.** Yetkazma yozuvidagi `city`
 (mijozning shahri) ko'pincha bo'sh keladi, `branch_name` esa har doim
 bor. Shuning uchun yetkazish turi `firstNonEmpty(mijoz viloyati, filial
@@ -912,6 +922,13 @@ hammasi "muddati o'tgan" hisoblanadi. Guruhga o'nlab qator yog'ilib,
 HOZIR hal qilinishi kerak bo'lgan yangi holat ko'zdan yashirin qolardi.
 255 kun oldin kuryerga berilgan posilka haqida qilinadigan ish ham yo'q
 — mijoz ham bu haqda so'ramayapti.
+
+Modelga ketadigan yetkazma ro'yxati ham filtrlanadi (`dropOldDelivery`):
+yetkazmaga kelganiga `OLD_ORDER_DAYS` (standart 30) kundan oshgan va
+mijoz o'zi so'ramagan posilka modelga **umuman berilmaydi**. Busiz model
+eski "holati noaniq" posilkalarni o'zi `help` ga ko'chirib, guruhga
+"🆘 Yordam kerak" qilib chiqarardi. Status 3/4 buyurtmaning o'z treki
+"so'ralgan" hisoblanadi va qoladi.
 
 Mijoz so'ragan bo'lsa yoshidan qat'i nazar chiqadi: demak bu hali ham
 ochiq savol. Mijoz DG raqamini yozsa, o'sha buyurtmaning **treki** ham

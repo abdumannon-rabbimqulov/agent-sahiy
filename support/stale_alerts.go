@@ -104,3 +104,39 @@ func staleAlert(track string, days int, asked map[string]bool, limit int) bool {
 	}
 	return !asked[trackKey(strings.TrimSpace(track))]
 }
+
+// dropOldDelivery - modelga ketadigan yetkazma ro'yxatidan eski
+// posilkalarni olib tashlaydi: yetkazmaga kelganiga OldOrderDays()
+// (standart 30) kundan oshgan va mijoz o'zi so'ramagan (`asked`)
+// yozuvlar. Ikkinchi qiymat — tashlanganlar soni (log uchun).
+//
+// DropStaleAlerts faqat KOD ogohlantirishini to'sadi. Model esa
+// ro'yxatni to'liq ko'rardi va 200 kunlik "holati noaniq" posilkalarni
+// o'zi help'ga ko'chirib, guruhga "🆘 Yordam kerak" qilib chiqarardi —
+// mijoz ular haqida umuman so'ramagan bo'lsa ham.
+//
+// Yoshi noma'lum (sana o'qilmagan) yozuv qoladi.
+func dropOldDelivery(rows []DeliveryOrder, asked map[string]bool) ([]DeliveryOrder, int) {
+	limit := OldOrderDays()
+	out := make([]DeliveryOrder, 0, len(rows))
+	dropped := 0
+	for _, r := range rows {
+		if limit > 0 && daysSinceText(r.CreatedAt) > limit &&
+			!asked[trackKey(strings.TrimSpace(r.ExpressNum))] {
+			dropped++
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, dropped
+}
+
+// askedFound - mijoz yozgan raqam(lar)ning yetkazmadagi yozuvi bormi.
+func askedFound(rows []DeliveryOrder, asked map[string]bool) bool {
+	for _, r := range rows {
+		if asked[trackKey(strings.TrimSpace(r.ExpressNum))] {
+			return true
+		}
+	}
+	return false
+}

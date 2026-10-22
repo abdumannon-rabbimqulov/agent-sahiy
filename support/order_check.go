@@ -480,6 +480,42 @@ func ApplyChecks(briefs []OrderBrief, checks []OrderCheck) {
 			// Qayerdan olishini aytib bo'lmaydi: ma'lumot ishonchsiz.
 			briefs[i].Kind = ""
 		}
+		if notArrived(c) {
+			briefs[i] = notArrivedBrief(briefs[i])
+		}
+	}
+}
+
+// notArrived - to'langan posilka belgilangan manzilga hali yetib
+// kelmagan: treki yo'q (Xitoydan jo'natilmagan) yoki yetkazmada
+// qidirildi va chiqmadi. Yetkazma so'rovi xato bergan holat
+// (DashUnknown + trek bor) bunga KIRMAYDI — u yerda bilmaymiz.
+func notArrived(c OrderCheck) bool {
+	return c.Paid && (c.Dash == DashMissing || c.Track == "")
+}
+
+// notArrivedBrief - yetib kelmagan buyurtmadan modelga faqat holatni
+// qoldiradi.
+//
+// Ilgari bunday buyurtmada ham `viloyat`/`yetkazish` ("mijoz filialdan
+// o'zi olib ketadi"), `status_izoh`, trek va tovar nomi turardi. Model
+// `yetkazish` matnini o'qib Xitoydagi buyurtmani "Buxoro filialida
+// sizni kutmoqda" deb yozardi. Endi faqat holat va "yetib kelmagan"
+// degan bitta xulosa qoladi. Yo'l muddati ichidagi posilkaning tayyor
+// javobi (yolda_tez_keladi/qolgan_kun) va begona buyurtma belgisi
+// saqlanadi.
+func notArrivedBrief(b OrderBrief) OrderBrief {
+	return OrderBrief{
+		OrderSN:     b.OrderSN,
+		StatusLabel: b.StatusLabel,
+		Paid:        b.Paid, // `paid` omitempty emas — false bo'lib chiqmasin
+		Days:        b.Days,
+		Problem:     b.Problem,
+		InReview:    b.InReview,
+		Arrived:     notInDelivery,
+		OnTheWay:    b.OnTheWay,
+		ETA:         b.ETA,
+		OwnerUserID: b.OwnerUserID,
 	}
 }
 

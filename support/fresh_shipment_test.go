@@ -62,11 +62,14 @@ func briefWithChecks(o AdminkaOrder, rows []DeliveryOrder) OrderBrief {
 // Modelga yo'lga chiqqan SANA va qolgan kun oralig'i beriladi.
 func TestOnTheWayNoteHasShippedDate(t *testing.T) {
 	// Yetkazmada hali yo'q: ro'yxat bo'sh.
-	b := briefWithChecks(shippedDaysAgo(3), nil)
+	o := shippedDaysAgo(3)
+	b := briefWithChecks(o, nil)
 	if b.OnTheWay == "" {
 		t.Fatal("yaqinda yo'lga chiqqan buyurtma uchun tayyor javob bo'lishi kerak")
 	}
-	if b.ShippedAt == "" || !strings.Contains(b.OnTheWay, b.ShippedAt) {
+	// `shipped_at` yetib kelmagan buyurtmadan olib tashlanadi
+	// (notArrivedBrief) — sana izoh matnining o'zida turadi.
+	if sana := sanaMatn(o.ShippedAt); sana == "" || !strings.Contains(b.OnTheWay, sana) {
 		t.Fatalf("javobda yo'lga chiqqan sana turishi kerak: %q", b.OnTheWay)
 	}
 	if b.AskReceived != "" {
@@ -90,5 +93,32 @@ func TestArrivedOrderHasNoOnTheWayNote(t *testing.T) {
 	}
 	if b.Arrived != arrivedInDelivery {
 		t.Fatalf("posilka kelgani yozilishi kerak: %q", b.Arrived)
+	}
+}
+
+// Yetib kelmagan buyurtmada modelga faqat holat beriladi: viloyat,
+// "filialdan o'zi olib ketadi" matni, trek va tovar nomi bo'lmaydi.
+// Aks holda model Xitoydagi buyurtmani "filialda kutmoqda" deb yozardi.
+func TestNotArrivedBriefIsMinimal(t *testing.T) {
+	o := shippedDaysAgo(3)
+	o.Province = "Buxoro viloyati"
+	o.PackageName = "kiyim"
+	b := briefWithChecks(o, nil)
+	if b.Arrived != "belgilangan manzilga yetib kelmagan" {
+		t.Fatalf("yetkazma: %q", b.Arrived)
+	}
+	if b.Region != "" || b.Kind != "" || b.StatusNote != "" ||
+		b.ExpressNum != "" || b.PackageName != "" || b.PaidAt != "" {
+		t.Fatalf("ortiqcha maydon qolgan: %+v", b)
+	}
+	if b.OrderSN == "" || b.StatusLabel == "" {
+		t.Fatalf("holat maydonlari yo'qolgan: %+v", b)
+	}
+
+	// Treki yo'q (Xitoydan jo'natilmagan) buyurtma ham shunday.
+	o.ExpressNum, o.ShippedAt = "", ""
+	b = briefWithChecks(o, nil)
+	if b.Kind != "" || b.Region != "" || b.Arrived == "" {
+		t.Fatalf("treksiz buyurtma: %+v", b)
 	}
 }

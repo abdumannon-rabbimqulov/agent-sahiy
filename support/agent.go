@@ -1237,6 +1237,17 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 			// lekin o'z filtri bor: faqat hozir ochilgan yoki mijoz
 			// o'zi so'ragan buyurtma chiqadi.
 			alerts = append(alerts, CheckAlerts(checks, AskedTracks(numbers, views), opened)...)
+			// Yetkazmaga kelganiga OLD_ORDER_DAYS (30) dan oshgan va mijoz
+			// o'zi so'ramagan posilkalar modelga UMUMAN berilmaydi: aks
+			// holda model ularni o'zi help'ga ko'chirib guruhga chiqarardi
+			// (stale_alerts.go: dropOldDelivery). Status 3/4 buyurtmaning
+			// o'z treki `views` orqali "so'ralgan" hisoblanadi va qoladi.
+			if kept, n := dropOldDelivery(rows, AskedTracks(numbers, views)); n > 0 {
+				log.Printf("agent: suhbat %d — %d ta eski yetkazma yozuvi modelga berilmadi: "+
+					"kelganiga %d kundan oshgan, mijoz o'zi so'ramagan",
+					conversationID, n, OldOrderDays())
+				rows = kept
+			}
 			// Mijoz aniq buyurtma/trek raqami yozgan bo'lsa, yetkazma
 			// ro'yxati O'SHA buyurtmaning posilkasi bilan cheklanadi.
 			// Aks holda ro'yxatda mijozning boshqa posilkalari ham
@@ -1335,9 +1346,12 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 		_, dshErr := out["dashboard_error"]
 		_, foreign := out["begona_buyurtma"]
 		q, alert := searchNote(numbers,
-			len(views) > 0 || len(deliveryRows) > 0, // topildimi
-			admErr || dshErr,                        // qidiruvning o'zi ishladimi
-			foreign)                                 // raqam begona buyurtmaniki
+			// Yetkazma `user_id` bo'yicha ham olinadi — u yerdagi har
+			// qanday yozuv "topildi" degani emas: so'ralgan raqamga mos
+			// yozuv bo'lishi kerak.
+			len(views) > 0 || askedFound(deliveryRows, AskedTracks(numbers, views)), // topildimi
+			admErr || dshErr, // qidiruvning o'zi ishladimi
+			foreign)          // raqam begona buyurtmaniki
 		out[searchKey] = q
 		if alert != "" {
 			alerts = append(alerts, alert)

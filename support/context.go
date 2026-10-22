@@ -156,8 +156,7 @@ func BriefOrders(views []OrderView, clientID int64) []OrderBrief {
 const (
 	arrivedInDelivery = "yetkazmada bor — posilka O'zbekistonga kelgan, " +
 		"aniq holati \"yetkazma\" bo'limida"
-	notInDelivery = "yetkazmada hali yo'q — posilka Xitoydan yo'lda, " +
-		"O'zbekistonga kelmagan"
+	notInDelivery = "belgilangan manzilga yetib kelmagan"
 )
 
 // DefaultLongShipmentDays - posilka jo'natilganidan keyin shu kundan

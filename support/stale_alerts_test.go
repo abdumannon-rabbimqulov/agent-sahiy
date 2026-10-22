@@ -3,6 +3,7 @@ package support
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func withStaleDays(t *testing.T, v string) {
@@ -102,5 +103,36 @@ func TestAskedTracksEmpty(t *testing.T) {
 	views := []OrderView{{AdminkaOrder: AdminkaOrder{OrderSN: "DG1", ExpressNum: "YT111"}}}
 	if got := AskedTracks(nil, views); len(got) != 0 {
 		t.Fatalf("bo'sh to'plam kutilgan, keldi %v", got)
+	}
+}
+
+// Eski, mijoz so'ramagan yetkazma yozuvi modelga berilmaydi; so'ralgani,
+// yangisi va sanasi noma'lumi qoladi.
+func TestDropOldDelivery(t *testing.T) {
+	t.Setenv("OLD_ORDER_DAYS", "")
+	ago := func(days int) string {
+		return time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+	}
+	rows := []DeliveryOrder{
+		{ExpressNum: "78994753793731", CreatedAt: ago(176)},
+		{ExpressNum: "435021736284451", CreatedAt: ago(231)},
+		{ExpressNum: "JT3178117220928", CreatedAt: ago(1)},
+		{ExpressNum: "YT000"},
+	}
+	asked := map[string]bool{trackKey("435021736284451"): true}
+	got, n := dropOldDelivery(rows, asked)
+	if n != 1 {
+		t.Fatalf("1 ta yozuv tashlanishi kerak, %d ta", n)
+	}
+	for _, r := range got {
+		if r.ExpressNum == "78994753793731" {
+			t.Fatalf("176 kunlik so'ralmagan yozuv qolib ketdi")
+		}
+	}
+	if !askedFound(got, asked) {
+		t.Fatalf("so'ralgan trek topilishi kerak")
+	}
+	if askedFound(got, map[string]bool{trackKey("DG607328814"): true}) {
+		t.Fatalf("so'ralmagan yozuvlar \"topildi\" deb hisoblanmasin")
 	}
 }
