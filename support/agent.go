@@ -1329,6 +1329,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 		// "qayerdan olib ketish" ko'rsatmasi o'chiriladi — aks holda model
 		// mijozga uning O'Z viloyatidagi filialni aytib yuboradi.
 		MarkMismatch(briefs, mismatches)
+		MarkInLocker(briefs, deliveryRows)
 		out["adminka"] = briefs
 	}
 

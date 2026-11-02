@@ -328,6 +328,26 @@ const centralWarehousePickupNote = "Buyurtma O'zbekistonga kelgan, hozir Markazi
 const expressPickupKind = "mijoz posilkani punktdan o'zi olib ketadi " +
 	"(jo'natma turi \"Pickup\" — bu posilkaga kuryer yetkazish yo'q)"
 
+// lockerNote - posilka postamatda (status 5): mijoz o'zi oladi, kuryer
+// olib bormaydi. Javob postamat nomi va manzili bilan beriladi.
+const lockerNote = "Posilka POSTAMATDA turibdi va tayyor — mijoz uni postamatdan o'zi oladi. " +
+	"Mijozga postamat nomi (hozir_qayerda) va manzilini (shu_joyning_manzili) ayt. " +
+	"\"Kuryer\", \"uyga olib boramiz\", \"filialdan oling\" DEMA."
+
+// lockerNoAddressNote - status 5, lekin dashboardda postamat manzili
+// yo'q. Model manzil to'qimasin: xodim aniqlab beradi.
+const lockerNoAddressNote = "Posilka POSTAMATDA turibdi — mijoz uni postamatdan o'zi oladi, " +
+	"lekin postamat manzili tizimda ko'rinmayapti. Manzil TO'QIMA: xodimlar aniqlab " +
+	"xabar berishini ayt. \"Kuryer\", \"uyga olib boramiz\", \"filialdan oling\" DEMA."
+
+// lockerNoAddressAlert - xuddi shu holat haqida xodimlar guruhiga
+// ketadigan qator.
+const lockerNoAddressAlert = "%s — posilka postamatda (status 5), lekin dashboardda postamat " +
+	"manzili yo'q. Mijozga manzilni aniqlab berish kerak"
+
+// lockerKind - postamatdagi posilka uchun umumiy "yetkazish_turi" matni.
+const lockerKind = "mijoz posilkani postamatdan o'zi oladi (bu posilkaga kuryer yetkazish yo'q)"
+
 // pickupBranchPrefix - mijoz o'zi borib olib keta oladigan jismoniy
 // punkt bo'lsa, location_number shu prefiks bilan boshlanadi (masalan
 // "SHOTA-28" — branch_name "SHOTA"). Boshqa qiymat kelsa, bu hali
@@ -472,6 +492,23 @@ func MarkMismatch(briefs []OrderBrief, bad []BranchMismatch) {
 	}
 }
 
+// MarkInLocker - posilkasi postamatda turgan buyurtmalarning "yetkazish"
+// ko'rsatmasini o'chiradi. Bu maydon buyurtma viloyatidan hisoblanadi:
+// Toshkentda "kuryer olib boradi" deb turib, postamat izohiga zid kelardi.
+func MarkInLocker(briefs []OrderBrief, rows []DeliveryOrder) {
+	inLocker := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		if t := trackKey(r.ExpressNum); t != "" && r.InLocker() {
+			inLocker[t] = true
+		}
+	}
+	for i := range briefs {
+		if inLocker[trackKey(briefs[i].ExpressNum)] {
+			briefs[i].Kind = ""
+		}
+	}
+}
+
 // PickupDone - o'zi-olib-ketish turidagi jo'natma, mijoz allaqachon
 // filialdan olib ketgan (express_line "Pickup", status=2,
 // delivered=true).
@@ -606,7 +643,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 	// o'zi-olib-ketish, ham kuryer turidagi posilka bo'lsa, bitta matn
 	// ikkalasiga ham to'g'ri kelmaydi — bunday holatda u olib
 	// tashlanadi va model har qatorning o'z izohiga tayanadi.
-	pickupKinds, otherKinds := 0, 0
+	pickupKinds, otherKinds, lockerKinds := 0, 0, 0
 
 	for _, o := range orders {
 		// Mijoz viloyati dashboarddagi `city` da keladi ("Toshkent
@@ -620,7 +657,10 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		// oladi. Bu viloyatdan KUCHLIROQ: Toshkentda ham bu posilkaga
 		// kuryer tayinlanmaydi.
 		selfPickup := expressLineKind(o.ExpressLine) == "pickup"
-		mismatch := region != "" && branchRegion != "" && region != branchRegion
+		// Postamatdagi posilka (status 5) manziliga yetib bo'lgan: filial
+		// viloyati bilan solishtirilmaydi.
+		inLocker := o.InLocker()
+		mismatch := !inLocker && region != "" && branchRegion != "" && region != branchRegion
 		// Yetkazish TURI (kuryer yoki o'zi olib ketish) posilka turgan
 		// filialga qarab ham aniqlanadi: mijozning `city` maydoni
 		// ko'pincha bo'sh keladi, filial nomi esa har doim bor
@@ -662,17 +702,47 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		// emas: har bir posilkaning O'Z `izoh` maydoni (pickupNote,
 		// courierPendingNote va h.k.) delivRegion bo'yicha baribir
 		// qo'yiladi va u aniqroq — bitta yozuvga tegishli.
-		if selfPickup {
+		switch {
+		case inLocker:
+			lockerKinds++
+		case selfPickup:
 			pickupKinds++
-		} else {
+		default:
 			otherKinds++
 		}
 		if out.Kind == "" {
-			if selfPickup {
+			switch {
+			case inLocker:
+				out.Kind = lockerKind
+			case selfPickup:
 				out.Kind = expressPickupKind
-			} else {
+			default:
 				out.Kind = DeliveryKindText(region)
 			}
+		}
+
+		// Postamatda: nom va manzil postamatning o'zidan olinadi, izoh
+		// tayyor. Status hal qiluvchi — `delivered` bu holatni o'zgartirmaydi.
+		if inLocker {
+			row := PendingPickup{
+				ExpressNum:  o.ExpressNum,
+				Branch:      firstNonEmpty(o.LockerName, "Postamat"),
+				Address:     trimText(plainVal(o.LockerAddress), 80),
+				ArrivedAt:   sanaMatnISO(o.CreatedAt),
+				ArrivedDays: age,
+				Region:      firstNonEmpty(region, RegionOf(o.LockerName)),
+				Izoh:        lockerNote,
+			}
+			if row.Address == "" {
+				row.Izoh = lockerNoAddressNote
+				out.Alerts = append(out.Alerts, DeliveryAlert{
+					ExpressNum: o.ExpressNum,
+					Days:       age,
+					Text:       fmt.Sprintf(lockerNoAddressAlert, o.ExpressNum),
+				})
+			}
+			out.Pending = append(out.Pending, row)
+			continue
 		}
 
 		// O'zi-olib-ketish turi + status=7 + delivered=true — mijoz
@@ -851,7 +921,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 	if len(bad) > 0 && len(bad) == len(orders) {
 		out.Kind = ""
 	}
-	if pickupKinds > 0 && otherKinds > 0 {
+	if (pickupKinds > 0 && otherKinds > 0) || (lockerKinds > 0 && pickupKinds+otherKinds > 0) {
 		out.Kind = ""
 	}
 	return out, bad

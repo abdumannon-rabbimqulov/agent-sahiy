@@ -281,6 +281,7 @@ tejaladi, model ham chalkashmaydi:
 |---|---|---|
 | `mijoz_turi` | buyurtmaning o'zidagi `purchase_type` (`1` → B2C, `2` → B2B, yo'q/`0` → noma'lum) | Yetkazish tarifini to'g'ri tushuntirish (promt #4) |
 | `olinmagan` | yetkazmada `delivered: false` | Mijozga qaysi filialda ekanini aytish |
+| `olinmagan` (postamat) | yetkazmada `status: 5` — `delivered` ga qaralmaydi | Mijozga `locker` nomi va manzilini aytish, kuryer va'da qilinmaydi |
 | `yetkazilmoqda` | `delivered: true`, **3 kungacha** | "Yo'lda, kuryer bog'lanadi" deb aytish |
 | `tekshirish_kerak` | `delivered: true`, **3 kundan oshgan** | Holati noaniq — mijozdan so'rash va xodimga topshirish |
 | `mijoz_viloyati` | yetkazmadagi `city` | Viloyatni model taxmin qilmasin |

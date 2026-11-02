@@ -50,7 +50,9 @@ type DashboardCheck struct {
 func (c *DashboardCheck) Arrived() bool { return c != nil && c.Found }
 
 // Delivered - mijoz posilkani ALLAQACHON olib ketganmi.
-func (c *DashboardCheck) Delivered() bool { return c.Arrived() && c.Row.Delivered }
+func (c *DashboardCheck) Delivered() bool {
+	return c.Arrived() && c.Row.Delivered && !c.Row.InLocker()
+}
 
 // Alert - shu natija e'tiborga olinishi kerakmi va qanday nom bilan.
 // Bo'lmasa bo'sh satr.
@@ -131,7 +133,9 @@ func arrivedResolution(is *OrderIssue, chk *DashboardCheck) string {
 	} else {
 		b.WriteString("Posilka O'zbekistonga kelgan — yetkazmada yozuvi bor")
 	}
-	if chk.Row.BranchName != "" {
+	if chk.Row.InLocker() {
+		fmt.Fprintf(&b, ", postamatda: %s", trimText(firstNonEmpty(chk.Row.LockerName, chk.Row.LockerAddress), 60))
+	} else if chk.Row.BranchName != "" {
 		fmt.Fprintf(&b, ", %s", trimText(chk.Row.BranchName, 60))
 	}
 	fmt.Fprintf(&b, ". Adminkadagi holat (%q) eskirgan.", is.StatusLabel)

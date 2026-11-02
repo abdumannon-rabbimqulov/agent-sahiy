@@ -187,7 +187,19 @@ type DeliveryOrder struct {
 	// ExpressLine — jo'natma turi: "...Pickup" (o'zi olib ketish) yoki
 	// "...Delivery" (kuryer olib boradi). Qarang: expressLineKind.
 	ExpressLine string `json:"express_line,omitempty"`
+
+	// LockerName, LockerAddress — posilka turgan postamat (dashboarddagi
+	// `locker` obyekti). Status 5 bo'lganda mijozga shular aytiladi.
+	LockerName    string `json:"locker_name,omitempty"`
+	LockerAddress string `json:"locker_address,omitempty"`
 }
+
+// deliveryStatusLocker — yetkazma holati: posilka postamatda turibdi.
+const deliveryStatusLocker = 5
+
+// InLocker — posilka hozir postamatdami. `delivered` qiymatiga
+// qaramaydi: holatni status aytadi.
+func (o DeliveryOrder) InLocker() bool { return o.Status == deliveryStatusLocker }
 
 // FetchDelivery yetkazma buyurtmalarini oladi.
 // `delivered` majburiy filtr: usiz server doim NO ORDERS FOUND qaytaradi —
@@ -275,6 +287,9 @@ func fetchDeliveryPage(s Service, token string, f DeliveryFilter, delivered stri
 
 			Status:      int(num64(get(m, "status"))),
 			ExpressLine: expressLineText(get(m, "express_line")),
+
+			LockerName:    str(get(m, "locker.name")),
+			LockerAddress: str(get(m, "locker.address")),
 		})
 	}
 	return orders, nil

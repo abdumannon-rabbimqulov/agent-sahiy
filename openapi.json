@@ -2792,6 +2792,14 @@
           "branch_address": {
             "type": "string",
             "description": "Filial manzili"
+          },
+          "locker_name": {
+            "type": "string",
+            "description": "Postamat nomi (status 5 — posilka postamatda)"
+          },
+          "locker_address": {
+            "type": "string",
+            "description": "Postamat manzili"
           }
         }
       },
