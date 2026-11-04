@@ -66,6 +66,7 @@ const (
 	StepDashUnknown = "yetkazma_nomalum"
 	StepOwner       = "egasi_mos_kelmadi"
 	StepRegion      = "viloyat_mos_kelmadi"
+	StepReceived    = "mijoz_olgan"
 	StepDashFound   = "yetkazmada_bor"
 	StepOnTheWay    = "yol_muddati_ichida"
 	StepLate        = "yol_muddati_otdi"
@@ -125,7 +126,8 @@ type OrderCheck struct {
 //  1. treki yo'q             → yetkazmada qidirishga narsa yo'q (8-ga)
 //  2. yetkazma noma'lum      → "topilmadi" deb xulosa chiqarilmaydi (8-ga)
 //  3. egasi mos kelmadi      → MUAMMO (adminka id ≠ yetkazma id)
-//  4. viloyat mos kelmadi    → MUAMMO (posilka boshqa viloyatga tushgan)
+//  4. mijoz olib ketgan      → MUAMMO EMAS, to'xtaydi (tovar qo'lida)
+//     viloyat mos kelmadi    → MUAMMO (posilka boshqa viloyatga tushgan)
 //  5. yetkazmada bor         → MUAMMO EMAS, to'xtaydi
 //  6. yo'lda, muddat ichida  → MUAMMO EMAS, qolgan kun oralig'i aytiladi
 //  7. yo'l muddati o'tgan    → MUAMMO (adminka statusiga QARALMAYDI)
@@ -183,8 +185,15 @@ func CheckOrder(in OrderCheckInput) OrderCheck {
 	// Posilka O'zbekistonga kelgan.
 	c.Dash, c.Arrived = DashFound, arrivedInDelivery
 
-	// 4. Manzil to'g'rimi: adminkadagi viloyat bilan posilka tushgan
-	//    joy bir xilmi.
+	// 4. Mijoz tovarni olib bo'lgan: posilka qaysi filialga tushgani endi
+	//    ahamiyatsiz, u xodimga "tuzatish kerak" deb chiqmaydi.
+	if isReceived(chk.Row) {
+		c.Step = StepReceived
+		return c
+	}
+
+	// Manzil to'g'rimi: adminkadagi viloyat bilan posilka tushgan joy
+	// bir xilmi.
 	if ok, want, got, raw := checkRegion(o, chk.Row); !ok {
 		c.Step, c.Reason, c.Problem = StepRegion, ReasonRegion, true
 		c.Mismatch = fmt.Sprintf(provinceMismatchNote, want, got, raw)

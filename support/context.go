@@ -390,6 +390,10 @@ type DeliveryBrief struct {
 	// O'zi-olib-ketish turida (express_line "Pickup"), mijoz
 	// allaqachon filialdan olib ketgan (status=2, delivered=true).
 	PickedUp []PickupDone `json:"olib_ketilgan,omitempty"`
+	// Kuryer mijozga yetkazib bergan (status=7, delivered=true). Alohida
+	// ro'yxat: "olib_ketilgan" kaliti va izohi modelni "filialdan olgansiz"
+	// deyishga undardi.
+	Handed []PickupDone `json:"mijozga_yetkazilgan,omitempty"`
 	// Umuman yozuv yo'q.
 	Empty bool `json:"yozuv_yoq,omitempty"`
 	// Note - butun ro'yxatga tegishli tayyor ko'rsatma. Hozircha bitta
@@ -533,14 +537,35 @@ type PickupDone struct {
 // qo'lma-qo'l topshirilgan. Shuning uchun "kuryer qaytargan",
 // "telefoningiz o'chiq bo'lgan" kabi izohlar bu yerda noto'g'ri —
 // model ularni boshqa holatlardan ko'chirib yozardi.
+//
+// Olingan tovar MUAMMO EMAS: model xulosa yozmaydi va mijozdan tovar
+// yaxshi kelganini so'raydi. Guruhga faqat nosozlik chiqadi (received.go).
 const pickedUpNote = "Yetkazma ma'lumotida bu posilka FILIALDAN OLIB KETILGAN deb turadi " +
-	"(o'zi-olib-ketish turi, olingan sanasi bor). Mijozga qaysi filialdan va qachon " +
-	"olib ketilgani aytiladi. Bu jo'natma KURYERGA BERILMAGAN — \"kuryer\", " +
+	"(o'zi-olib-ketish turi, olingan sanasi bor). Bu MUAMMO EMAS — \"help\" ni BO'SH qoldir. " +
+	"Mijozga tovarni qaysi filialdan va qachon olganini ayt va javobni SAVOL bilan tugat: " +
+	receivedAsk +
+	"Bu jo'natma KURYERGA BERILMAGAN — \"kuryer\", " +
 	"\"kuryer qaytargan\", \"telefoningiz o'chiq bo'lgan\" deb yozma. " +
 	"Mijoz \"olmadim\" desa: buyurtmani O'ZI yoki yaqinlaridan biri olib ketgan " +
 	"bo'lishi mumkinligini xushmuomala so'ra; baribir olmagan bo'lsa " +
 	"tekshirish uchun BUYURTMA RAQAMINI (DG bilan boshlanadi) so'ra va xodimlar " +
 	"tekshirishini ayt — muddat va'da qilma."
+
+// receivedAsk - olingan tovar haqidagi savol: filialdan olingan va kuryer
+// yetkazgan holatda bir xil.
+const receivedAsk = "tovar yaxshi keldimi, biror muammo bormi? " +
+	"Mijoz tovar nosoz, singan yoki noto'g'ri kelganini aytsa: qanday nosozlik ekanini " +
+	"aniqlashtir va \"help\" ga yoz — xodimlar ko'rib chiqadi. "
+
+// courierReceivedNote - kuryer posilkani mijozga yetkazib bergan
+// (status=7, delivered=true). Filial bu yerda aytilmaydi: mijoz hech
+// qayerga bormagan.
+const courierReceivedNote = "Yetkazma ma'lumotida bu posilka MIJOZGA YETKAZIB BERILGAN deb turadi " +
+	"(topshirilgan sanasi bor). Bu MUAMMO EMAS — \"help\" ni BO'SH qoldir. " +
+	"Mijozga tovar qachon yetkazib berilganini ayt va javobni SAVOL bilan tugat: " +
+	receivedAsk +
+	"Mijoz \"olmadim\" desa: yaqinlaridan biri qabul qilgan bo'lishi mumkinligini xushmuomala " +
+	"so'ra va xodimlar tekshirishini ayt — muddat va'da qilma."
 
 // pickedUpRegionNote - xuddi shu holat, lekin mijoz Toshkentdan
 // tashqarida: u yerda uyga yetkazishning O'ZI yo'q, shuning uchun
@@ -660,7 +685,9 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 		// Postamatdagi posilka (status 5) manziliga yetib bo'lgan: filial
 		// viloyati bilan solishtirilmaydi.
 		inLocker := o.InLocker()
-		mismatch := !inLocker && region != "" && branchRegion != "" && region != branchRegion
+		// Mijoz olib ketgan posilka ham solishtirilmaydi: tovar qo'lida,
+		// tuzatadigan narsa qolmagan.
+		mismatch := !inLocker && !isReceived(o) && region != "" && branchRegion != "" && region != branchRegion
 		// Yetkazish TURI (kuryer yoki o'zi olib ketish) posilka turgan
 		// filialga qarab ham aniqlanadi: mijozning `city` maydoni
 		// ko'pincha bo'sh keladi, filial nomi esa har doim bor
@@ -745,10 +772,20 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 			continue
 		}
 
-		// O'zi-olib-ketish turi + status=7 + delivered=true — mijoz
-		// buyurtmani ALLAQACHON o'zi olib ketgan. Boshqa bucketlarga
-		// (ayniqsa "tekshirish_kerak"ga) tushmasin — yakunlangan holat.
-		if o.Delivered && o.Status == 7 && expressLineKind(o.ExpressLine) == "pickup" {
+		// Status=7 + delivered=true — tovar ALLAQACHON mijoz qo'lida.
+		// Boshqa bucketlarga (ayniqsa "tekshirish_kerak"ga) tushmasin —
+		// yakunlangan holat. Kuryer faqat Toshkentda ishlaydi: boshqa
+		// viloyatda turi noma'lum yozuvni ham mijoz filialdan olgan.
+		if isReceived(o) && !selfPickup && (delivRegion == "" || HomeDeliveryRegion(delivRegion)) {
+			out.Handed = append(out.Handed, PickupDone{
+				ExpressNum: o.ExpressNum,
+				PickedAt:   sanaMatnISO(o.DeliveredAt),
+				Region:     delivRegion,
+				Izoh:       courierReceivedNote,
+			})
+			continue
+		}
+		if isReceived(o) {
 			izoh := pickedUpNote
 			if delivRegion != "" && !HomeDeliveryRegion(delivRegion) {
 				izoh = pickedUpRegionNote
@@ -912,7 +949,7 @@ func BriefDelivery(orders []DeliveryOrder) (DeliveryBrief, []BranchMismatch) {
 	out.NeedCheck = capRows(out.NeedCheck)
 
 	out.Empty = len(out.Pending) == 0 && len(out.InDelivery) == 0 &&
-		len(out.NeedCheck) == 0 && len(out.PickedUp) == 0
+		len(out.NeedCheck) == 0 && len(out.PickedUp) == 0 && len(out.Handed) == 0
 
 	// Hamma yozuv xato filialga tushgan bo'lsa, "bu viloyatda yetkazish
 	// qanday ishlaydi" degan umumiy matn ham olib tashlanadi. O'zi to'g'ri

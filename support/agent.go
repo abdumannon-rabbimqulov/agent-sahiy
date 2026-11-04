@@ -251,6 +251,7 @@ func runChain(ctx context.Context, conversationID, clientID int64, o runOpts) (*
 		flags    = map[string]any{} // kod topgan bayroqlar — javob YOZADIGAN bosqichlarga
 		alerts   []string           // kod topgan holatlar (viloyat mos emas va h.k.) — xodimga
 		issues   []*OrderIssue      // shu zanjirda yangi ochilgan muammoli buyurtmalar
+		received []string           // so'ralgan posilkalar mijoz qo'lida (received.go)
 		langCtx  string             // mijozning tili ("uzb"/"rus") — bir marta uzatiladi
 		promtID  = StartPromtID()
 		maxSteps = MaxSteps()
@@ -468,7 +469,8 @@ func runChain(ctx context.Context, conversationID, clientID int64, o runOpts) (*
 			// qo'shamiz — eski buyurtma ham topilsin.
 			a.OrderSN = mergeNumbers(a.OrderSN, chatSN, 10)
 			a.ExpressNum = mergeNumbers(a.ExpressNum, chatEx, 10)
-			data, pending, found, fresh := fetchSystemData(a, clientID, conversationID, o.Sandbox)
+			data, pending, found, fresh, got := fetchSystemData(a, clientID, conversationID, o.Sandbox)
+			received = got
 			// Mijozda qo'liga tegmagan buyurtma bormi — javob yozadigan
 			// bosqich uchun belgi: bor bo'lsa gap o'sha buyurtma haqida
 			// ketadi, yo'q bo'lsa model bo'sh joydan muammo o'ylab
@@ -525,6 +527,25 @@ func runChain(ctx context.Context, conversationID, clientID int64, o runOpts) (*
 		alerts = append(alerts, cancelReplyAlert)
 		log.Printf("agent: suhbat %d — javobda bekor qilish haqida gap bor, avto-javob to'xtatildi",
 			conversationID)
+	}
+
+	// Mijoz olgan tovar MUAMMO EMAS: guruhga faqat nosozlik chiqadi.
+	// Bu qaror modelga qoldirilmaydi — 2-promt "help" ni har doim
+	// to'ldiradi (received.go). Boshqa sabab bilan chiqayotgan murojaat
+	// (bekor qilish, ochiq muammo) yashirilmaydi. Javob bo'sh bo'lsa
+	// xulosa qoladi: aks holda mijoz ham, xodim ham hech narsa olmaydi.
+	if len(received) > 0 {
+		switch {
+		case ReportsDefect(msgs):
+			alerts = append(alerts, defectAlert(received, msgs))
+			log.Printf("agent: suhbat %d — olingan tovar nosoz: %v, guruhga chiqadi",
+				conversationID, received)
+		case len(alerts) == 0 && len(issues) == 0 && in.ChatReply != "" &&
+			receivedHelpMuted(msgs, in.NumbersFromImage):
+			in.HelpText = ""
+			log.Printf("agent: suhbat %d — tovar mijoz qo'lida (%v), guruhga chiqmadi",
+				conversationID, received)
+		}
 	}
 
 	// Kod topgan holatlar model nima yozganidan qat'i nazar xodimga
@@ -1026,10 +1047,13 @@ func imageStepResult(img ImageNumbers, natija string) string {
 // To'rtinchi qiymat — shu chaqiruvda YANGI ochilgan muammoli buyurtmalar.
 // Ular guruhga shu yerdan yuborilmaydi: zanjir tugagach, AI xulosasi
 // bilan birga BITTA xabar bo'lib ketadi (DeliverStaffNotice).
+//
+// Beshinchi qiymat — so'ralgan hamma posilka mijoz qo'lida bo'lsa, o'sha
+// treklar (received.go).
 // `sandbox` — paneldagi test chat: tashqi tizimlardan ma'lumot HAQIQIY
 // holicha o'qiladi (javob haqiqiy suhbatdagiday chiqsin), lekin muammo
 // yozuvlari ochilmaydi/yopilmaydi va guruhga xabar ketmaydi.
-func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) (string, bool, []string, []*OrderIssue) {
+func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) (string, bool, []string, []*OrderIssue, []string) {
 	// Muammo yozuvlari shu baza orqali yoziladi. Sandbox'da u nil —
 	// bu yo'lning hammasi o'zi jim bo'lib qoladi.
 	issueDB := DB
@@ -1054,6 +1078,7 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 	// Bir marta hisoblanadi: natija ham modelga, ham xodimga, ham
 	// muammo yozuviga ketadi.
 	var checks []OrderCheck
+	var received []string
 	// foreignTracks - yetkazmada BOSHQA akkauntda chiqqan treklar.
 	// Ro'yxatdan olib tashlangan qator keyin "yetkazmada yo'q" bo'lib
 	// ko'rinadi, ya'ni ketma-ketlik uni soxta "yo'l muddati o'tdi"
@@ -1277,6 +1302,11 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 				brief.Note = askedOnlyNote
 			}
 			out["yetkazma"] = brief
+			// Faqat aniq raqam bo'yicha: raqamsiz ro'yxatda posilka bu
+			// murojaatga tegishli ekani noma'lum.
+			if len(numbers) > 0 && len(errs) == 0 {
+				received = receivedTracks(brief, checks)
+			}
 			// Kod topgan yetkazma holatlari (punktda qotib qolgan,
 			// muddati o'tgan, egasi mos kelmagan, posilka boshqa
 			// viloyatga tushgan) xodimlar guruhiga ham chiqadi.
@@ -1373,9 +1403,9 @@ func fetchSystemData(a AgentJSON, clientID, conversationID int64, sandbox bool) 
 
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending, alerts, issues
+		return fmt.Sprintf(`{"error":%q}`, err.Error()), pending, alerts, issues, received
 	}
-	return string(raw), pending, alerts, issues
+	return string(raw), pending, alerts, issues, received
 }
 
 // needsArrivalCheck - ro'yxatda treki bor buyurtma bormi.

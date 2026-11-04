@@ -376,6 +376,23 @@ Mijoz rasm yuborsa (xabar matni — havola), modelga `[rasm yuborildi]`
 bo'lib ketadi: model rasmni ko'ra olmaydi, uzun havola esa token yeydi.
 Promt #2 shu belgini ko'rsa rasmni qayta so'ramaydi.
 
+### Tovar mijoz qo'lida — guruhga faqat nosozlik chiqadi
+
+Yetkazmada `status: 7` va `delivered: true` bo'lsa, tovar mijoz qo'lida va bu
+muammo emas (`support/received.go`). Filialdan olingani `olib_ketilgan` ga,
+kuryer yetkazgani `mijozga_yetkazilgan` ga tushadi:
+
+- mijoz raqam yozib so'rasa, model tovarni qachon olganini aytib, "yaxshi keldimi, biror muammo bormi?" deb so'raydi; guruhga xabar
+  chiqmaydi — model `help` yozgan bo'lsa ham;
+- mijoz tovar nosoz, singan, noto'g'ri kelgani yoki olmaganini aytsa, murojaat
+  `⚠️` qatori bilan guruhga chiqadi (panelda "help guruhga" sozlamasi o'chiq bo'lsa ham);
+- "yaxshi keldi" kabi javob ham guruhga chiqmaydi. Ro'yxatga tushmagan boshqa
+  javob esa model `help` yozgan bo'lsa odatdagidek chiqadi — shikoyat
+  yo'qolmasin.
+
+`status: 7` siz `delivered: true` bunga kirmaydi: u mijoz qo'liga tekkanini
+bildirmaydi va quyidagi muddat qoidasi bo'yicha ishlaydi.
+
 ### Xayrlashish ("rahmat", "hop")
 
 Mijozning oxirgi so'zi minnatdorchilik yoki rozilik bo'lsa
