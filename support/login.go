@@ -102,6 +102,8 @@ func Login(c Credentials) (string, error) {
 
 // Token avval cache'ni tekshiradi, bo'lmasa login qilib cache'ga saqlaydi.
 func Token(c Credentials, cachePath string) (string, error) {
+	tokenFileMu.Lock()
+	defer tokenFileMu.Unlock()
 	if tc := LoadToken(cachePath); tc != nil {
 		return tc.Token, nil
 	}
@@ -111,6 +113,8 @@ func Token(c Credentials, cachePath string) (string, error) {
 // Refresh cache'ni o'chirib, yangi token oladi va saqlaydi.
 // Token 401 bilan rad etilganda chaqiriladi.
 func Refresh(c Credentials, cachePath string) (string, error) {
+	tokenFileMu.Lock()
+	defer tokenFileMu.Unlock()
 	DropToken(cachePath)
 	return refresh(c, cachePath)
 }

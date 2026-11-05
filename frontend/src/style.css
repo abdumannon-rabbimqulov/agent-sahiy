@@ -226,3 +226,6 @@ tr.edit-row > td { background: #fafbfc; padding: 14px 12px 18px; }
 .tchat-form { display: flex; gap: 8px; align-items: flex-end; }
 .tchat-form textarea { min-height: 56px; font-family: inherit; font-size: 14px; }
 .tchat-form button { white-space: nowrap; }
+
+.link-card { display: block; width: 100%; padding: 0; background: none; border: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.link-card:hover { background: none; }

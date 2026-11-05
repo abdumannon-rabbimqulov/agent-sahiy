@@ -321,12 +321,16 @@ func settingsUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	// Har bir sozlama uchun ruxsat etilgan oraliq. Chegara buzilsa
 	// xato qaytariladi — jim turib qiymatni o'zgartirib qo'ymaymiz.
 	limits := map[string]struct{ min, max int }{
-		support.SettingPollInterval: {10, 3600},
-		support.SettingBatchSize:    {1, 50},
-		support.SettingChatDelay:    {0, 600},
+		support.SettingPollInterval:  {10, 3600},
+		support.SettingBatchSize:     {1, 50},
+		support.SettingChatDelay:     {0, 600},
+		support.SettingCollectTarget: {5, 1440},
+		support.SettingCollectWorker: {1, 5},
+		support.SettingCollectMinGap: {100, 60000},
 	}
 	bools := map[string]bool{
 		support.SettingAgentEnabled: true,
+		support.SettingCollectMode:  true,
 		support.SettingAutoReply:    true,
 		support.SettingPollEnabled:  true,
 		support.SettingAutoResolve:  true,

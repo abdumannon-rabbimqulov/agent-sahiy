@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Navigate, NavLink, useNavigate } from 'react
 import { tokenStore } from './api'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
+import Collect from './pages/Collect.jsx'
 import Queue from './pages/Queue.jsx'
 import Detail from './pages/Detail.jsx'
 import Issues from './pages/Issues.jsx'
@@ -25,6 +26,7 @@ function Layout({ children }) {
         <div className="brand">Sahiy <span>AI agent</span></div>
         <nav>
           <NavLink to="/">Statistika</NavLink>
+          <NavLink to="/collect">Yig'ilgan ma'lumot</NavLink>
           <NavLink to="/queue">Tasdiqlash navbati</NavLink>
           <NavLink to="/issues">Muammoli buyurtmalar</NavLink>
           <NavLink to="/promts">Promtlar</NavLink>
@@ -49,6 +51,7 @@ export default function App() {
               <Layout>
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
+                  <Route path="/collect" element={<Collect />} />
                   <Route path="/queue" element={<Queue />} />
                   <Route path="/interactions/:id" element={<Detail />} />
                   <Route path="/issues" element={<Issues />} />

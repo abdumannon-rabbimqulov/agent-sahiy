@@ -62,7 +62,7 @@ func StartPoller(ctx context.Context) {
 
 			// "Faqat mutaxassis javoblari" rejimida sikl umuman
 			// aylanmaydi: tashqi so'rov ham ketmaydi.
-			if !AgentEnabled() || !PollEnabled() || StaffOnlyMode() {
+			if !AgentEnabled() || !PollEnabled() || StaffOnlyMode() || CollectMode() {
 				continue
 			}
 			if err := PollOnce(ctx); err != nil {
@@ -142,6 +142,9 @@ func reviewIssuesOnce() {
 func PollOnce(ctx context.Context) error {
 	if !AgentEnabled() {
 		return ErrAgentDisabled
+	}
+	if CollectMode() {
+		return ErrCollectMode
 	}
 	limit := envInt("CHATS_LIMIT", DefaultChatsLimit)
 
@@ -351,6 +354,9 @@ func ScanOnce(ctx context.Context, pages, limit, max int) (ScanResult, error) {
 	}
 	if StaffOnlyMode() {
 		return res, ErrStaffOnly
+	}
+	if CollectMode() {
+		return res, ErrCollectMode
 	}
 	if !scanning.CompareAndSwap(false, true) {
 		return res, errors.New("skanerlash allaqachon ketyapti")

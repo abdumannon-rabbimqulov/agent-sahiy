@@ -391,6 +391,18 @@ func main() {
 	mux.HandleFunc("POST /api/agent/sandbox", support.RequireAuth(agentSandboxHandler))
 	mux.HandleFunc("POST /api/agent/scan", support.RequireAuth(agentScanHandler))
 
+	// Yig'ish rejimi: mijozga javob yozmasdan buyurtma holatini yig'ish.
+	mux.HandleFunc("GET /api/collect/status", support.RequireAuth(collectStatusHandler))
+	mux.HandleFunc("GET /api/collect/summary", support.RequireAuth(collectSummaryHandler))
+	mux.HandleFunc("GET /api/collect/orders", support.RequireAuth(collectOrdersHandler))
+	mux.HandleFunc("GET /api/collect/clients", support.RequireAuth(collectClientsHandler))
+	mux.HandleFunc("GET /api/collect/chats", support.RequireAuth(collectChatsHandler))
+	mux.HandleFunc("GET /api/collect/recent", support.RequireAuth(collectRecentHandler))
+	mux.HandleFunc("DELETE /api/collect/orders/{sn}", support.RequireAuth(collectOrderDeleteHandler))
+	mux.HandleFunc("DELETE /api/collect/chats/{id}", support.RequireAuth(collectChatDeleteHandler))
+	mux.HandleFunc("POST /api/collect/start", support.RequireAuth(collectStartHandler))
+	mux.HandleFunc("POST /api/collect/stop", support.RequireAuth(collectStopHandler))
+
 	// Avtomatik hujjat (FastAPI'dagi /docs kabi).
 	mux.HandleFunc("/openapi.json", openapiHandler)
 	mux.HandleFunc("/redoc", redocHandler)
@@ -401,6 +413,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	support.StartPoller(ctx)
+
+	// Yig'uvchi: collect_mode yoqiq bo'lsa agent shu sikl orqali ishlaydi.
+	support.StartCollector(ctx)
 
 	// Ochiq muammolarni qayta ko'rib chiqish — ALOHIDA sikl. Pollerni
 	// bloklamasligi kerak: u har muammo uchun tashqi so'rov qiladi va

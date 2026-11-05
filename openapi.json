@@ -2377,6 +2377,186 @@
           }
         }
       }
+    },
+    "/api/collect/status": {
+      "get": {
+        "summary": "Yig'ish jarayoni holati: o'rganilgan, qolgan, tezlik, taxminiy vaqt.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/summary": {
+      "get": {
+        "summary": "Muammo turlari bo'yicha buyurtma va mijoz soni, AI xulosalari.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/orders": {
+      "get": {
+        "summary": "Tur bo'yicha buyurtmalar. Parametrlar: type, bucket, ai_type, page, limit.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/chats": {
+      "get": {
+        "summary": "O'rganilgan suhbatlar. Parametrlar: state, page, limit.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/recent": {
+      "get": {
+        "summary": "Jonli lenta: oxirgi o'rganilgan suhbatlar. Parametr: limit.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/start": {
+      "post": {
+        "summary": "Yurishni boshlash. Body: {\"max\": 50}, 0 yoki bo'sh bo'lsa butun navbat.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/stop": {
+      "post": {
+        "summary": "Yurishni to'xtatish, agent ham o'chadi.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/clients": {
+      "get": {
+        "summary": "Mijozlar: AI xulosasi, yozgan sana, tovar kelgan sana. Parametrlar: ai_type, arrived_after, page, limit.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/orders/{sn}": {
+      "delete": {
+        "summary": "Buyurtmani muammolar hisobotidan o'chirish. Keyingi tekshiruvlarda qaytmaydi.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
+    },
+    "/api/collect/chats/{id}": {
+      "delete": {
+        "summary": "Raqamsiz murojaatni hisobotdan o'chirish. Mijoz yangi xabar yozsa yana chiqadi.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "issues"
+        ]
+      }
     }
   },
   "components": {

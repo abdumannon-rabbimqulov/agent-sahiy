@@ -73,7 +73,13 @@ func InitDB() (*gorm.DB, error) {
 		&User{}, &Promt{},
 		&Interaction{}, &AgentStep{}, &ConversationState{}, &Setting{},
 		&OrderIssue{}, &TelegramPost{}, &TelegramCounter{}, &ClientLang{},
+		&CollectChat{}, &CollectOrder{}, &CollectFinding{}, &CollectRun{}, &CollectDismissed{},
 	); err != nil {
+		return nil, err
+	}
+
+	// Yig'ish promti: 1-7 promtlarga tegilmaydi, u alohida yozuv.
+	if err := ensureCollectPromt(db); err != nil {
 		return nil, err
 	}
 

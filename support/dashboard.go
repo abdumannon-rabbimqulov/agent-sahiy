@@ -130,6 +130,8 @@ func ServiceLogin(s Service) (string, time.Duration, error) {
 
 // ServiceToken avval cache'ni tekshiradi, bo'lmasa login qilib saqlaydi.
 func ServiceToken(s Service, cachePath string) (string, error) {
+	tokenFileMu.Lock()
+	defer tokenFileMu.Unlock()
 	if tc := LoadToken(cachePath); tc != nil {
 		return tc.Token, nil
 	}
@@ -138,6 +140,8 @@ func ServiceToken(s Service, cachePath string) (string, error) {
 
 // ServiceRefresh cache'ni o'chirib yangi token oladi (401 kelganda).
 func ServiceRefresh(s Service, cachePath string) (string, error) {
+	tokenFileMu.Lock()
+	defer tokenFileMu.Unlock()
 	DropToken(cachePath)
 	return serviceRefresh(s, cachePath)
 }

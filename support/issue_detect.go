@@ -268,6 +268,10 @@ func noticeShipped(is *OrderIssue) {
 	if is.ConversationID <= 0 {
 		return
 	}
+	if CollectMode() {
+		log.Printf("muammo: %s yo'lga chiqdi, yig'ish rejimida mijozga yozilmadi", is.OrderSN)
+		return
+	}
 	if !AutoReplyOn() {
 		log.Printf("muammo: %s yo'lga chiqdi, lekin avto-javob o'chiq — mijozga yozilmadi",
 			is.OrderSN)

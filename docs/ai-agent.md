@@ -99,6 +99,67 @@ logga tushadi (`chat_resolved` esa `false` qoladi).
 Panel sozlamasi: **"Javobdan keyin suhbatni yopish"** (`auto_resolve`,
 default yoqilgan).
 
+## 1.3. Yig'ish rejimi (`collect_mode`)
+
+Kalit yoqiq bo'lsa (default) AI **mijozga hech narsa yubormaydi**. Agent
+javobsiz suhbatlardagi buyurtma raqamlarini tekshiradi va natijani bazaga
+yozadi. Panel: "Yig'ilgan ma'lumot" (`/collect`), har 3 soniyada yangilanadi.
+
+```
+navbat (javobsiz suhbatlar) → suhbat tarixi → raqamlar (matn + rasm OCR)
+ → adminka + yetkazma → ClassifyOrder (kod) → AI xulosasi (promt 8) → baza
+```
+
+Chaqirilmaydi: `RunChain`, `deliverChat`, o'qilgan belgisi, suhbatni yopish,
+Telegram, `order_issues`, `markHandled`. Suhbat javobsiz holatda qoladi.
+Xodimning Telegram javobi odatdagidek mijozga ketadi: uni odam yozgan.
+Navbatda turgan AI javobini tasdiqlash ham shu rejimda to'siladi.
+`staff_only` yig'uvchiga ta'sir qilmaydi, chunki u suhbatga yozmaydi.
+
+| Tur | Shart | Kun hisobi |
+|---|---|---|
+| `sotib_olingan` 5/20/30 | status 3, 5 kundan oshgan | `created_at`: 6–20, 21–30, 31+ |
+| `status_12` | status 12, hammasi | `created_at` |
+| `yolda` 20/30 | `shipped_at` bor, yetkazmada yo'q | `shipped_at`: 21–30, 31+ |
+| `status_6_kelmagan` | status 6, yetkazmada yo'q, 26+ kun | `shipped_at`, bo'lmasa `created_at` |
+| `boshqa_kelmagan` | 3, 6, 12, 10 dan boshqa, yetkazmada yo'q, 26+ kun | `created_at` |
+| `xato_kelgan` | yetkazmada egasi boshqa | — |
+| `kuryer_olmagan` | punktda, Toshkent, kuryerga berilmagan, 4+ kun | yetkazma `created_at` |
+| `manzilga_yetmagan` | adminka viloyati yoki shahar filial bilan mos emas | — |
+
+Yozgan mijozning status 3 va 12 dagi hamma buyurtmasi akkauntidan olinadi, u
+raqamini aytmagan bo'lsa ham (`source = akkaunt`). Yozmagan mijozlar kirmaydi.
+
+Status 3 ning 5 kungacha buyurtmasi saqlanadi, lekin muammo emas. Yoshi
+oshgani soatda bir marta bazadan qayta hisoblanadi (`refreshPurchasedBuckets`):
+tashqi so'rovsiz, agent o'chiq bo'lsa ham, 5+ dan 20+ va 30+ ga ham shunday
+o'tadi. Holati o'zgarganini esa faqat yig'ish yurishi yangilaydi.
+
+To'lanmagan buyurtma turga kirmaydi. Yetkazma so'rovi xato bersa buyurtma
+`verified=false` bo'lib qoladi va 3 martagacha qayta uriniladi: "tekshira
+olmadik" "kelmagan" deb hisoblanmaydi. Status 12 ning kuni statusga o'tgan
+sanadan emas, buyurtma yaratilganidan: adminkada boshqa sana yo'q.
+
+AI xulosasi kod turidan alohida saqlanadi (`ai_type`, `ai_note`) va panelda
+"Mijozlar" jadvalida chiqadi: muammo turi, mijoz yozgan sana
+(`client_wrote_at`), tovar kelgan sana (`arrived_at`, yetkazmadagi yozuv sanasi),
+kuryerga berilgan yoki olingan sana (`delivered_at`). Tovar mijoz yozganidan
+keyin kelgan bo'lsa alohida belgilanadi. Model buyurtma raqamini ko'rsatmay
+umumiy xulosa yozsa, u suhbatning xulosasiz buyurtmalariga ham yoziladi.
+
+Panelda har qatorda "O'chirish" tugmasi bor. Buyurtma o'chirilsa uning hamma
+turlari va AI xulosasi yo'qoladi, `collect_dismisseds` jadvaliga yoziladi va
+keyingi tekshiruvlarda qaytmaydi. Raqamsiz murojaat esa mijoz yangi xabar
+yozguncha yashiriladi. Bu faqat hisobotga tegishli: adminka va suhbatga tegmaydi.
+
+Tempo: oraliq = qolgan vaqt / qolgan suhbat, `collect_min_gap_ms` dan
+tushmaydi, xatoda ikki baravar oshadi (8 baravargacha), 20 ta muvaffaqiyatdan
+keyin qaytadi. Sozlamalar darhol kuchga kiradi: `collect_target_min` (115),
+`collect_workers` (3), `collect_min_gap_ms` (500). Yurish `POST
+/api/collect/start`, to'xtatish `POST /api/collect/stop` (agent ham o'chadi).
+Adminka yoki support tokeni rad etilsa yurish to'xtaydi, sababi panelda.
+Tugamagan buyurtmalar 24 soatda bir qayta tekshiriladi.
+
 ## 2. Promt yozish: model qaytaradigan JSON
 
 Har bir promt matnida modeldan **faqat JSON** qaytarishni talab qiling.

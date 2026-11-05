@@ -124,12 +124,18 @@ func lastWordOurs(msgs []Message) bool {
 // RunChain bitta suhbat uchun zanjirni yuritadi va natijani bazaga yozadi.
 // Xato bo'lsa ham interaksiya saqlanadi (status=failed) — panelda ko'rinadi.
 func RunChain(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
+	if CollectMode() {
+		return nil, ErrCollectMode
+	}
 	return runChain(ctx, conversationID, clientID, runOpts{})
 }
 
 // RunChainForce - tekshiruvsiz ishga tushirish (paneldan qo'lda qayta
 // urinish uchun): oxirgi so'z biz tomondan bo'lsa ham zanjir yuradi.
 func RunChainForce(ctx context.Context, conversationID, clientID int64) (*Interaction, error) {
+	if CollectMode() {
+		return nil, ErrCollectMode
+	}
 	return runChain(ctx, conversationID, clientID, runOpts{Force: true})
 }
 
@@ -620,6 +626,9 @@ func DeliverChat(in *Interaction) error {
 func deliverChat(in *Interaction, recheck bool) error {
 	if in.ChatReply == "" {
 		return nil
+	}
+	if blockedByCollectMode(in) {
+		return ErrCollectMode
 	}
 	// Javob tayyorlangandan beri xodim mijozga o'zi javob yozgan
 	// bo'lishi mumkin — bunda bizning javobimiz takror bo'lib tushadi.

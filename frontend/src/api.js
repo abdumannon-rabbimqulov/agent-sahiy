@@ -82,6 +82,21 @@ export const api = {
   reviewIssues: () => request('/api/issues/review', { method: 'POST' }),
   issuesDaily: (days = 14) => request(`/api/stats/issues/daily?days=${days}`),
 
+  // Yig'ish rejimi: mijozga javob yozmasdan buyurtma holatini yig'ish.
+  collectStatus: () => request('/api/collect/status'),
+  collectSummary: () => request('/api/collect/summary'),
+  collectRecent: (limit = 30) => request(`/api/collect/recent?limit=${limit}`),
+  collectOrders: (type = '', bucket = '', aiType = '', page = 1, limit = 50) =>
+    request(`/api/collect/orders?type=${type}&bucket=${bucket}&ai_type=${aiType}&page=${page}&limit=${limit}`),
+  collectClients: (aiType = '', arrivedAfter = false, page = 1, limit = 100) =>
+    request(`/api/collect/clients?ai_type=${aiType}&arrived_after=${arrivedAfter ? 1 : ''}&page=${page}&limit=${limit}`),
+  collectChats: (state = '', page = 1, limit = 50) =>
+    request(`/api/collect/chats?state=${state}&page=${page}&limit=${limit}`),
+  collectDeleteOrder: (sn) => request(`/api/collect/orders/${encodeURIComponent(sn)}`, { method: 'DELETE' }),
+  collectDeleteChat: (id) => request(`/api/collect/chats/${id}`, { method: 'DELETE' }),
+  collectStart: (max = 0) => request('/api/collect/start', { method: 'POST', body: { max } }),
+  collectStop: () => request('/api/collect/stop', { method: 'POST' }),
+
   settings: () => request('/api/settings'),
   saveSettings: (body) => request('/api/settings', { method: 'PUT', body }),
 

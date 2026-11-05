@@ -27,6 +27,15 @@ const (
 	// ("Assalomu alaykum") — greeting.go.
 	SettingGreeting = "greeting_enabled"
 
+	// Yig'ish rejimi (collect.go). collect_mode yoqiq bo'lsa AI mijozga
+	// hech narsa yubormaydi, agent faqat ma'lumot yig'adi.
+	SettingCollectMode   = "collect_mode"
+	SettingCollectRun    = "collect_run"        // bir martalik yurish so'ralgan
+	SettingCollectMax    = "collect_max"        // yurishdagi suhbat chegarasi, 0 — hammasi
+	SettingCollectTarget = "collect_target_min" // navbat necha daqiqada tugashi kerak
+	SettingCollectWorker = "collect_workers"    // bir vaqtda nechta suhbat
+	SettingCollectMinGap = "collect_min_gap_ms" // suhbatlar orasidagi eng kam oraliq
+
 	// Tezlik sozlamalari — panel orqali o'zgartiriladi, darhol kuchga
 	// kiradi (fon sikli har aylanishda qaytadan o'qiydi).
 	SettingPollInterval = "poll_interval_sec" // sikllar orasidagi oraliq
@@ -123,17 +132,21 @@ func SetSetting(db *gorm.DB, key, value string) error {
 // AllSettings panel uchun barcha sozlamalar (default'lar bilan).
 func AllSettings() map[string]any {
 	return map[string]any{
-		SettingAgentEnabled: AgentEnabled(),
-		SettingAutoReply:    AutoReplyOn(),
-		SettingPollEnabled:  PollEnabled(),
-		SettingAutoResolve:  AutoResolveOn(),
-		SettingHelpToTG:     HelpToTelegramOn(),
-		SettingStaffOnly:    StaffOnlyMode(),
-		SettingGreeting:     GreetingEnabled(),
-		SettingPollInterval: PollInterval(),
-		SettingBatchSize:    BatchSize(),
-		SettingChatDelay:    ChatDelay(),
-		SettingAIProvider:   AIProvider(),
+		SettingAgentEnabled:  AgentEnabled(),
+		SettingCollectMode:   CollectMode(),
+		SettingCollectTarget: CollectTargetMin(),
+		SettingCollectWorker: CollectWorkers(),
+		SettingCollectMinGap: CollectMinGapMS(),
+		SettingAutoReply:     AutoReplyOn(),
+		SettingPollEnabled:   PollEnabled(),
+		SettingAutoResolve:   AutoResolveOn(),
+		SettingHelpToTG:      HelpToTelegramOn(),
+		SettingStaffOnly:     StaffOnlyMode(),
+		SettingGreeting:      GreetingEnabled(),
+		SettingPollInterval:  PollInterval(),
+		SettingBatchSize:     BatchSize(),
+		SettingChatDelay:     ChatDelay(),
+		SettingAIProvider:    AIProvider(),
 	}
 }
 
@@ -165,6 +178,26 @@ func ChatDelay() int {
 // yurmaydi: na fon sikli, na qo'lda ishga tushirish model'ga bormaydi.
 // Navbatdagi tayyor javoblarni tasdiqlash esa ishlayveradi.
 func AgentEnabled() bool { return GetBoolSetting(SettingAgentEnabled, true) }
+
+// CollectMode - yig'ish rejimi yoqiqmi. Default yoqiq: yangi versiya
+// o'rnatilganda AI mijozga tasodifan javob yozib yubormasin.
+func CollectMode() bool { return GetBoolSetting(SettingCollectMode, true) }
+
+// CollectTargetMin - navbat necha daqiqada tugashi kerak.
+func CollectTargetMin() int {
+	return GetIntSetting(SettingCollectTarget, envInt("COLLECT_TARGET_MIN", 115), 5, 1440)
+}
+
+// CollectWorkers - bir vaqtda ishlanadigan suhbatlar soni.
+func CollectWorkers() int {
+	return GetIntSetting(SettingCollectWorker, envInt("COLLECT_WORKERS", 3), 1, 5)
+}
+
+// CollectMinGapMS - suhbatlar orasidagi eng kam oraliq. Saytlarga bosim
+// oshsa tezlikni shu sozlama bilan darhol kamaytirish mumkin.
+func CollectMinGapMS() int {
+	return GetIntSetting(SettingCollectMinGap, envInt("COLLECT_MIN_GAP_MS", 500), 100, 60000)
+}
 
 // AutoReplyOn - AI javobi tasdiqsiz ketadimi.
 func AutoReplyOn() bool { return GetBoolSetting(SettingAutoReply, false) }
@@ -199,6 +232,7 @@ func HelpToTelegramOn() bool { return GetBoolSetting(SettingHelpToTG, true) }
 func seedSettings(db *gorm.DB) error {
 	defs := map[string]string{
 		SettingAgentEnabled: "true",
+		SettingCollectMode:  "true",
 		SettingAutoReply:    "false",
 		SettingPollEnabled:  "true",
 		SettingAutoResolve:  "true",
